@@ -59,6 +59,9 @@ app.get('/api/admin/users', async (req, res) => {
 const connections = new Map();
 const commands = new Map();
 
+const PING_INTERVAL = 10000; // 10 seconds
+const PONG_TIMEOUT = 15000;  // 15 seconds - device considered offline if no pong received
+
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/remoteaccess', {
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
@@ -103,6 +106,7 @@ async function handleTCPMessage(conn, message) {
                 }
                 await device.save();
                 conn.deviceId = deviceId;
+                conn.lastPong = Date.now();
                 console.log('Device registered:', deviceId);
                 broadcast('device:connected', device);
                 broadcast('device:list', await Device.find());
@@ -160,9 +164,21 @@ async function handleTCPMessage(conn, message) {
             case 'device:disconnect':
                 await Device.findOneAndUpdate(
                     { deviceId: data.deviceId },
-                    { online: false, lastSeen: new Date() }
+                    { isOnline: false, lastSeen: new Date() }
                 );
                 broadcast('device:list', await Device.find());
+                break;
+
+            case 'device:pong':
+                if (conn.deviceId) {
+                    conn.lastPong = Date.now();
+                    const device = await Device.findOne({ deviceId: conn.deviceId });
+                    if (device) {
+                        device.lastSeen = new Date();
+                        device.isOnline = true;
+                        await device.save();
+                    }
+                }
                 break;
         }
     } catch (e) {
@@ -196,7 +212,7 @@ const tcpServer = net.createServer((conn) => {
         if (conn.deviceId) {
             await Device.findOneAndUpdate(
                 { deviceId: conn.deviceId },
-                { online: false, lastSeen: new Date() }
+                { isOnline: false, lastSeen: new Date() }
             );
             broadcast('device:disconnected', { deviceId: conn.deviceId });
             broadcast('device:list', await Device.find());
@@ -236,7 +252,7 @@ app.post('/api/commands', async (req, res) => {
         const { deviceId, command, data } = req.body;
         const device = await Device.findOne({ deviceId });
 
-        if (device && device.online) {
+        if (device && device.isOnline) {
             const commandId = Date.now().toString();
             const cmd = new Command({
                 id: commandId,
@@ -302,10 +318,48 @@ server.listen(HTTP_PORT, () => {
 setInterval(async () => {
     const thirtySecondsAgo = new Date(Date.now() - 30 * 1000);
     await Device.updateMany(
-        { lastSeen: { $lt: thirtySecondsAgo }, online: true },
-        { online: false }
+        { lastSeen: { $lt: thirtySecondsAgo }, isOnline: true },
+        { isOnline: false }
     );
 }, 30 * 1000);
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, conn] of connections) {
+        if (conn.writable) {
+            sendTo(conn, 'device:ping', { timestamp: now });
+        }
+    }
+}, PING_INTERVAL);
+
+setInterval(() => {
+    const now = Date.now();
+    const staleConnections = [];
+    
+    for (const [id, conn] of connections) {
+        const timeSinceLastPong = now - (conn.lastPong || 0);
+        
+        if (conn.deviceId && timeSinceLastPong > PONG_TIMEOUT) {
+            staleConnections.push({ conn, id, timeSinceLastPong });
+        }
+    }
+    
+    for (const { conn, id, timeSinceLastPong } of staleConnections) {
+        console.log(`Device ${conn.deviceId} timed out (${Math.round(timeSinceLastPong/1000)}s since last pong)`);
+        connections.delete(id);
+        conn.destroy();
+        
+        if (conn.deviceId) {
+            Device.findOneAndUpdate(
+                { deviceId: conn.deviceId },
+                { isOnline: false, lastSeen: new Date() }
+            ).then(() => {
+                broadcast('device:disconnected', { deviceId: conn.deviceId });
+                Device.find().then(devices => broadcast('device:list', devices));
+            });
+        }
+    }
+}, 5000);
 
 process.on('SIGINT', async () => {
     await mongoose.connection.close();
