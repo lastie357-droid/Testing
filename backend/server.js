@@ -4,10 +4,18 @@ const net = require('net');
 const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
+const socketIO = require('socket.io');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+const io = socketIO(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
 const Device = require('./models/Device');
 const User = require('./models/User');
@@ -273,7 +281,7 @@ app.get('*', (req, res) => {
 const HTTP_PORT = process.env.PORT || 5000;
 server.listen(HTTP_PORT, () => {
     console.log(`HTTP Server running on port ${HTTP_PORT}`);
-    console.log(`TCP device server: 127.0.0.1:8080`);
+    console.log(`TCP device server: 127.0.0.1:9000`);
     console.log(`Admin panel: http://localhost:${HTTP_PORT}/admin-login.html`);
 });
 
