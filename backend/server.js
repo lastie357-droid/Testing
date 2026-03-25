@@ -186,8 +186,8 @@ const tcpServer = net.createServer((conn) => {
     });
 });
 
-tcpServer.listen(8080, '0.0.0.0', () => {
-    console.log('TCP server listening on 0.0.0.0:8080');
+tcpServer.listen(9000, '0.0.0.0', () => {
+    console.log('TCP server listening on 0.0.0.0:9000');
 });
 
 app.get('/api/devices', async (req, res) => {
