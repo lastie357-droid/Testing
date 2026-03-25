@@ -26,7 +26,7 @@ const fs = require('fs');
 
 const config = {
     PORT: process.env.PORT || 5000,
-    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/ultimate-access-control',
+    MONGODB_URI: process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://localhost:27017/ultimate-access-control',
     REDIS_URL: process.env.REDIS_URL,
     REDIS_HOST: process.env.REDIS_HOST || 'localhost',
     REDIS_PORT: process.env.REDIS_PORT || 6379,
