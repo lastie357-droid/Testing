@@ -91,19 +91,16 @@
     </div>
 
     <script>
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-
-        if (!user.email) {
-            window.location.href = 'login.html';
+        // Admin-only guard — redirect to login if no session
+        const admin = JSON.parse(localStorage.getItem('admin') || 'null');
+        if (!admin) {
+            window.location.replace('admin-login.html');
         }
 
-        document.getElementById('userName').textContent = user.fullName || user.email;
-        document.getElementById('licensePlan').textContent = user.license?.plan || 'Free Trial';
-        document.getElementById('daysRemaining').textContent = user.license?.daysRemaining || 7;
-
-        if (user.createdAt) {
-            document.getElementById('createdDate').textContent = new Date(user.createdAt).toLocaleDateString();
-        }
+        document.getElementById('userName').textContent = admin ? admin.username : 'Admin';
+        document.getElementById('licensePlan').textContent = 'Admin';
+        document.getElementById('daysRemaining').textContent = '∞';
+        document.getElementById('createdDate').textContent = admin ? new Date(admin.loginAt).toLocaleDateString() : '';
 
         // Native WebSocket — server speaks plain WS on /ws, not Socket.IO
         const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -176,8 +173,8 @@
 
         function logout() {
             if (confirm('Are you sure you want to logout?')) {
-                localStorage.removeItem('user');
-                window.location.href = 'login.html';
+                localStorage.removeItem('admin');
+                window.location.replace('admin-login.html');
             }
         }
     </script>
