@@ -10,6 +10,5 @@ loginFailExit = false
 name = "tester"
 type = "tcp"
 localIP = "0.0.0.0"
-localPort = 6000
+localPort = 9000
 remotePort = 6000
-useEncryption = true

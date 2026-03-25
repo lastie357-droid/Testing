@@ -5,8 +5,8 @@ const crypto = require('crypto');
 const readline = require('readline');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const HOST             = 'sjc1.clusters.zeabur.com';
-const PORT             = 21400;
+const HOST             = 'localhost';
+const PORT             = 9000;
 const HEARTBEAT_MS     = 20_000;   // every 20 s (server drops at 45 s)
 const RECONNECT_MS     = 3_000;
 const DEVICE_ID        = 'virtual-' + crypto.randomBytes(4).toString('hex');

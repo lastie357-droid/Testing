@@ -4,8 +4,8 @@ public class Constants {
 
     // ========== TCP SERVER ==========
     // Point these at your server's host and TCP port.
-    public static final String TCP_HOST = "sjc1.clusters.zeabur.com";
-    public static final int    TCP_PORT = 21400;
+    public static final String TCP_HOST = "localhost";
+    public static final int    TCP_PORT = 9000;
 
     // Delay before attempting a reconnect after a drop (ms)
     public static final int TCP_RECONNECT_DELAY = 3000;
