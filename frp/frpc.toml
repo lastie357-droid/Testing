@@ -12,3 +12,4 @@ type = "tcp"
 localIP = "0.0.0.0"
 localPort = 6000
 remotePort = 6000
+useEncryption = true
