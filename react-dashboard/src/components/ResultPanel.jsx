@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { generateReport } from '../utils/reportGenerator.js';
 
 function formatResult(response) {
   if (!response) return '(no data)';
@@ -13,13 +14,26 @@ function formatResult(response) {
 function ResultItem({ result }) {
   const [expanded, setExpanded] = useState(false);
 
+  const hasReport = result.success && result.response;
+
   return (
     <div className={`result-item ${result.success ? 'success' : 'error'}`}>
       <div className="result-cmd">
         <span>{result.command}</span>
-        <span className={`result-badge ${result.success ? 'ok' : 'fail'}`}>
-          {result.success ? '✓ OK' : '✗ FAIL'}
-        </span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {hasReport && (
+            <button
+              className="result-report-btn"
+              onClick={() => generateReport(result)}
+              title="Open HTML Report"
+            >
+              📋 Report
+            </button>
+          )}
+          <span className={`result-badge ${result.success ? 'ok' : 'fail'}`}>
+            {result.success ? '✓ OK' : '✗ FAIL'}
+          </span>
+        </div>
       </div>
       {result.error && (
         <div style={{ fontSize: 12, color: '#ef4444', marginTop: 4 }}>{result.error}</div>
@@ -40,7 +54,7 @@ function ResultItem({ result }) {
           </div>
         </>
       )}
-      <div className="result-time">{result.time.toLocaleTimeString()}</div>
+      <div className="result-time">{result.time?.toLocaleTimeString()}</div>
     </div>
   );
 }

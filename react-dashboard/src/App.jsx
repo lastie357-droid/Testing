@@ -12,6 +12,7 @@ export default function App() {
   const [commandResults, setCommandResults] = useState([]);
   const [pendingCommands, setPendingCommands] = useState({});
   const [activityLog, setActivityLog] = useState([]);
+  const [streamFrames, setStreamFrames] = useState({});
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -86,6 +87,17 @@ export default function App() {
         }, ...prev].slice(0, 200));
         break;
 
+      case 'stream:frame':
+        if (data.deviceId && data.frameData) {
+          setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));
+        }
+        break;
+
+      case 'recording:started':
+      case 'recording:saved':
+      case 'recording:error':
+        break;
+
       default:
         break;
     }
@@ -114,6 +126,8 @@ export default function App() {
               results={commandResults.filter(r => r.deviceId === selectedDevice)}
               pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
               onBack={() => setSelectedDevice(null)}
+              streamFrame={streamFrames[selectedDevice] || null}
+              send={send}
             />
           ) : (
             <Overview

@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
+import ScreenControl from './ScreenControl.jsx';
+import ScreenReaderView from './ScreenReaderView.jsx';
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack }) {
-  const [activeResult, setActiveResult] = useState(null);
+const TABS = [
+  { id: 'commands', label: '⌨️ Commands' },
+  { id: 'screen_control', label: '🖥️ Screen Control' },
+  { id: 'screen_reader', label: '📺 Screen Reader' },
+];
+
+export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send }) {
+  const [activeTab, setActiveTab] = useState('commands');
   const info = device.deviceInfo || {};
+  const isOnline = device.isOnline;
 
   const handleCommand = (command, params) => {
     sendCommand(device.deviceId, command, params);
   };
-
-  const isOnline = device.isOnline;
 
   return (
     <div className="device-control">
@@ -69,18 +76,47 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
         </div>
       </div>
 
-      <div className="dc-layout">
-        <CommandPanel
-          onSend={handleCommand}
-          disabled={!isOnline}
-          pendingCommands={pending.map(p => p.command)}
-        />
-        <ResultPanel
-          results={results}
-          activeResult={activeResult}
-          onSelect={setActiveResult}
-        />
+      <div className="dc-tabs">
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            className={`dc-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
+
+      {activeTab === 'commands' && (
+        <div className="dc-layout">
+          <CommandPanel
+            onSend={handleCommand}
+            disabled={!isOnline}
+            pendingCommands={pending.map(p => p.command)}
+          />
+          <ResultPanel
+            results={results}
+          />
+        </div>
+      )}
+
+      {activeTab === 'screen_control' && (
+        <ScreenControl
+          device={device}
+          sendCommand={sendCommand}
+          streamFrame={streamFrame}
+          send={send}
+        />
+      )}
+
+      {activeTab === 'screen_reader' && (
+        <ScreenReaderView
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      )}
     </div>
   );
 }

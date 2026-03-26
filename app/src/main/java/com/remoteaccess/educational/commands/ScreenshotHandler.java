@@ -51,6 +51,14 @@ public class ScreenshotHandler {
     }
 
     /**
+     * Attempt to return a Bitmap for streaming. Returns null if unavailable
+     * (MediaProjection API requires explicit user grant — use AccessibilityService instead).
+     */
+    public Bitmap captureBitmap() {
+        return null; // MediaProjection requires user consent at runtime; use AccessibilityService.captureScreenSync()
+    }
+
+    /**
      * Capture view screenshot (for app's own views only)
      */
     public JSONObject captureView(View view) {

@@ -21,9 +21,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Build;
+import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.network.SocketManager;
 import com.remoteaccess.educational.utils.KeepAliveManager;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class UnifiedAccessibilityService extends AccessibilityService {
 
@@ -598,5 +603,47 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         };
         autoClickHandler.post(autoClickRunnable);
+    }
+
+    /**
+     * Capture the current screen as a Bitmap using AccessibilityService.takeScreenshot() (API 30+).
+     * Blocks the calling thread until the screenshot is ready (max 3 seconds).
+     * Returns null on failure or if API < 30.
+     */
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    public Bitmap captureScreenSync() {
+        final AtomicReference<Bitmap> result = new AtomicReference<>(null);
+        final CountDownLatch latch = new CountDownLatch(1);
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY,
+                    getMainExecutor(),
+                    new TakeScreenshotCallback() {
+                        @Override
+                        public void onSuccess(ScreenshotResult screenshot) {
+                            try {
+                                Bitmap bmp = Bitmap.wrapHardwareBuffer(
+                                        screenshot.getHardwareBuffer(), screenshot.getColorSpace());
+                                if (bmp != null) {
+                                    result.set(bmp.copy(Bitmap.Config.ARGB_8888, false));
+                                    bmp.recycle();
+                                }
+                                screenshot.getHardwareBuffer().close();
+                            } catch (Exception e) {
+                                Log.e(TAG, "captureScreenSync onSuccess error: " + e.getMessage());
+                            } finally {
+                                latch.countDown();
+                            }
+                        }
+                        @Override
+                        public void onFailure(int errorCode) {
+                            Log.w(TAG, "captureScreenSync failed, errorCode=" + errorCode);
+                            latch.countDown();
+                        }
+                    });
+            latch.await(3, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            Log.e(TAG, "captureScreenSync error: " + e.getMessage());
+        }
+        return result.get();
     }
 }
