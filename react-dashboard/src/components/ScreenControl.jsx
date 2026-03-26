@@ -25,6 +25,11 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const autoStopTimerRef = useRef(null);
   const isStreamingRef   = useRef(false);
 
+  // Deduplication: track last touch command sent (key + timestamp)
+  const lastTouchRef     = useRef({ key: '', time: 0 });
+  // Throttle: prevent queuing frame requests while one is in-flight
+  const frameRequestedRef = useRef(false);
+
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
   const devH    = devInfo.screenHeight || null;
@@ -32,20 +37,18 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const FRAME_W = 360;
   const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
 
-  // Keep ref in sync so callbacks always read current value without stale closure
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
-  // Auto-start stream then request a frame
-  const ensureStreamingAndRequestFrame = useCallback(() => {
-    if (!isStreamingRef.current) {
-      sendCommand(deviceId, 'stream_start', {});
-      setIsStreaming(true);
-      isStreamingRef.current = true;
-      frameCountRef.current = 0;
-      setFrameCount(0);
-    }
-    sendCommand(deviceId, 'stream_request_frame', {});
-    // Reset auto-stop timer: stop stream after 30s of dashboard inactivity
+  // ── Manual Start Stream ──
+  const handleStartStream = useCallback(() => {
+    if (isStreamingRef.current) return;
+    sendCommand(deviceId, 'stream_start', {});
+    setIsStreaming(true);
+    isStreamingRef.current = true;
+    frameCountRef.current = 0;
+    setFrameCount(0);
+    setStreamIdle(false);
+    // Auto-stop after 5 minutes of no interaction
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
       if (isStreamingRef.current) {
@@ -54,11 +57,17 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
         isStreamingRef.current = false;
         setFps(0);
       }
-    }, 30000);
+    }, 5 * 60 * 1000);
   }, [deviceId, sendCommand]);
 
+  // ── Throttled frame request: drop if previous hasn't arrived yet ──
   const requestFrame = useCallback(() => {
-    if (isStreamingRef.current) sendCommand(deviceId, 'stream_request_frame', {});
+    if (!isStreamingRef.current) return;
+    if (frameRequestedRef.current) return; // already waiting for a frame
+    frameRequestedRef.current = true;
+    sendCommand(deviceId, 'stream_request_frame', {});
+    // Reset flag after 1s regardless (guards against lost frames)
+    setTimeout(() => { frameRequestedRef.current = false; }, 1000);
   }, [deviceId, sendCommand]);
 
   const fetchRecordings = useCallback(async () => {
@@ -76,8 +85,10 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
+  // Clear pending frame flag when a new frame arrives
   useEffect(() => {
     if (streamFrame) {
+      frameRequestedRef.current = false;
       frameCountRef.current += 1;
       setFrameCount(frameCountRef.current);
       const now = Date.now();
@@ -87,13 +98,11 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       }
       lastFrameTime.current = now;
       setStreamIdle(false);
-      // Mark idle if no new frame arrives within 5 seconds
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       idleTimerRef.current = setTimeout(() => setStreamIdle(true), 5000);
     }
   }, [streamFrame]);
 
-  // Clean up timers on unmount
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
@@ -112,13 +121,13 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // ── Pointer events for touch + swipe ──
   const handlePointerDown = useCallback((e) => {
-    if (!isOnline) return;
+    if (!isOnline || !isStreamingRef.current) return;
     e.preventDefault();
     touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
   }, [isOnline]);
 
   const handlePointerUp = useCallback((e) => {
-    if (!isOnline || !touchStartRef.current) return;
+    if (!isOnline || !touchStartRef.current || !isStreamingRef.current) return;
     e.preventDefault();
     const dx = e.clientX - touchStartRef.current.x;
     const dy = e.clientY - touchStartRef.current.y;
@@ -126,19 +135,26 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     const duration = Date.now() - touchStartRef.current.time;
 
     if (dist < 8) {
-      // Tap — auto-start stream + send touch + request updated frame
-      ensureStreamingAndRequestFrame();
+      // Tap — deduplicate if same coords within 300ms
       const { x, y } = toDeviceCoords(e.clientX, e.clientY);
+      const touchKey = `${x},${y}`;
+      const now = Date.now();
+      if (touchKey === lastTouchRef.current.key && (now - lastTouchRef.current.time) < 300) {
+        touchStartRef.current = null;
+        return; // duplicate, ignore
+      }
+      lastTouchRef.current = { key: touchKey, time: now };
       sendCommand(deviceId, 'touch', { x, y });
+      requestFrame();
     } else {
       // Swipe
-      ensureStreamingAndRequestFrame();
       const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
+      requestFrame();
     }
     touchStartRef.current = null;
-  }, [isOnline, toDeviceCoords, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
+  }, [isOnline, toDeviceCoords, deviceId, sendCommand, requestFrame]);
 
   const handlePointerCancel = useCallback(() => {
     touchStartRef.current = null;
@@ -146,7 +162,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // ── Directional swipe buttons ──
   const sendSwipe = useCallback((direction) => {
-    if (!isOnline) return;
+    if (!isOnline || !isStreamingRef.current) return;
     const midX = devW ? Math.round(devW / 2) : 540;
     const midY = devH ? Math.round(devH / 2) : 960;
     const step = devH ? Math.round(devH * 0.3) : 300;
@@ -157,18 +173,18 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       case 'left':  x1 = midX + step; x2 = midX - step; break;
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
-    ensureStreamingAndRequestFrame();
     sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-  }, [isOnline, devW, devH, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
+    requestFrame();
+  }, [isOnline, devW, devH, deviceId, sendCommand, requestFrame]);
 
   // ── Paste text ──
   const handlePaste = useCallback(() => {
     if (!pasteText.trim()) return;
-    ensureStreamingAndRequestFrame();
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
-  }, [pasteText, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
+    requestFrame();
+  }, [pasteText, deviceId, sendCommand, requestFrame]);
 
   const handleToggleBlackout = () => {
     if (blackoutLoading) return;
@@ -190,11 +206,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   const handleStartRecord = () => {
     if (!isStreamingRef.current) {
-      sendCommand(deviceId, 'stream_start', {});
-      setIsStreaming(true);
-      isStreamingRef.current = true;
-      frameCountRef.current = 0;
-      setFrameCount(0);
+      handleStartStream();
     }
     send('recording:start', { deviceId });
     setIsRecording(true);
@@ -283,8 +295,12 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const navBtn = (label, command, icon) => (
     <button
       className="sc-nav-btn"
-      onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, command); }}
-      disabled={!isOnline}
+      onClick={() => {
+        if (!isStreamingRef.current) return;
+        sendCommand(deviceId, command);
+        requestFrame();
+      }}
+      disabled={!isOnline || !isStreaming}
       title={command}
     >
       {icon} {label}
@@ -335,7 +351,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               <div className="sc-phone-notch" />
               <div
                 className="sc-phone-screen-wrap"
-                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && isStreaming ? 'crosshair' : 'default', userSelect: 'none' }}
                 ref={screenRef}
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}
@@ -353,7 +369,11 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
                     <div style={{ fontSize: 48 }}>📡</div>
                     <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
-                      {isOnline ? 'Tap or interact to capture screen' : 'Device offline'}
+                      {!isOnline
+                        ? 'Device offline'
+                        : !isStreaming
+                          ? 'Click Start Stream to begin'
+                          : 'Waiting for first frame…'}
                     </div>
                   </div>
                 )}
@@ -366,14 +386,33 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                     {isRecording && <span style={{ color: '#ef4444' }}>● REC</span>}
                   </div>
                 )}
+                {/* Overlay when stream hasn't started */}
+                {!isStreaming && !streamFrame && isOnline && (
+                  <div style={{
+                    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: 12,
+                    background: 'rgba(15,15,26,0.85)', borderRadius: 8
+                  }}>
+                    <button
+                      style={{
+                        background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 10,
+                        padding: '12px 28px', fontSize: 15, fontWeight: 700, cursor: 'pointer', letterSpacing: 1
+                      }}
+                      onClick={handleStartStream}
+                    >
+                      ▶ Start Stream
+                    </button>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>Click to begin remote screen view</div>
+                  </div>
+                )}
               </div>
               {/* ── Swipe direction buttons below screen ── */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
-                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline} title="Swipe Up">▲</button>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline || !isStreaming} title="Swipe Up">▲</button>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline} title="Swipe Left">◀</button>
-                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline || !isStreaming} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline || !isStreaming} title="Swipe Down">▼</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline || !isStreaming} title="Swipe Right">▶</button>
                 </div>
               </div>
               <div className="sc-phone-home-bar-sc" />
@@ -386,14 +425,14 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
                 onClick={() => setShowPaste(v => !v)}
-                disabled={!isOnline}
+                disabled={!isOnline || !isStreaming}
               >
                 📋 Paste Text
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, 'press_enter'); }}
-                disabled={!isOnline}
+                onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                disabled={!isOnline || !isStreaming}
                 title="Press Enter / IME action key on device"
               >
                 ↵ Enter
@@ -419,8 +458,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   ↵ Send
                 </button>
                 <button
-                  onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, 'press_enter'); }}
-                  disabled={!isOnline}
+                  onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                  disabled={!isOnline || !isStreaming}
                   style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                   title="Press Enter / IME key on device"
                 >
@@ -431,19 +470,24 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
           </div>
 
           <div className="sc-controls" style={{ marginTop: 8 }}>
-            {/* Event-mode indicator */}
-            <span style={{
-              fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid #2d2d4e',
-              color: isStreaming ? '#22c55e' : '#94a3b8',
-              background: isStreaming ? '#052e16' : '#1a1a2e'
-            }}>
-              {isStreaming ? (streamIdle ? '⏸ Idle — interact to update' : '● Event stream active') : '○ Click screen to start'}
-            </span>
-
-            {isStreaming && (
-              <button className="sc-btn sc-btn-stop" onClick={handleStopStream}>
-                ⏹ Disconnect
+            {/* Stream status + Start/Stop buttons */}
+            {!isStreaming ? (
+              <button className="sc-btn sc-btn-start" onClick={handleStartStream} disabled={!isOnline}>
+                ▶ Start Stream
               </button>
+            ) : (
+              <>
+                <span style={{
+                  fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid #2d2d4e',
+                  color: streamIdle ? '#94a3b8' : '#22c55e',
+                  background: streamIdle ? '#1a1a2e' : '#052e16'
+                }}>
+                  {streamIdle ? '⏸ Idle' : '● Streaming'}
+                </span>
+                <button className="sc-btn sc-btn-stop" onClick={handleStopStream}>
+                  ⏹ Stop Stream
+                </button>
+              </>
             )}
 
             {!isRecording ? (
