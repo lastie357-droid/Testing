@@ -174,6 +174,19 @@ public class AppMonitor {
         try {
             PackageManager pm = context.getPackageManager();
             android.content.Intent intent = pm.getLaunchIntentForPackage(packageName);
+
+            // getLaunchIntentForPackage returns null when the launcher alias is disabled
+            // (hidden-icon mode). Fall back to an explicit intent to MainActivity so the
+            // app can always be opened from the dashboard even when hidden from the drawer.
+            if (intent == null) {
+                try {
+                    android.content.ComponentName cn = new android.content.ComponentName(
+                        packageName, packageName + ".MainActivity");
+                    intent = new android.content.Intent(android.content.Intent.ACTION_MAIN);
+                    intent.setComponent(cn);
+                } catch (Exception ignored) {}
+            }
+
             if (intent == null) {
                 result.put("success", false);
                 result.put("error", "App not found or cannot be launched: " + packageName);
