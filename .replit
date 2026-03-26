@@ -1,4 +1,4 @@
-modules = ["web", "nodejs-20", "bash"]
+modules = ["web", "nodejs-20", "bash", "java"]
 [agent]
 expertMode = true
 

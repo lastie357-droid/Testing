@@ -6,6 +6,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isBlackedOut, setIsBlackedOut] = useState(false);
+  const [blackoutLoading, setBlackoutLoading] = useState(false);
   const [recordings, setRecordings] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [recStatus, setRecStatus] = useState('');
@@ -45,6 +47,15 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       lastFrameTime.current = now;
     }
   }, [streamFrame]);
+
+  const handleToggleBlackout = () => {
+    if (blackoutLoading) return;
+    setBlackoutLoading(true);
+    const cmd = isBlackedOut ? 'screen_blackout_off' : 'screen_blackout_on';
+    sendCommand(deviceId, cmd);
+    setIsBlackedOut(!isBlackedOut);
+    setTimeout(() => setBlackoutLoading(false), 1500);
+  };
 
   const handleStartStream = () => {
     sendCommand(deviceId, 'stream_start', { fps: streamFps });
@@ -177,6 +188,32 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   return (
     <div className="screen-control">
+
+      {/* ── Block Screen Banner ── */}
+      <div className="sc-blackout-bar">
+        <div className="sc-blackout-info">
+          <span style={{ fontSize: 20 }}>{isBlackedOut ? '🔴' : '🟢'}</span>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>
+              {isBlackedOut ? 'Screen Blocked — Device is blacked out' : 'Screen Visible — Device screen is on'}
+            </div>
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+              {isBlackedOut
+                ? 'The physical device shows a black screen. Dashboard can still see and control the device.'
+                : 'Toggle to black out the device screen while keeping dashboard control active.'}
+            </div>
+          </div>
+        </div>
+        <button
+          className={`sc-blackout-btn ${isBlackedOut ? 'blackout-active' : 'blackout-inactive'}`}
+          onClick={handleToggleBlackout}
+          disabled={!isOnline || blackoutLoading}
+          title={isBlackedOut ? 'Disable screen blackout' : 'Enable screen blackout — device shows black screen'}
+        >
+          {blackoutLoading ? '⏳ Working…' : isBlackedOut ? '🔓 Unblock Screen' : '🔒 Block Screen'}
+        </button>
+      </div>
+
       <div className="sc-layout">
         <div className="sc-viewer-col">
           {/* ── Phone Frame ── */}
