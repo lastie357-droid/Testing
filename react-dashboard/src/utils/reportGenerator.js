@@ -130,7 +130,11 @@ function buildBody(command, data) {
       return renderScreenReader(data);
 
     case 'take_photo':
+    case 'take_screenshot':
       return renderPhoto(data);
+
+    case 'get_audio':
+      return renderAudio(data);
 
     case 'list_recordings':
       return renderRecordings(data);
@@ -278,8 +282,17 @@ function renderScreenReader(data) {
 }
 
 function renderPhoto(data) {
-  if (data.base64) {
-    return `<div class="section-title">📸 Photo</div><div style="text-align:center;margin:20px 0"><img src="data:image/jpeg;base64,${data.base64}" style="max-width:100%;border-radius:10px;border:1px solid var(--border)" /></div>${renderKeyValue({...data, base64: '[image data]'})}`;
+  const b64 = data.base64 || data.imageData || data.data;
+  if (b64) {
+    return `<div class="section-title">📸 Image</div><div style="text-align:center;margin:20px 0"><img src="data:image/jpeg;base64,${b64}" style="max-width:100%;border-radius:10px;border:1px solid var(--border)" /></div>${renderKeyValue({...data, base64: undefined, imageData: undefined, data: undefined})}`;
+  }
+  return renderKeyValue(data);
+}
+
+function renderAudio(data) {
+  const b64 = data.base64 || data.audioData || data.data;
+  if (b64) {
+    return `<div class="section-title">🎵 Audio Recording</div><div style="margin:20px 0"><audio controls src="data:audio/mpeg;base64,${b64}" style="width:100%"></audio></div><p style="font-size:12px;color:var(--muted);text-align:center">File: ${escHtml(data.filePath || data.filename || '—')}</p>`;
   }
   return renderKeyValue(data);
 }

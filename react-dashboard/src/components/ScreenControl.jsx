@@ -11,6 +11,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const [recStatus, setRecStatus] = useState('');
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
+  const [streamFps, setStreamFps] = useState(2);
   const lastFrameTime = useRef(null);
   const fpsTimer = useRef(null);
   const frameCountRef = useRef(0);
@@ -46,7 +47,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   }, [streamFrame]);
 
   const handleStartStream = () => {
-    sendCommand(deviceId, 'stream_start', { fps: 2 });
+    sendCommand(deviceId, 'stream_start', { fps: streamFps });
     setIsStreaming(true);
     frameCountRef.current = 0;
     setFrameCount(0);
@@ -193,6 +194,20 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
           </div>
 
           <div className="sc-controls">
+            {!isStreaming && (
+              <select
+                value={streamFps}
+                onChange={e => setStreamFps(Number(e.target.value))}
+                style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
+                title="Stream FPS"
+              >
+                <option value={1}>1 FPS</option>
+                <option value={2}>2 FPS</option>
+                <option value={5}>5 FPS</option>
+                <option value={10}>10 FPS</option>
+                <option value={15}>15 FPS</option>
+              </select>
+            )}
             {!isStreaming ? (
               <button className="sc-btn sc-btn-start" onClick={handleStartStream} disabled={!isOnline}>
                 ▶ Start Stream
