@@ -44,7 +44,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node backend/server.js"
+args = "cd backend && npm install --prefer-offline && node server.js"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
