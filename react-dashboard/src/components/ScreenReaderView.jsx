@@ -14,6 +14,8 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const [viewCapture, setViewCapture]   = useState(null);
   const [activeView, setActiveView]     = useState('visual'); // 'visual' | 'elements' | 'raw'
   const [touchHint, setTouchHint]       = useState(null);
+  const [pasteText, setPasteText]       = useState('');
+  const [showPaste, setShowPaste]       = useState(false);
   const streamTimer  = useRef(null);
   const autoTimer    = useRef(null);
   const seenIds      = useRef(new Set());
@@ -234,6 +236,42 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
         <div className="sr-view-tabs">
           <button className={`sr-vtab ${activeView==='visual'?'active':''}`} onClick={() => setActiveView('visual')}>📱 Visual</button>
           <button className={`sr-vtab ${activeView==='elements'?'active':''}`} onClick={() => setActiveView('elements')}>🌳 Elements</button>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button
+            style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.4)', color: '#a78bfa', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+            onClick={() => setShowPaste(v => !v)}
+            disabled={!isOnline}
+            title="Paste text into active field on device"
+          >
+            📋 Paste
+          </button>
+          {showPaste && (
+            <>
+              <input
+                type="text"
+                placeholder="Text to paste…"
+                value={pasteText}
+                onChange={e => setPasteText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && pasteText.trim()) {
+                    sendCommand(deviceId, 'input_text', { text: pasteText });
+                    setPasteText('');
+                    setShowPaste(false);
+                  }
+                }}
+                style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', color: '#f0f0ff', fontSize: 12, width: 160 }}
+                autoFocus
+              />
+              <button
+                onClick={() => { if (pasteText.trim()) { sendCommand(deviceId, 'input_text', { text: pasteText }); setPasteText(''); setShowPaste(false); } }}
+                disabled={!pasteText.trim()}
+                style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+              >
+                ↵
+              </button>
+            </>
+          )}
         </div>
       </div>
 

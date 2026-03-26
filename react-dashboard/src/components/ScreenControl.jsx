@@ -4,19 +4,34 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isBlackedOut, setIsBlackedOut] = useState(false);
+  const [isStreaming, setIsStreaming]       = useState(false);
+  const [isRecording, setIsRecording]       = useState(false);
+  const [isBlackedOut, setIsBlackedOut]     = useState(false);
   const [blackoutLoading, setBlackoutLoading] = useState(false);
-  const [recordings, setRecordings] = useState([]);
-  const [loadingRecs, setLoadingRecs] = useState(false);
-  const [recStatus, setRecStatus] = useState('');
-  const [fps, setFps] = useState(0);
-  const [frameCount, setFrameCount] = useState(0);
-  const [streamFps, setStreamFps] = useState(2);
-  const lastFrameTime = useRef(null);
-  const fpsTimer = useRef(null);
-  const frameCountRef = useRef(0);
+  const [recordings, setRecordings]         = useState([]);
+  const [loadingRecs, setLoadingRecs]       = useState(false);
+  const [recStatus, setRecStatus]           = useState('');
+  const [fps, setFps]                       = useState(0);
+  const [frameCount, setFrameCount]         = useState(0);
+  const [streamFps, setStreamFps]           = useState(2);
+  const [pasteText, setPasteText]           = useState('');
+  const [showPaste, setShowPaste]           = useState(false);
+
+  const lastFrameTime  = useRef(null);
+  const frameCountRef  = useRef(0);
+  const screenRef      = useRef(null);
+  const touchStartRef  = useRef(null);
+
+  const devInfo = device?.deviceInfo || {};
+  const devW    = devInfo.screenWidth  || null;
+  const devH    = devInfo.screenHeight || null;
+  const resLabel = devW && devH ? `${devW}×${devH}` : null;
+  const FRAME_W = 360;
+  const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
+
+  const requestFrame = useCallback(() => {
+    if (isStreaming) sendCommand(deviceId, 'stream_request_frame', {});
+  }, [deviceId, isStreaming, sendCommand]);
 
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
@@ -31,9 +46,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     }
   }, [deviceId]);
 
-  useEffect(() => {
-    fetchRecordings();
-  }, [fetchRecordings]);
+  useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
   useEffect(() => {
     if (streamFrame) {
@@ -47,6 +60,76 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       lastFrameTime.current = now;
     }
   }, [streamFrame]);
+
+  // ── Map screen coordinates from phone-frame pixel → device coordinates ──
+  const toDeviceCoords = useCallback((clientX, clientY) => {
+    if (!screenRef.current) return { x: 0, y: 0 };
+    const rect = screenRef.current.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const relY = clientY - rect.top;
+    const scaleX = devW ? devW / rect.width  : 1;
+    const scaleY = devH ? devH / rect.height : 1;
+    return { x: Math.round(relX * scaleX), y: Math.round(relY * scaleY) };
+  }, [devW, devH]);
+
+  // ── Pointer events for touch + swipe ──
+  const handlePointerDown = useCallback((e) => {
+    if (!isOnline || !isStreaming) return;
+    e.preventDefault();
+    touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+  }, [isOnline, isStreaming]);
+
+  const handlePointerUp = useCallback((e) => {
+    if (!isOnline || !isStreaming || !touchStartRef.current) return;
+    e.preventDefault();
+    const dx = e.clientX - touchStartRef.current.x;
+    const dy = e.clientY - touchStartRef.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const duration = Date.now() - touchStartRef.current.time;
+
+    if (dist < 8) {
+      // Tap
+      const { x, y } = toDeviceCoords(e.clientX, e.clientY);
+      sendCommand(deviceId, 'touch', { x, y });
+    } else {
+      // Swipe
+      const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
+      const to   = toDeviceCoords(e.clientX, e.clientY);
+      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
+    }
+    touchStartRef.current = null;
+    requestFrame();
+  }, [isOnline, isStreaming, toDeviceCoords, deviceId, sendCommand, requestFrame]);
+
+  const handlePointerCancel = useCallback(() => {
+    touchStartRef.current = null;
+  }, []);
+
+  // ── Directional swipe buttons ──
+  const sendSwipe = useCallback((direction) => {
+    if (!isOnline) return;
+    const midX = devW ? Math.round(devW / 2) : 540;
+    const midY = devH ? Math.round(devH / 2) : 960;
+    const step = devH ? Math.round(devH * 0.3) : 300;
+    let x1 = midX, y1 = midY, x2 = midX, y2 = midY;
+    switch (direction) {
+      case 'up':    y1 = midY + step; y2 = midY - step; break;
+      case 'down':  y1 = midY - step; y2 = midY + step; break;
+      case 'left':  x1 = midX + step; x2 = midX - step; break;
+      case 'right': x1 = midX - step; x2 = midX + step; break;
+    }
+    sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
+    requestFrame();
+  }, [isOnline, devW, devH, deviceId, sendCommand, requestFrame]);
+
+  // ── Paste text ──
+  const handlePaste = useCallback(() => {
+    if (!pasteText.trim()) return;
+    sendCommand(deviceId, 'input_text', { text: pasteText });
+    setPasteText('');
+    setShowPaste(false);
+    requestFrame();
+  }, [pasteText, deviceId, sendCommand, requestFrame]);
 
   const handleToggleBlackout = () => {
     if (blackoutLoading) return;
@@ -71,9 +154,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   };
 
   const handleStartRecord = () => {
-    if (!isStreaming) {
-      handleStartStream();
-    }
+    if (!isStreaming) handleStartStream();
     send('recording:start', { deviceId });
     setIsRecording(true);
     setRecStatus('Recording…');
@@ -161,7 +242,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const navBtn = (label, command, icon) => (
     <button
       className="sc-nav-btn"
-      onClick={() => sendCommand(deviceId, command)}
+      onClick={() => { sendCommand(deviceId, command); requestFrame(); }}
       disabled={!isOnline}
       title={command}
     >
@@ -175,16 +256,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / 1048576).toFixed(1) + ' MB';
   };
-
-  // Determine device resolution from deviceInfo (passed via device prop)
-  const devInfo = device?.deviceInfo || {};
-  const devW = devInfo.screenWidth  || null;
-  const devH = devInfo.screenHeight || null;
-  const resLabel = devW && devH ? `${devW}×${devH}` : null;
-
-  // Phone frame dimensions — maintain aspect ratio of device, capped at 360×780
-  const FRAME_W = 360;
-  const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
 
   return (
     <div className="screen-control">
@@ -219,17 +290,23 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
           {/* ── Phone Frame ── */}
           <div className="sc-phone-frame-wrap">
             <div className="sc-phone-bezel" style={{ width: FRAME_W + 32, paddingTop: 24, paddingBottom: 18, borderRadius: 32 }}>
-              {resLabel && (
-                <div className="sc-phone-res-label">{resLabel}</div>
-              )}
+              {resLabel && <div className="sc-phone-res-label">{resLabel}</div>}
               <div className="sc-phone-notch" />
-              <div className="sc-phone-screen-wrap" style={{ width: FRAME_W, height: FRAME_H }}>
+              <div
+                className="sc-phone-screen-wrap"
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isStreaming && isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
+                ref={screenRef}
+                onPointerDown={handlePointerDown}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
+              >
                 {streamFrame ? (
                   <img
                     className="sc-frame"
                     src={`data:image/jpeg;base64,${streamFrame}`}
                     alt="Live stream"
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: 8 }}
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: 8, pointerEvents: 'none' }}
                   />
                 ) : (
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
@@ -247,11 +324,51 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   </div>
                 )}
               </div>
+              {/* ── Swipe direction buttons below screen ── */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline} title="Swipe Up">▲</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
+                </div>
+              </div>
               <div className="sc-phone-home-bar-sc" />
             </div>
           </div>
 
-          <div className="sc-controls">
+          {/* ── Paste text ── */}
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <button
+              style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+              onClick={() => setShowPaste(v => !v)}
+              disabled={!isOnline}
+            >
+              📋 Paste Text
+            </button>
+            {showPaste && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="text"
+                  placeholder="Text to paste into device…"
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
+                  style={{ flex: 1, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
+                  autoFocus
+                />
+                <button
+                  onClick={handlePaste}
+                  disabled={!pasteText.trim()}
+                  style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  ↵ Send
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sc-controls" style={{ marginTop: 8 }}>
             {!isStreaming && (
               <select
                 value={streamFps}

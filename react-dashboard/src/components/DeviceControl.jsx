@@ -15,10 +15,10 @@ const TABS = [
   { id: 'keylogger',     label: '⌨️ Keylogger' },
   { id: 'app_manager',   label: '📦 App Manager' },
   { id: 'app_monitor',   label: '📡 App Monitor' },
-  { id: 'permissions',   label: '🔐 Permissions' },
+  { id: 'permissions',   label: '🛡️ App Mode' },
 ];
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send }) {
+export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries }) {
   const [activeTab, setActiveTab] = useState('commands');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
@@ -120,6 +120,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           device={device}
           sendCommand={sendCommand}
           results={results}
+          keylogPushEntries={keylogPushEntries || []}
         />
       )}
 

