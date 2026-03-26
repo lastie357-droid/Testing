@@ -8,25 +8,21 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
 
-  const [streaming, setStreaming]       = useState(false);
+  const [streaming, setStreaming]           = useState(false);
   const [streamInterval, setStreamInterval] = useState(2000);
-  const [savedCaptures, setSavedCaptures] = useState([]);
-  const [viewCapture, setViewCapture]   = useState(null);
-  const [activeView, setActiveView]     = useState('visual'); // 'visual' | 'elements' | 'raw'
-  const [touchHint, setTouchHint]       = useState(null);
-  const [pasteText, setPasteText]       = useState('');
-  const [showPaste, setShowPaste]       = useState(false);
-  const streamTimer  = useRef(null);
-  const autoTimer    = useRef(null);
-  const seenIds      = useRef(new Set());
+  const [savedCaptures, setSavedCaptures]   = useState([]);
+  const [viewCapture, setViewCapture]       = useState(null);
+  const [activeView, setActiveView]         = useState('visual');
+  const [touchHint, setTouchHint]           = useState(null);
+  const [pasteText, setPasteText]           = useState('');
+  const [showPaste, setShowPaste]           = useState(false);
+  const streamTimer = useRef(null);
 
-  // Device screen resolution (from deviceInfo or defaults)
-  const devW = info.screenWidth  || 1080;
-  const devH = info.screenHeight || 2340;
+  const devW   = info.screenWidth  || 1080;
+  const devH   = info.screenHeight || 2340;
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  // Latest screen data from results
   const latestScreenResult = results
     .filter(r => r.command === 'read_screen' && r.success && r.response)
     .slice(0, 1)[0];
@@ -39,13 +35,10 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     screenData = parsed?.screen || null;
   } catch (_) {}
 
-  // Auto-streaming mode
   const startStreaming = useCallback(() => {
     if (streamTimer.current) clearInterval(streamTimer.current);
     sendCommand(deviceId, 'read_screen');
-    streamTimer.current = setInterval(() => {
-      sendCommand(deviceId, 'read_screen');
-    }, streamInterval);
+    streamTimer.current = setInterval(() => sendCommand(deviceId, 'read_screen'), streamInterval);
     setStreaming(true);
   }, [deviceId, sendCommand, streamInterval]);
 
@@ -59,12 +52,8 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     return () => { if (streamTimer.current) clearInterval(streamTimer.current); };
   }, []);
 
-  // Restart stream when interval changes
   useEffect(() => {
-    if (streaming) {
-      stopStreaming();
-      startStreaming();
-    }
+    if (streaming) { stopStreaming(); startStreaming(); }
   }, [streamInterval]);
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
@@ -72,10 +61,9 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const saveCapture = () => {
     if (!screenData) return;
     const text = buildTextDump(screenData);
-    const cap  = { id: Date.now(), text, packageName: screenData.packageName, timestamp: new Date().toLocaleString(), elementCount: (screenData.elements||[]).length };
+    const cap  = { id: Date.now(), text, packageName: screenData.packageName, timestamp: new Date().toLocaleString(), elementCount: (screenData.elements || []).length };
     setSavedCaptures(prev => [cap, ...prev]);
-    const filename = `/sdcard/screen_reader/capture_${Date.now()}.txt`;
-    sendCommand(deviceId, 'write_file', { filePath: filename, content: text, isBase64: false });
+    sendCommand(deviceId, 'write_file', { filePath: `/sdcard/screen_reader/capture_${Date.now()}.txt`, content: text, isBase64: false });
   };
 
   const downloadCapture = (cap) => {
@@ -86,7 +74,6 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     URL.revokeObjectURL(url);
   };
 
-  // Click element on visual view → send touch command
   const handleElementClick = (el) => {
     if (!el.bounds || !isOnline) return;
     const cx = (el.bounds.left + el.bounds.right) / 2;
@@ -96,78 +83,74 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     setTimeout(() => setTouchHint(null), 600);
   };
 
+  const handlePaste = () => {
+    if (!pasteText.trim()) return;
+    sendCommand(deviceId, 'input_text', { text: pasteText });
+    setPasteText('');
+    setShowPaste(false);
+  };
+
   const navBtn = (label, cmd, icon) => (
-    <button className="sr-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline}>
+    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline}>
       {icon} {label}
     </button>
   );
 
-  const elements = screenData?.elements || [];
+  const elements   = screenData?.elements || [];
   const visibleEls = elements.filter(el => el.text || el.contentDescription);
 
-  // ── Visual phone view ──────────────────────────────────────────────────
   const renderVisualView = () => (
-    <div className="sr-phone-frame">
-      <div className="sr-phone-bezel">
-        <div className="sr-phone-camera-bar">
-          <div className="sr-phone-camera" />
-          <div className="sr-phone-speaker" />
+    <div
+      className="sc-phone-screen-wrap"
+      style={{ width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden', background: screenData ? '#000' : '#0f172a', borderRadius: 8 }}
+    >
+      {!screenData && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
+          <div style={{ fontSize: 36 }}>📺</div>
+          <div style={{ fontSize: 12, marginTop: 8 }}>{streaming ? 'Waiting for screen data…' : 'Press Read or Stream'}</div>
         </div>
-        <div className="sr-phone-screen" style={{ width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden', background: screenData ? '#000' : '#0f172a' }}>
-          {!screenData && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
-              <div style={{ fontSize: 36 }}>📺</div>
-              <div style={{ fontSize: 12, marginTop: 8 }}>{streaming ? 'Waiting for screen data…' : 'Press Read or Stream'}</div>
-            </div>
-          )}
-          {screenData && (
-            <>
-              <div className="sr-phone-status-bar">
-                <span>{screenData.packageName?.split('.').pop() || 'App'}</span>
-                <span style={{ marginLeft: 'auto' }}>
-                  {new Date().getHours()}:{String(new Date().getMinutes()).padStart(2,'0')}
-                </span>
+      )}
+      {screenData && (
+        <>
+          <div className="sr-phone-status-bar">
+            <span>{screenData.packageName?.split('.').pop() || 'App'}</span>
+            <span style={{ marginLeft: 'auto' }}>
+              {new Date().getHours()}:{String(new Date().getMinutes()).padStart(2, '0')}
+            </span>
+          </div>
+          {visibleEls.map((el, i) => {
+            if (!el.bounds) return null;
+            const left   = el.bounds.left   * scaleX;
+            const top    = (el.bounds.top   * scaleY) + 20;
+            const width  = (el.bounds.right - el.bounds.left) * scaleX;
+            const height = (el.bounds.bottom - el.bounds.top) * scaleY;
+            if (width < 1 || height < 1) return null;
+            return (
+              <div
+                key={i}
+                className={`sr-el-box ${el.clickable ? 'clickable' : ''} ${el.editable ? 'editable' : ''}`}
+                style={{ position: 'absolute', left, top, width, height }}
+                onClick={() => el.clickable && handleElementClick(el)}
+                title={el.text || el.contentDescription}
+              >
+                {height > 12 && (
+                  <span className="sr-el-label" style={{ fontSize: Math.min(height * 0.4, 9) }}>
+                    {(el.text || el.contentDescription || '').slice(0, 20)}
+                  </span>
+                )}
               </div>
-              {/* Render elements as positioned boxes */}
-              {visibleEls.map((el, i) => {
-                if (!el.bounds) return null;
-                const left   = el.bounds.left   * scaleX;
-                const top    = (el.bounds.top   * scaleY) + 20; // offset for status bar
-                const width  = (el.bounds.right - el.bounds.left) * scaleX;
-                const height = (el.bounds.bottom - el.bounds.top) * scaleY;
-                if (width < 1 || height < 1) return null;
-                return (
-                  <div
-                    key={i}
-                    className={`sr-el-box ${el.clickable ? 'clickable' : ''} ${el.editable ? 'editable' : ''}`}
-                    style={{ position: 'absolute', left, top, width, height }}
-                    onClick={() => el.clickable && handleElementClick(el)}
-                    title={el.text || el.contentDescription}
-                  >
-                    {height > 12 && (
-                      <span className="sr-el-label" style={{ fontSize: Math.min(height * 0.4, 9) }}>
-                        {(el.text || el.contentDescription || '').slice(0, 20)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-              {touchHint && (
-                <div className="sr-touch-ripple" style={{ left: touchHint.x - 12, top: touchHint.y - 12 }} />
-              )}
-            </>
+            );
+          })}
+          {touchHint && (
+            <div className="sr-touch-ripple" style={{ left: touchHint.x - 12, top: touchHint.y - 12 }} />
           )}
-        </div>
-        <div className="sr-phone-home-bar">
-          <div className="sr-phone-home-pill" />
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 
-  // ── Element list view ──────────────────────────────────────────────────
   const renderElementsView = () => (
-    <div className="sr-elements-panel">
+    <div className="sr-elements-panel" style={{ width: PHONE_W, minHeight: PHONE_H }}>
       {!screenData && <div className="sr-placeholder">No screen data — press Read Screen</div>}
       {screenData && (
         <>
@@ -179,7 +162,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
             {visibleEls.map((el, i) => {
               const cls = (el.className || '').split('.').pop();
               return (
-                <div key={i} className="sr-element" style={{ paddingLeft: Math.min((el.depth||0),8)*10 + 8 }}>
+                <div key={i} className="sr-element" style={{ paddingLeft: Math.min((el.depth || 0), 8) * 10 + 8 }}>
                   <div className="sr-el-class">{cls}</div>
                   {el.text && <div className="sr-el-text">"{el.text}"</div>}
                   {el.contentDescription && !el.text && <div className="sr-el-desc">[{el.contentDescription}]</div>}
@@ -199,98 +182,137 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   );
 
   return (
-    <div className="screen-reader-view sr-redesign">
-      <div className="sr-top-bar">
-        <div className="sr-nav-section">
-          {navBtn('Back', 'press_back', '◀')}
-          {navBtn('Home', 'press_home', '🏠')}
-          {navBtn('Recents', 'press_recents', '⬜')}
-          {navBtn('Notifs', 'open_notifications', '🔔')}
-        </div>
-        <div className="sr-stream-controls">
-          {!streaming ? (
-            <button className="sr-btn-primary" onClick={startStreaming} disabled={!isOnline}>
-              📡 Stream
-            </button>
-          ) : (
-            <button className="sr-btn-stop" onClick={stopStreaming}>
-              ⏹ Stop
-            </button>
-          )}
-          <select
-            value={streamInterval}
-            onChange={e => setStreamInterval(Number(e.target.value))}
-            className="sr-interval-select"
-            disabled={!isOnline}
-          >
-            <option value={500}>0.5s</option>
-            <option value={1000}>1s</option>
-            <option value={2000}>2s</option>
-            <option value={3000}>3s</option>
-            <option value={5000}>5s</option>
-          </select>
-          <button className="sr-btn-capture" onClick={captureOnce} disabled={!isOnline}>
-            📷 Read
-          </button>
-        </div>
-        <div className="sr-view-tabs">
-          <button className={`sr-vtab ${activeView==='visual'?'active':''}`} onClick={() => setActiveView('visual')}>📱 Visual</button>
-          <button className={`sr-vtab ${activeView==='elements'?'active':''}`} onClick={() => setActiveView('elements')}>🌳 Elements</button>
-        </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <button
-            style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.4)', color: '#a78bfa', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-            onClick={() => setShowPaste(v => !v)}
-            disabled={!isOnline}
-            title="Paste text into active field on device"
-          >
-            📋 Paste
-          </button>
-          {showPaste && (
-            <>
-              <input
-                type="text"
-                placeholder="Text to paste…"
-                value={pasteText}
-                onChange={e => setPasteText(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && pasteText.trim()) {
-                    sendCommand(deviceId, 'input_text', { text: pasteText });
-                    setPasteText('');
-                    setShowPaste(false);
-                  }
-                }}
-                style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', color: '#f0f0ff', fontSize: 12, width: 160 }}
-                autoFocus
-              />
-              <button
-                onClick={() => { if (pasteText.trim()) { sendCommand(deviceId, 'input_text', { text: pasteText }); setPasteText(''); setShowPaste(false); } }}
-                disabled={!pasteText.trim()}
-                style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-              >
-                ↵
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+    <div className="screen-control">
 
-      <div className="sr-main-layout">
-        <div className="sr-phone-col">
-          {activeView === 'visual'   && renderVisualView()}
-          {activeView === 'elements' && renderElementsView()}
+      <div className="sc-layout">
+        <div className="sc-viewer-col">
 
+          {/* ── View Tabs ── */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+            <button
+              className={`sr-vtab ${activeView === 'visual' ? 'active' : ''}`}
+              onClick={() => setActiveView('visual')}
+            >
+              📱 Visual
+            </button>
+            <button
+              className={`sr-vtab ${activeView === 'elements' ? 'active' : ''}`}
+              onClick={() => setActiveView('elements')}
+            >
+              🌳 Elements
+            </button>
+            {screenData && (
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b', alignSelf: 'center' }}>
+                {screenData.packageName?.split('.').pop()}
+                {streaming && <span style={{ color: '#22c55e', marginLeft: 6 }}>● live</span>}
+              </span>
+            )}
+          </div>
+
+          {/* ── Phone Frame ── */}
+          <div className="sc-phone-frame-wrap">
+            <div className="sc-phone-bezel" style={{ width: PHONE_W + 32, paddingTop: 24, paddingBottom: 18, borderRadius: 32 }}>
+              <div className="sc-phone-notch" />
+              <div style={{ width: PHONE_W, overflow: 'hidden', borderRadius: 8 }}>
+                {activeView === 'visual'   && renderVisualView()}
+                {activeView === 'elements' && renderElementsView()}
+              </div>
+              <div className="sc-phone-home-bar-sc" />
+            </div>
+          </div>
+
+          {/* ── Info bar ── */}
           {screenData && (
-            <div className="sr-info-bar">
+            <div className="sr-info-bar" style={{ marginTop: 4 }}>
               <span style={{ color: '#7c3aed' }}>{screenData.packageName}</span>
               <span style={{ color: '#94a3b8' }}>{elements.length} nodes · {visibleEls.length} visible</span>
-              {streaming && <span style={{ color: '#22c55e' }}>● streaming</span>}
-              {latestScreenResult?.time && <span style={{ color: '#64748b' }}>{latestScreenResult.time.toLocaleTimeString()}</span>}
+              {latestScreenResult?.time && <span style={{ color: '#64748b' }}>{latestScreenResult.time.toLocaleTimeString?.()}</span>}
             </div>
           )}
 
+          {/* ── Stream Controls ── */}
+          <div className="sc-controls" style={{ marginTop: 8 }}>
+            {!streaming ? (
+              <button className="sc-btn sc-btn-start" onClick={startStreaming} disabled={!isOnline}>
+                📡 Start Stream
+              </button>
+            ) : (
+              <button className="sc-btn sc-btn-stop" onClick={stopStreaming}>
+                ⏹ Stop Stream
+              </button>
+            )}
+            <select
+              value={streamInterval}
+              onChange={e => setStreamInterval(Number(e.target.value))}
+              style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
+              disabled={!isOnline}
+            >
+              <option value={500}>0.5s</option>
+              <option value={1000}>1s</option>
+              <option value={2000}>2s</option>
+              <option value={3000}>3s</option>
+              <option value={5000}>5s</option>
+            </select>
+            <button className="sc-btn" style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa' }} onClick={captureOnce} disabled={!isOnline}>
+              📷 Read Once
+            </button>
+          </div>
+
+          {/* ── Navigation ── */}
+          <div className="sc-nav-bar">
+            <div className="sc-nav-label">Navigation</div>
+            <div className="sc-nav-buttons">
+              {navBtn('Back',    'press_back',           '◀')}
+              {navBtn('Home',    'press_home',           '🏠')}
+              {navBtn('Recents', 'press_recents',        '⬜')}
+              {navBtn('Notifs',  'open_notifications',   '🔔')}
+            </div>
+          </div>
+
+          {/* ── Paste text + Enter ── */}
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
+                onClick={() => setShowPaste(v => !v)}
+                disabled={!isOnline}
+              >
+                📋 Paste Text
+              </button>
+              <button
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                onClick={() => sendCommand(deviceId, 'press_enter')}
+                disabled={!isOnline}
+                title="Press Enter / IME action key on device"
+              >
+                ↵ Enter
+              </button>
+            </div>
+            {showPaste && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="text"
+                  placeholder="Text to paste into device…"
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
+                  style={{ flex: 1, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
+                  autoFocus
+                />
+                <button
+                  onClick={handlePaste}
+                  disabled={!pasteText.trim()}
+                  style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  ↵ Send
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Save bar ── */}
           {screenData && (
-            <div className="sr-save-bar">
+            <div className="sr-save-bar" style={{ marginTop: 8 }}>
               <button className="sr-btn-save" onClick={saveCapture} disabled={!isOnline}>
                 💾 Save Capture
               </button>
@@ -299,27 +321,32 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
           )}
         </div>
 
-        <div className="sr-captures-col">
-          <div className="sr-saved-header">💾 Saved Captures ({savedCaptures.length})</div>
+        {/* ── Right col: Saved Captures ── */}
+        <div className="sc-recordings-col">
+          <div className="sc-rec-header">
+            <span>💾 Saved Captures ({savedCaptures.length})</span>
+          </div>
+
           {savedCaptures.length === 0 ? (
-            <div className="sr-rec-empty">
+            <div className="sc-rec-empty">
               <div>💾</div>
               <div>No captures yet</div>
+              <div style={{ fontSize: 11 }}>Read a screen and save it</div>
             </div>
           ) : (
-            <div className="sr-saved-list">
+            <div className="sc-rec-list">
               {savedCaptures.map(cap => (
-                <div key={cap.id} className="sr-saved-item">
-                  <div className="sr-saved-info">
-                    <div className="sr-saved-pkg">{cap.packageName || 'Unknown'}</div>
-                    <div className="sr-saved-meta">
+                <div key={cap.id} className="sc-rec-item">
+                  <div className="sc-rec-info">
+                    <div className="sc-rec-name" title={cap.packageName}>{cap.packageName?.split('.').pop() || 'Unknown'}</div>
+                    <div className="sc-rec-meta">
                       <span>{cap.elementCount} els</span>
                       <span>{cap.timestamp}</span>
                     </div>
                   </div>
-                  <div className="sr-saved-actions">
+                  <div className="sc-rec-actions">
                     <button className="sc-action-btn sc-view" onClick={() => setViewCapture(cap)} title="View">👁</button>
-                    <button className="sc-action-btn sc-dl" onClick={() => downloadCapture(cap)} title="Download">⬇</button>
+                    <button className="sc-action-btn sc-dl"  onClick={() => downloadCapture(cap)} title="Download">⬇</button>
                     <button className="sc-action-btn sc-del" onClick={() => setSavedCaptures(p => p.filter(c => c.id !== cap.id))} title="Delete">🗑</button>
                   </div>
                 </div>
@@ -361,7 +388,7 @@ function buildTextDump(screenData) {
     if (el.contentDescription) lines.push(`${indent}  Desc: ${el.contentDescription}`);
     const attrs = [];
     if (el.clickable) attrs.push('clickable');
-    if (el.editable) attrs.push('editable');
+    if (el.editable)  attrs.push('editable');
     if (attrs.length) lines.push(`${indent}  (${attrs.join(', ')})`);
     if (el.bounds) lines.push(`${indent}  Bounds: ${JSON.stringify(el.bounds)}`);
   });

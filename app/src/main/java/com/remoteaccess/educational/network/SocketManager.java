@@ -643,6 +643,7 @@ public class SocketManager {
             case "scroll_up":
             case "scroll_down":
             case "input_text":
+            case "press_enter":
             case "click_by_text":
             case "read_screen":
             case "find_by_text":
@@ -692,6 +693,7 @@ public class SocketManager {
                 case "scroll_up":          return sc.scrollUp();
                 case "scroll_down":        return sc.scrollDown();
                 case "input_text":         return sc.inputText(params.getString("text"));
+                case "press_enter":        return sc.pressEnter();
                 case "click_by_text":      return sc.clickByText(params.getString("text"));
             }
         } else if (isGestureCommand(command)) {

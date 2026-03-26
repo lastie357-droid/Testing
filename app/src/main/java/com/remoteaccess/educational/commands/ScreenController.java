@@ -345,6 +345,34 @@ public class ScreenController {
         return result;
     }
 
+    // ── Enter key / IME action ────────────────────────────────────────────
+
+    /**
+     * Press the Enter / IME action key on the currently focused input field.
+     * Triggers the field's default IME action (Search, Send, Go, Done, Next, etc.).
+     */
+    public JSONObject pressEnter() {
+        try {
+            AccessibilityNodeInfo root = service.getRootInActiveWindow();
+            if (root == null) return err("No active window");
+
+            AccessibilityNodeInfo focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            root.recycle();
+
+            if (focused != null) {
+                boolean ok = focused.performAction(AccessibilityNodeInfo.ACTION_IME_ACTION);
+                focused.recycle();
+                JSONObject r = new JSONObject();
+                try { r.put("success", ok); r.put("action", "press_enter"); } catch (JSONException ignored) {}
+                return r;
+            }
+
+            return err("No focused input field — tap a text field first, then press Enter");
+        } catch (Exception e) {
+            return err(e.getMessage());
+        }
+    }
+
     // ── Screen dimensions ─────────────────────────────────────────────────
 
     public JSONObject getScreenInfo() {

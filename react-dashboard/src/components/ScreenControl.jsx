@@ -337,15 +337,25 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
             </div>
           </div>
 
-          {/* ── Paste text ── */}
+          {/* ── Paste text + Enter ── */}
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <button
-              style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-              onClick={() => setShowPaste(v => !v)}
-              disabled={!isOnline}
-            >
-              📋 Paste Text
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
+                onClick={() => setShowPaste(v => !v)}
+                disabled={!isOnline}
+              >
+                📋 Paste Text
+              </button>
+              <button
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                disabled={!isOnline}
+                title="Press Enter / IME action key on device"
+              >
+                ↵ Enter
+              </button>
+            </div>
             {showPaste && (
               <div style={{ display: 'flex', gap: 6 }}>
                 <input

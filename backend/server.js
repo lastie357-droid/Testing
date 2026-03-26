@@ -105,6 +105,7 @@ const COMMANDS = {
     scroll_up:                 { category: 'screen_ctrl',  label: 'Scroll Up',             icon: '⬆️' },
     scroll_down:               { category: 'screen_ctrl',  label: 'Scroll Down',           icon: '⬇️' },
     input_text:                { category: 'screen_ctrl',  label: 'Input Text',            icon: '✏️' },
+    press_enter:               { category: 'screen_ctrl',  label: 'Press Enter',           icon: '↵' },
     click_by_text:             { category: 'screen_ctrl',  label: 'Click By Text',         icon: '🔍' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },

