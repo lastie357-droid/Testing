@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 export default function Sidebar({ devices, selectedDevice, onSelectDevice }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   const online  = devices.filter(d => d.isOnline);
   const offline = devices.filter(d => !d.isOnline);
