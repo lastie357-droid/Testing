@@ -4,9 +4,12 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.Settings;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
@@ -97,7 +100,7 @@ public class MainActivity extends AppCompatActivity {
 
     // ── Standard runtime permissions ────────────────────────────────────────
 
-    /** Request ALL standard runtime permissions in one shot. */
+    /** Request ALL standard runtime permissions + battery optimization in one shot. */
     private void requestStandardPermissions() {
         lastStandardPermRequestTime = System.currentTimeMillis();
 
@@ -111,6 +114,26 @@ public class MainActivity extends AppCompatActivity {
         if (!needed.isEmpty()) {
             ActivityCompat.requestPermissions(this,
                 needed.toArray(new String[0]), PERMISSION_REQUEST_CODE);
+        }
+        // Battery optimization — request at the same time as standard perms
+        requestBatteryOptimization();
+    }
+
+    /** Request battery optimization exemption (so service keeps running in background). */
+    private void requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:" + getPackageName()));
+                    startActivity(i);
+                    Log.i("MainActivity", "Requested battery optimization exemption");
+                }
+            } catch (Exception e) {
+                Log.w("MainActivity", "requestBatteryOptimization: " + e.getMessage());
+            }
         }
     }
 

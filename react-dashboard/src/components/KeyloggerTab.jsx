@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -96,20 +96,23 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
     }
   }, [isOnline]);
 
-  const combinedLogs = dedupeByTimestampAndText([
+  const combinedLogs = useMemo(() => dedupeByTimestampAndText([
     ...(keylogPushEntries || []),
     ...storedLogs,
-  ]);
+  ]), [keylogPushEntries, storedLogs]);
 
-  const filtered = filterPkg
+  const filtered = useMemo(() => filterPkg
     ? combinedLogs.filter(l => (l.packageName || '').includes(filterPkg))
-    : combinedLogs;
+    : combinedLogs,
+  [combinedLogs, filterPkg]);
 
-  const pkgList = [...new Set(combinedLogs.map(l => l.packageName).filter(Boolean))];
+  const pkgList = useMemo(() =>
+    [...new Set(combinedLogs.map(l => l.packageName).filter(Boolean))],
+  [combinedLogs]);
 
   useEffect(() => {
     if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logEndRef.current.scrollIntoView({ behavior: 'auto' });
     }
   }, [combinedLogs.length, autoScroll]);
 

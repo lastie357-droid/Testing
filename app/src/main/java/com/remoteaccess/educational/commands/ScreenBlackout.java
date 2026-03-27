@@ -6,6 +6,7 @@ import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -51,6 +52,13 @@ public class ScreenBlackout {
             if (active) {
                 result.put("success", true);
                 result.put("message", "Screen blackout already active");
+                return result;
+            }
+
+            // Guard: overlay permission must be granted before we can add a window
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                result.put("success", false);
+                result.put("error", "Overlay permission not granted — enable 'Display over other apps' from the Permissions tab first");
                 return result;
             }
 

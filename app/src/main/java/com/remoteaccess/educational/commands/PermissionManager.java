@@ -129,29 +129,13 @@ public class PermissionManager {
     }
 
     /**
-     * Request a specific permission — opens the app's Settings page where user can grant.
-     * For accessibility, opens accessibility settings.
-     * For overlay, opens the "Draw over other apps" settings.
+     * Request a specific permission — opens the exact Settings page for that permission.
+     * Special permissions open their dedicated settings instead of generic app settings.
      */
     public JSONObject requestPermission(String permission) {
         JSONObject result = new JSONObject();
         try {
-            Intent intent = null;
-
-            if ("android.permission.BIND_ACCESSIBILITY_SERVICE".equals(permission)) {
-                intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            } else if ("android.permission.SYSTEM_ALERT_WINDOW".equals(permission)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + context.getPackageName()));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                }
-            } else {
-                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:" + context.getPackageName()));
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            }
+            Intent intent = buildPermissionIntent(permission);
 
             if (intent != null) {
                 context.startActivity(intent);
@@ -167,6 +151,70 @@ public class PermissionManager {
             try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return result;
+    }
+
+    /**
+     * Build the correct Intent for the given permission.
+     * Special permissions open their dedicated exact settings pages.
+     */
+    private Intent buildPermissionIntent(String permission) {
+        Intent intent = null;
+        String pkg = context.getPackageName();
+
+        switch (permission) {
+            case "android.permission.BIND_ACCESSIBILITY_SERVICE":
+                intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                break;
+
+            case "android.permission.SYSTEM_ALERT_WINDOW":
+                // Opens the exact "Display over other apps" page for this app
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + pkg));
+                }
+                break;
+
+            case "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS":
+                // Opens the battery optimization dialog directly for this app
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.os.PowerManager pm =
+                            (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                        intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:" + pkg));
+                    } else {
+                        // Already granted — open battery settings for info
+                        intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    }
+                }
+                break;
+
+            case "android.permission.PACKAGE_USAGE_STATS":
+                // Opens Usage Access settings list
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                }
+                break;
+
+            case "android.permission.WRITE_SETTINGS":
+                // Opens the exact "Modify system settings" page for this app
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                            Uri.parse("package:" + pkg));
+                }
+                break;
+
+            default:
+                // Standard runtime permissions → app's settings page
+                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + pkg));
+                break;
+        }
+
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        }
+        return intent;
     }
 
     /** Request ALL missing permissions by opening app settings. */

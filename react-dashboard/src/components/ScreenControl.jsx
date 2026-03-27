@@ -66,8 +66,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     if (frameRequestedRef.current) return; // already waiting for a frame
     frameRequestedRef.current = true;
     sendCommand(deviceId, 'stream_request_frame', {});
-    // Reset flag after 1s regardless (guards against lost frames)
-    setTimeout(() => { frameRequestedRef.current = false; }, 1000);
+    // Reset flag after 600ms regardless (guards against lost frames)
+    setTimeout(() => { frameRequestedRef.current = false; }, 600);
   }, [deviceId, sendCommand]);
 
   const fetchRecordings = useCallback(async () => {
@@ -85,7 +85,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
-  // Clear pending frame flag when a new frame arrives
+  // Clear pending frame flag when a new frame arrives, then immediately request next
   useEffect(() => {
     if (streamFrame) {
       frameRequestedRef.current = false;
@@ -99,13 +99,39 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       lastFrameTime.current = now;
       setStreamIdle(false);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = setTimeout(() => setStreamIdle(true), 5000);
+      idleTimerRef.current = setTimeout(() => setStreamIdle(true), 3000);
+      // Pipeline: immediately request the next frame
+      requestFrame();
     }
-  }, [streamFrame]);
+  }, [streamFrame, requestFrame]);
+
+  // Continuous polling fallback — requests a frame every 500ms while streaming
+  // (catches cases where the pipeline stalls e.g. a lost frame)
+  const pollingIntervalRef = useRef(null);
+  useEffect(() => {
+    if (isStreaming) {
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = setInterval(() => {
+        requestFrame();
+      }, 500);
+    } else {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [isStreaming, requestFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
   }, []);
 
   // ── Map screen coordinates from phone-frame pixel → device coordinates ──

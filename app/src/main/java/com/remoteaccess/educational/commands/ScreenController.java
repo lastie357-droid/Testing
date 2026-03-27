@@ -348,26 +348,98 @@ public class ScreenController {
     // ── Enter key / IME action ────────────────────────────────────────────
 
     /**
-     * Press the Enter / IME action key on the currently focused input field.
-     * Triggers the field's default IME action (Search, Send, Go, Done, Next, etc.).
+     * Press the Enter / IME action key globally.
+     * Strategy:
+     *   1. IME action on input-focused node
+     *   2. ACTION_CLICK on accessibility-focused node
+     *   3. Find and click visible submit/go/search/done buttons by text
+     *   4. Fallback: swipe-gesture on the Enter key region of the soft keyboard
      */
     public JSONObject pressEnter() {
         try {
             AccessibilityNodeInfo root = service.getRootInActiveWindow();
             if (root == null) return err("No active window");
 
+            // ── 1. IME action on input-focused node ───────────────────────
             AccessibilityNodeInfo focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-            root.recycle();
-
             if (focused != null) {
                 boolean ok = focused.performAction(AccessibilityNodeInfo.ACTION_IME_ACTION);
                 focused.recycle();
-                JSONObject r = new JSONObject();
-                try { r.put("success", ok); r.put("action", "press_enter"); } catch (JSONException ignored) {}
-                return r;
+                if (ok) {
+                    root.recycle();
+                    JSONObject r = new JSONObject();
+                    r.put("success", true);
+                    r.put("action", "press_enter_ime");
+                    return r;
+                }
             }
 
-            return err("No focused input field — tap a text field first, then press Enter");
+            // ── 2. Click on accessibility-focused node ────────────────────
+            AccessibilityNodeInfo accFocused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+            if (accFocused != null) {
+                boolean ok = accFocused.performAction(AccessibilityNodeInfo.ACTION_IME_ACTION);
+                if (!ok) ok = accFocused.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                accFocused.recycle();
+                if (ok) {
+                    root.recycle();
+                    JSONObject r = new JSONObject();
+                    r.put("success", true);
+                    r.put("action", "press_enter_acc_focus");
+                    return r;
+                }
+            }
+
+            // ── 3. Find and click common submit/go/search buttons ─────────
+            String[] submitLabels = {
+                "Search", "search", "Go", "go", "Done", "done",
+                "Send", "send", "Submit", "submit", "Next", "next",
+                "OK", "Ok", "Confirm", "confirm", "Login", "Sign in",
+                "Enter", "Return", "Find", "Proceed"
+            };
+            for (String label : submitLabels) {
+                java.util.List<AccessibilityNodeInfo> nodes =
+                    root.findAccessibilityNodeInfosByText(label);
+                if (nodes != null) {
+                    for (AccessibilityNodeInfo n : nodes) {
+                        CharSequence cls = n.getClassName();
+                        boolean isButton = cls != null && (
+                            cls.toString().contains("Button") ||
+                            cls.toString().contains("ImageView") ||
+                            cls.toString().contains("TextView"));
+                        if ((n.isClickable() || isButton) && n.isEnabled()) {
+                            boolean clicked = n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            n.recycle();
+                            if (clicked) {
+                                for (AccessibilityNodeInfo rem : nodes) {
+                                    try { rem.recycle(); } catch (Exception ignored) {}
+                                }
+                                root.recycle();
+                                JSONObject r = new JSONObject();
+                                r.put("success", true);
+                                r.put("action", "press_enter_button");
+                                r.put("matched", label);
+                                return r;
+                            }
+                        }
+                        n.recycle();
+                    }
+                }
+            }
+
+            // ── 4. Tap the Enter key area of the soft keyboard ────────────
+            // The keyboard Enter key is typically in the bottom-right area of the screen
+            int kbEnterX = (int)(screenW * 0.92);
+            int kbEnterY = (int)(screenH * 0.94);
+            Path path = new Path();
+            path.moveTo(kbEnterX, kbEnterY);
+            boolean gestureOk = dispatchPath(path, 80);
+
+            root.recycle();
+            JSONObject r = new JSONObject();
+            r.put("success", gestureOk);
+            r.put("action", "press_enter_gesture");
+            if (!gestureOk) r.put("error", "Could not find focused input or submit button");
+            return r;
         } catch (Exception e) {
             return err(e.getMessage());
         }

@@ -182,7 +182,11 @@ const tcpClients = new Map();          // connId → TCP socket
 /** @type {Map<string, WebSocket & {id:string, deviceId?:string, clientType:'dashboard', lastPong:number}>} */
 const wsClients  = new Map();          // clientId → WebSocket
 /** @type {Map<string, string>} */
-const deviceToTcp = new Map();         // deviceId → TCP connId
+const deviceToTcp = new Map();         // deviceId → primary TCP connId
+/** @type {Map<string, string>} */
+const deviceToStreamTcp = new Map();   // deviceId → stream channel TCP connId
+/** @type {Map<string, string>} */
+const deviceToLiveTcp = new Map();     // deviceId → live channel TCP connId
 /** @type {Map<string, {wsId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
 const pendingCmds = new Map();         // commandId → pending info
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
@@ -275,6 +279,26 @@ async function processMessage(clientId, clientType, event, data) {
         // Notify dashboards
         broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
         broadcastDeviceList();
+        return;
+    }
+
+    // ── Multi-channel registration from Android secondary sockets ────────────
+    if (event === 'device:register_channel') {
+        const { deviceId, channelType } = data || {};
+        if (!deviceId || !channelType) return;
+        const conn = tcpClients.get(clientId);
+        if (conn) {
+            conn.deviceId    = deviceId;
+            conn.channelType = channelType;
+            conn.lastPong    = Date.now();
+            if (channelType === 'stream') {
+                deviceToStreamTcp.set(deviceId, clientId);
+                log('TCP', `Stream channel registered for ${deviceId}`);
+            } else if (channelType === 'live') {
+                deviceToLiveTcp.set(deviceId, clientId);
+                log('TCP', `Live channel registered for ${deviceId}`);
+            }
+        }
         return;
     }
 
@@ -525,16 +549,25 @@ const tcpServer = net.createServer((conn) => {
     });
 
     conn.on('close', async () => {
-        log('TCP', `Disconnected ${id} (device: ${conn.deviceId || 'unregistered'})`);
+        log('TCP', `Disconnected ${id} (device: ${conn.deviceId || 'unregistered'}, channel: ${conn.channelType || 'primary'})`);
         tcpClients.delete(id);
         if (conn.deviceId) {
-            deviceToTcp.delete(conn.deviceId);
-            try {
-                await Device.findOneAndUpdate({ deviceId: conn.deviceId },
-                    { isOnline: false, lastSeen: new Date() });
-            } catch (e) {}
-            broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
-            broadcastDeviceList();
+            if (conn.channelType === 'stream') {
+                // Clean up stream channel reference
+                if (deviceToStreamTcp.get(conn.deviceId) === id) deviceToStreamTcp.delete(conn.deviceId);
+            } else if (conn.channelType === 'live') {
+                // Clean up live channel reference
+                if (deviceToLiveTcp.get(conn.deviceId) === id) deviceToLiveTcp.delete(conn.deviceId);
+            } else {
+                // Primary channel disconnect — device is offline
+                deviceToTcp.delete(conn.deviceId);
+                try {
+                    await Device.findOneAndUpdate({ deviceId: conn.deviceId },
+                        { isOnline: false, lastSeen: new Date() });
+                } catch (e) {}
+                broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
+                broadcastDeviceList();
+            }
         }
     });
 

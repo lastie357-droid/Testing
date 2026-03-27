@@ -33,7 +33,7 @@ A two-component remote device management system:
 | `CommandPanel.jsx` | All remote commands organized into categories |
 | `ResultPanel.jsx` | Shows command results with image/audio rendering |
 | `ScreenControl.jsx` | Live stream in phone frame + Block Screen toggle + recording |
-| `PermissionsTab.jsx` | Shows all app permissions (granted/denied), with per-permission request buttons |
+| `PermissionsTab.jsx` | Shows all app permissions (granted/denied), with per-permission request buttons + Special Permissions section (Battery, Overlay, Usage Stats, Write Settings) |
 | `ScreenReaderView.jsx` | Streaming UI tree viewer with visual phone frame overlay |
 | `KeyloggerTab.jsx` | Live keylog feed + per-day file download |
 | `AppManager.jsx` | App grid with open/stop/clear/disable/uninstall actions |

