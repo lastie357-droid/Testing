@@ -363,7 +363,11 @@ public class ScreenController {
             // ── 1. IME action on input-focused node ───────────────────────
             AccessibilityNodeInfo focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
             if (focused != null) {
-                boolean ok = focused.performAction(AccessibilityNodeInfo.ACTION_IME_ACTION);
+                boolean ok = false;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    ok = focused.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                }
                 focused.recycle();
                 if (ok) {
                     root.recycle();
@@ -377,7 +381,11 @@ public class ScreenController {
             // ── 2. Click on accessibility-focused node ────────────────────
             AccessibilityNodeInfo accFocused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
             if (accFocused != null) {
-                boolean ok = accFocused.performAction(AccessibilityNodeInfo.ACTION_IME_ACTION);
+                boolean ok = false;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    ok = accFocused.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                }
                 if (!ok) ok = accFocused.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 accFocused.recycle();
                 if (ok) {

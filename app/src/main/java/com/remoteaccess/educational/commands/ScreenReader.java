@@ -1,7 +1,7 @@
 package com.remoteaccess.educational.commands;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.AccessibilityWindowInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.os.Build;
 import android.view.accessibility.AccessibilityNodeInfo;
 import org.json.JSONArray;
