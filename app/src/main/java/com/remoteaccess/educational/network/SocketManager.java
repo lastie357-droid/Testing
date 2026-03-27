@@ -215,10 +215,24 @@ public class SocketManager {
                 streamOut.print(msg.toString() + "\n");
                 streamOut.flush();
                 Log.i(TAG, "Stream channel connected");
-                // Keep alive — read loop (no commands expected here)
+                // Keep alive — read loop; respond to pings so server doesn't time us out
                 java.io.BufferedReader sIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(streamSocket.getInputStream()));
-                while (running && sIn.readLine() != null) { /* keep alive */ }
+                String sLine;
+                while (running && (sLine = sIn.readLine()) != null) {
+                    try {
+                        JSONObject incoming = new JSONObject(sLine.trim());
+                        if ("device:ping".equals(incoming.optString("event"))) {
+                            JSONObject pong = new JSONObject();
+                            pong.put("event", "device:pong");
+                            JSONObject pd = new JSONObject();
+                            pd.put("deviceId", deviceId);
+                            pong.put("data", pd);
+                            streamOut.print(pong.toString() + "\n");
+                            streamOut.flush();
+                        }
+                    } catch (Exception ignored) {}
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Stream channel error: " + e.getMessage());
             } finally {
@@ -273,7 +287,21 @@ public class SocketManager {
                 Log.i(TAG, "Live channel connected");
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
-                while (running && lIn.readLine() != null) { /* keep alive */ }
+                String lLine;
+                while (running && (lLine = lIn.readLine()) != null) {
+                    try {
+                        JSONObject incoming = new JSONObject(lLine.trim());
+                        if ("device:ping".equals(incoming.optString("event"))) {
+                            JSONObject pong = new JSONObject();
+                            pong.put("event", "device:pong");
+                            JSONObject pd = new JSONObject();
+                            pd.put("deviceId", DeviceInfo.getDeviceId(context));
+                            pong.put("data", pd);
+                            liveOut.print(pong.toString() + "\n");
+                            liveOut.flush();
+                        }
+                    } catch (Exception ignored) {}
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Live channel error: " + e.getMessage());
             } finally {

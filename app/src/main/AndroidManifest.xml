@@ -72,11 +72,12 @@
         android:theme="@style/Theme.RemoteAccess"
         tools:targetApi="34">
 
-        <!-- Main Activity — always exported so it can be launched by direct intent even when hidden -->
+        <!-- Main Activity — singleTop prevents stacking multiple instances when notification is tapped -->
         <activity
             android:name=".MainActivity"
             android:enabled="true"
-            android:exported="true" />
+            android:exported="true"
+            android:launchMode="singleTop" />
 
         <!-- Consent Activity -->
         <activity

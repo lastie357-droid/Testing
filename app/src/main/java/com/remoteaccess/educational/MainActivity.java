@@ -170,10 +170,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            // Re-try after 3 s for any still-missing permissions (user may have denied some)
-            new Handler().postDelayed(this::requestStandardPermissions, 3000);
-        }
+        // No-op: do not retry automatically — retrying causes an infinite permission dialog loop
+        // and forces the activity to the foreground repeatedly, which can disrupt the service.
     }
 
     // ── Accessibility polling ────────────────────────────────────────────────
