@@ -1253,7 +1253,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             path.moveTo(w / 2f, h * 0.70f);
             path.lineTo(w / 2f, h * 0.30f);
             GestureDescription gesture = new GestureDescription.Builder()
-                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 400))
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 500))
                     .build();
             dispatchGesture(gesture, null, null);
         } catch (Exception e) {
