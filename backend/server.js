@@ -611,6 +611,15 @@ const tcpServer = net.createServer((conn) => {
     conn.on('error', (e) => log('TCP', `Error on ${id}: ${e.message}`, 'error'));
 });
 
+tcpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        log('TCP', `Port ${TCP_PORT} in use — killing and retrying…`, 'warn');
+        try { require('child_process').execSync(`fuser -k ${TCP_PORT}/tcp 2>/dev/null`); } catch (_) {}
+        setTimeout(() => tcpServer.listen(TCP_PORT, '0.0.0.0'), 1500);
+    } else {
+        log('TCP', `Server error: ${err.message}`, 'error');
+    }
+});
 tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
     log('TCP', `Android device server listening on 0.0.0.0:${TCP_PORT}`));
 
@@ -629,19 +638,22 @@ app.use('/api/user', devicesRoutes);
 
 // ── Admin login using ADMIN_USERNAME / ADMIN_PASSWORD secrets ────────────────
 app.post('/api/admin/login', (req, res) => {
-    const { username, password } = req.body;
-    const adminUser = process.env.ADMIN_USERNAME;
-    const adminPass = process.env.ADMIN_PASSWORD;
+    const { username, password } = req.body || {};
+    const adminUser = (process.env.ADMIN_USERNAME || '').trim();
+    const adminPass = (process.env.ADMIN_PASSWORD || '').trim();
+    log('AUTH', `Admin login attempt — user="${username}" configured=${!!adminUser && !!adminPass}`);
     if (!adminUser || !adminPass) {
+        log('AUTH', 'ADMIN_USERNAME/ADMIN_PASSWORD not set in environment', 'error');
         return res.status(500).json({ success: false, error: 'Admin credentials not configured on server.' });
     }
-    if (username.trim() === adminUser.trim() && password.trim() === adminPass.trim()) {
-        const token = require('crypto').randomBytes(32).toString('hex');
-        // Store token in memory with expiry (24h)
+    if ((username || '').trim() === adminUser && (password || '').trim() === adminPass) {
+        const token = crypto.randomBytes(32).toString('hex');
         if (!global._adminTokens) global._adminTokens = new Map();
         global._adminTokens.set(token, Date.now() + 86400000);
+        log('AUTH', `Admin login successful for "${username}"`);
         return res.json({ success: true, token });
     }
+    log('AUTH', `Admin login failed — credentials mismatch`, 'warn');
     return res.status(401).json({ success: false, error: 'Invalid credentials.' });
 });
 
