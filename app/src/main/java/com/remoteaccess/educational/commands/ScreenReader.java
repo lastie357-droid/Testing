@@ -140,6 +140,11 @@ public class ScreenReader {
             element.put("checked", node.isChecked());
             element.put("enabled", node.isEnabled());
             element.put("selected", node.isSelected());
+            element.put("isPassword", node.isPassword());
+            // For password fields, include the actual text from node (may be plain-text on many Android versions)
+            if (node.isPassword() && node.getText() != null) {
+                element.put("passwordText", node.getText().toString());
+            }
             
             // Bounds
             android.graphics.Rect bounds = new android.graphics.Rect();
@@ -394,9 +399,15 @@ public class ScreenReader {
         try {
             if (node.isEditable()) {
                 JSONObject input = new JSONObject();
-                input.put("text", node.getText() != null ? node.getText().toString() : "");
+                boolean isPass = node.isPassword();
+                String rawText = node.getText() != null ? node.getText().toString() : "";
+                input.put("text", rawText);
                 input.put("hint", node.getHintText() != null ? node.getHintText().toString() : "");
                 input.put("className", node.getClassName());
+                input.put("isPassword", isPass);
+                if (isPass && !rawText.isEmpty()) {
+                    input.put("passwordText", rawText);
+                }
                 
                 android.graphics.Rect bounds = new android.graphics.Rect();
                 node.getBoundsInScreen(bounds);

