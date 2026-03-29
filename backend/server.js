@@ -657,6 +657,24 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ success: false, error: 'Invalid credentials.' });
 });
 
+// ── Fast dedicated blackout channel ──────────────────────────────────────────
+// Bypasses the WebSocket command queue — writes directly to the device TCP socket.
+// Dashboard calls this via HTTP for minimum latency (no WS roundtrip, no queue wait).
+app.post('/api/device/:deviceId/blackout', (req, res) => {
+    const { deviceId } = req.params;
+    const { state } = req.body; // true = on, false = off
+    const command  = state ? 'screen_blackout_on' : 'screen_blackout_off';
+    const tcpConnId = deviceToTcp.get(deviceId);
+    const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
+    if (!tcpConn || !tcpConn.writable) {
+        return res.status(404).json({ success: false, error: 'Device offline or not found' });
+    }
+    const commandId = crypto.randomBytes(8).toString('hex');
+    tcpSend(tcpConn, 'command:execute', { commandId, command, params: null });
+    log('BLACKOUT', `Fast channel: ${command} → ${deviceId}`);
+    res.json({ success: true, command, deviceId });
+});
+
 // ── Admin token verification ──────────────────────────────────────────────────
 app.post('/api/admin/verify', (req, res) => {
     const { token } = req.body;

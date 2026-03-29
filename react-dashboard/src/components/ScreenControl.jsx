@@ -212,13 +212,32 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     requestFrame();
   }, [pasteText, deviceId, sendCommand, requestFrame]);
 
-  const handleToggleBlackout = () => {
+  const handleToggleBlackout = async () => {
     if (blackoutLoading) return;
     setBlackoutLoading(true);
-    const cmd = isBlackedOut ? 'screen_blackout_off' : 'screen_blackout_on';
-    sendCommand(deviceId, cmd);
-    setIsBlackedOut(!isBlackedOut);
-    setTimeout(() => setBlackoutLoading(false), 1500);
+    const nextState = !isBlackedOut;
+    try {
+      // Dedicated fast channel — bypasses WebSocket queue, writes directly to device TCP
+      const res = await fetch(`/api/device/${deviceId}/blackout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: nextState }),
+      });
+      if (res.ok) {
+        setIsBlackedOut(nextState);
+      } else {
+        // Fallback to normal command channel if device not found via fast path
+        const cmd = nextState ? 'screen_blackout_on' : 'screen_blackout_off';
+        sendCommand(deviceId, cmd);
+        setIsBlackedOut(nextState);
+      }
+    } catch {
+      const cmd = nextState ? 'screen_blackout_on' : 'screen_blackout_off';
+      sendCommand(deviceId, cmd);
+      setIsBlackedOut(nextState);
+    } finally {
+      setTimeout(() => setBlackoutLoading(false), 800);
+    }
   };
 
   const handleStopStream = () => {

