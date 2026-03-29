@@ -8,7 +8,31 @@ const SYSTEM_ICONS = {
 };
 const appIcon = pkg => SYSTEM_ICONS[pkg] || '📦';
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send }) {
+function latencyColor(ms) {
+  if (ms === null || ms === undefined) return '#475569';
+  if (ms < 100)  return '#22c55e';
+  if (ms < 300)  return '#eab308';
+  return '#ef4444';
+}
+
+function LatencyBadge({ label, ms }) {
+  const color = latencyColor(ms);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+      <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 600 }}>{label}</span>
+      <span style={{
+        fontSize: 12, fontWeight: 700, color,
+        background: `${color}18`, borderRadius: 5,
+        padding: '1px 7px', fontVariantNumeric: 'tabular-nums',
+        minWidth: 52, textAlign: 'center', display: 'inline-block',
+      }}>
+        {ms !== null && ms !== undefined ? `${ms} ms` : '—'}
+      </span>
+    </div>
+  );
+}
+
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency }) {
   const deviceId  = device.deviceId;
   const isOnline  = device.isOnline;
   const devInfo   = device.deviceInfo || {};
@@ -182,6 +206,29 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 12 }}>
+
+      {/* ── LATENCY BAR ────────────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 16,
+        background: '#1e293b', borderRadius: 10, padding: '7px 14px',
+        border: '1px solid #334155', flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginRight: 4 }}>
+          📡 Latency
+        </span>
+        <LatencyBadge label="Server" ms={serverLatency} />
+        <div style={{ width: 1, height: 16, background: '#334155' }} />
+        <LatencyBadge label="Device" ms={deviceLatency} />
+        {deviceLatency === null && isOnline && (
+          <span style={{ fontSize: 10, color: '#475569', fontStyle: 'italic' }}>measuring…</span>
+        )}
+        {!isOnline && (
+          <span style={{ fontSize: 10, color: '#ef4444', fontStyle: 'italic', marginLeft: 4 }}>device offline</span>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#334155' }}>
+          updates every 5 s / 10 s
+        </span>
+      </div>
 
       {/* ── TOP ROW: Stream + Master Control ──────────────────────────── */}
       <div style={{ display: 'flex', flex: '0 0 auto', gap: 14, alignItems: 'flex-start' }}>

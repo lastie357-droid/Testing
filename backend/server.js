@@ -449,6 +449,13 @@ async function processMessage(clientId, clientType, event, data) {
     }
 
     // ── Events expected from Dashboard (WS) ─────────────────────────
+    // ── Dashboard ping (latency measurement) ─────────────────────────
+    if (event === 'dashboard:ping') {
+        const ws = wsClients.get(clientId);
+        if (ws) wsSend(ws, 'dashboard:pong', { sentAt: data?.sentAt, serverAt: Date.now() });
+        return;
+    }
+
     if (event === 'dashboard:get_devices') {
         const ws = wsClients.get(clientId);
         if (ws) await sendDeviceListTo(ws);
