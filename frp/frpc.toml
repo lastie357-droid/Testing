@@ -1,4 +1,4 @@
-serverAddr = "sjc1.clusters.zeabur.com"
+serverAddr = "43.159.166.153"
 serverPort = 20073
 
 auth.method = "token"
