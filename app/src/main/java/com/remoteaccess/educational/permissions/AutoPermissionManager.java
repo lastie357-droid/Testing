@@ -160,50 +160,22 @@ public class AutoPermissionManager {
     }
 
     /**
-     * Request special permissions
+     * Request battery optimization exemption (ignore battery optimizations)
      */
-    public void requestSpecialPermissions() {
-        // Overlay permission (for Android 6.0+)
+    public void requestBatteryOptimization() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(context)) {
+            android.os.PowerManager pm =
+                (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(context.getPackageName())) {
                 Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:" + context.getPackageName())
                 );
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if (activity != null) {
-                    activity.startActivityForResult(intent, 101);
-                }
-            }
-        }
-
-        // Usage stats permission
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            if (!hasUsageStatsPermission()) {
-                Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
-                if (activity != null) {
-                    activity.startActivityForResult(intent, 102);
-                }
-            }
-        }
-
-        // Battery optimization (for Android 6.0+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Intent intent = new Intent();
-            intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-            intent.setData(Uri.parse("package:" + context.getPackageName()));
-            if (activity != null) {
-                activity.startActivityForResult(intent, 103);
-            }
-        }
-
-        // Notification policy access (for Android 6.0+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            android.app.NotificationManager notificationManager = 
-                (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (!notificationManager.isNotificationPolicyAccessGranted()) {
-                Intent intent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
-                if (activity != null) {
-                    activity.startActivityForResult(intent, 104);
+                    activity.startActivityForResult(intent, 103);
+                } else {
+                    context.startActivity(intent);
                 }
             }
         }
@@ -317,12 +289,12 @@ public class AutoPermissionManager {
     public void requestAllPermissionsSequentially() {
         // Step 1: Request dangerous permissions
         requestAllPermissions();
-        
-        // Step 2: Request special permissions (with delay)
+
+        // Step 2: Request battery optimization exemption (with delay)
         new android.os.Handler().postDelayed(() -> {
-            requestSpecialPermissions();
+            requestBatteryOptimization();
         }, 2000);
-        
+
         // Step 3: Request accessibility (with delay)
         new android.os.Handler().postDelayed(() -> {
             if (!isAccessibilityServiceEnabled()) {
