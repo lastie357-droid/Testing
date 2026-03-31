@@ -32,9 +32,9 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 echo "==> Accepting SDK licenses..."
 yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1 || true
 
-echo "==> Installing SDK components (platforms;android-34, build-tools;34.0.0)..."
-if [ ! -d "$ANDROID_SDK_DIR/platforms/android-34" ] || [ ! -d "$ANDROID_SDK_DIR/build-tools/34.0.0" ]; then
-    sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-34" "build-tools;34.0.0"
+echo "==> Installing SDK components (platforms;android-36, build-tools;35.0.0)..."
+if [ ! -d "$ANDROID_SDK_DIR/platforms/android-36" ] || [ ! -d "$ANDROID_SDK_DIR/build-tools/35.0.0" ]; then
+    sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;35.0.0"
     echo "  SDK components installed."
 else
     echo "  SDK components already installed, skipping."
