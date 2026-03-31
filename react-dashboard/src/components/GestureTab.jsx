@@ -44,16 +44,18 @@ export default function GestureTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
 
-  const [gestures, setGestures]           = useState([]);
-  const [loading, setLoading]             = useState(false);
-  const [isRecording, setIsRecording]     = useState(false);
-  const [selectedGesture, setSelected]    = useState(null);
-  const [selectedData, setSelectedData]   = useState(null);
+  const [gestures, setGestures]             = useState([]);
+  const [loading, setLoading]               = useState(false);
+  const [isRecording, setIsRecording]       = useState(false);
+  const [selectedGesture, setSelected]      = useState(null);
+  const [selectedData, setSelectedData]     = useState(null);
   const [showRecordForm, setShowRecordForm] = useState(false);
-  const [recordPkg, setRecordPkg]         = useState('');
-  const [recordLabel, setRecordLabel]     = useState('');
-  const [statusMsg, setStatusMsg]         = useState('');
-  const [replayingFile, setReplayingFile] = useState(null);
+  const [showLiveForm, setShowLiveForm]     = useState(false);
+  const [recordPkg, setRecordPkg]           = useState('');
+  const [recordLabel, setRecordLabel]       = useState('');
+  const [liveLabel, setLiveLabel]           = useState('');
+  const [statusMsg, setStatusMsg]           = useState('');
+  const [replayingFile, setReplayingFile]   = useState(null);
   const seenResults = useRef(new Set());
   const pollRef = useRef(null);
 
@@ -132,6 +134,14 @@ export default function GestureTab({ device, sendCommand, results }) {
     status('Starting recording…');
   }
 
+  function startLiveRecord() {
+    if (!liveLabel.trim()) { status('Enter a label for the live recording'); return; }
+    sendCmd('gesture_start_record', { packageId: 'live', label: liveLabel.trim() });
+    setShowLiveForm(false);
+    setLiveLabel('');
+    status('Starting live recording… Perform gestures on device');
+  }
+
   function stopRecord() {
     sendCmd('gesture_stop_record');
     status('Stopping and saving…');
@@ -198,10 +208,34 @@ export default function GestureTab({ device, sendCommand, results }) {
 
           {/* Record controls */}
           <div style={{ padding: '12px 14px', borderBottom: '1px solid #1e293b' }}>
-            {!isRecording && !showRecordForm && (
-              <button onClick={() => setShowRecordForm(true)} disabled={!isOnline} style={{ ...btnStyle('#16a34a'), width: '100%', fontWeight: 700 }}>
-                ⏺ Start Recording
-              </button>
+            {!isRecording && !showRecordForm && !showLiveForm && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button onClick={() => setShowLiveForm(true)} disabled={!isOnline} style={{ ...btnStyle('#0e7490'), width: '100%', fontWeight: 700 }}>
+                  ⚡ Live Record
+                </button>
+                <button onClick={() => setShowRecordForm(true)} disabled={!isOnline} style={{ ...btnStyle('#16a34a'), width: '100%', fontWeight: 700 }}>
+                  ⏺ Record with Package
+                </button>
+              </div>
+            )}
+            {showLiveForm && !isRecording && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 11, color: '#7dd3fc', fontWeight: 600, marginBottom: 2 }}>
+                  ⚡ Live Record — records any gesture on device
+                </div>
+                <input
+                  placeholder="Label (e.g. swipe_unlock)"
+                  value={liveLabel}
+                  onChange={e => setLiveLabel(e.target.value)}
+                  style={inputStyle}
+                  autoFocus
+                  onKeyDown={e => e.key === 'Enter' && startLiveRecord()}
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={startLiveRecord} disabled={!isOnline} style={{ ...btnStyle('#0e7490'), flex: 1 }}>⚡ Start</button>
+                  <button onClick={() => setShowLiveForm(false)} style={{ ...btnStyle('#334155'), flex: 1 }}>Cancel</button>
+                </div>
+              </div>
             )}
             {showRecordForm && !isRecording && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

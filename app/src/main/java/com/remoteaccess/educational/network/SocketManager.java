@@ -920,12 +920,9 @@ public class SocketManager {
             }
         };
 
-        // If blackout is active, briefly hide the overlay so dashboard sees real content
-        if (screenBlackout.isActive()) {
-            screenBlackout.runWithOverlayHidden(doCapture);
-        } else {
-            doCapture.run();
-        }
+        // captureScreenSync() uses AccessibilityService.takeScreenshot() which captures
+        // the real screen content behind accessibility overlays — no need to hide the overlay.
+        doCapture.run();
 
         return result[0];
     }
