@@ -170,9 +170,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   // ── Helper ────────────────────────────────────────────────────────────
   const cmd = (command, params = {}) => sendCommand(deviceId, command, params);
 
-  // ── Stream display size ───────────────────────────────────────────────
-  const STREAM_W = 240;
-  const STREAM_H = devW && devH ? Math.min(480, Math.round(STREAM_W * devH / devW)) : 420;
+  // ── Stream display size — match ScreenReader for consistent look ─────
+  const STREAM_W = 360;
+  const STREAM_H = devW && devH ? Math.min(780, Math.round(STREAM_W * devH / devW)) : 640;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 12 }}>
@@ -311,24 +311,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           🎮 Control Pad
         </div>
 
-        {/* Row 1: Navigation — Back | Home | Recents */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Nav</span>
-          <CtrlBtn icon="◀" label="Back"    onClick={() => cmd('press_back')}    disabled={!isOnline} />
-          <CtrlBtn icon="⌂" label="Home"    onClick={() => cmd('press_home')}    disabled={!isOnline} color="#3b82f6" />
-          <CtrlBtn icon="⬜" label="Recents" onClick={() => cmd('press_recents')} disabled={!isOnline} />
-        </div>
-
-        {/* Row 2: Swipe — Left | Right | Up | Down */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Swipe</span>
-          <CtrlBtn icon="←" label="Left"  onClick={() => cmd('swipe', { x1: 900, y1: 960, x2: 180, y2: 960, duration: 300 })} disabled={!isOnline} />
-          <CtrlBtn icon="→" label="Right" onClick={() => cmd('swipe', { x1: 180, y1: 960, x2: 900, y2: 960, duration: 300 })} disabled={!isOnline} />
-          <CtrlBtn icon="↑" label="Up"    onClick={() => cmd('swipe', { x1: 540, y1: 1600, x2: 540, y2: 400, duration: 300 })} disabled={!isOnline} />
-          <CtrlBtn icon="↓" label="Down"  onClick={() => cmd('swipe', { x1: 540, y1: 400, x2: 540, y2: 1600, duration: 300 })} disabled={!isOnline} />
-        </div>
-
-        {/* Row 3: Input — Paste | Enter */}
+        {/* Row 1: Input — Paste | Enter  (Nav + Swipe are in the Screen Reader panel) */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0, paddingTop: 8 }}>Input</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>

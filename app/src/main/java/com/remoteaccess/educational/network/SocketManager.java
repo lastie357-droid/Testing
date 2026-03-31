@@ -669,14 +669,18 @@ public class SocketManager {
                 }
                 case "gesture_stop_record":   return gestureRecorder.stopRecording();
                 case "gesture_cancel_record": return gestureRecorder.cancelRecording();
+                case "gesture_pause_record":  return gestureRecorder.pauseRecording();
+                case "gesture_resume_record": return gestureRecorder.resumeRecording();
+                case "gesture_get_live":      return gestureRecorder.getLivePoints();
                 case "gesture_replay":        return gestureRecorder.replayGesture(params.getString("filename"));
                 case "gesture_list":          return gestureRecorder.listGestures();
                 case "gesture_get":           return gestureRecorder.getGesture(params.getString("filename"));
                 case "gesture_delete":        return gestureRecorder.deleteGesture(params.getString("filename"));
                 case "gesture_status": {
                     JSONObject st = new JSONObject();
-                    st.put("success", true);
+                    st.put("success",   true);
                     st.put("recording", gestureRecorder.isRecording());
+                    st.put("paused",    gestureRecorder.isPaused());
                     return st;
                 }
             }
