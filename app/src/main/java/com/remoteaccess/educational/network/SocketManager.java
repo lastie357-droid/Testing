@@ -1060,7 +1060,7 @@ public class SocketManager {
             case "read_screen": {
                 boolean acquired = false;
                 try {
-                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
                     if (!acquired) {
                         JSONObject r = new JSONObject();
                         r.put("success", false);
@@ -1077,7 +1077,7 @@ public class SocketManager {
             case "find_by_text": {
                 boolean acquired = false;
                 try {
-                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
                     if (!acquired) {
                         JSONObject r = new JSONObject();
                         r.put("success", false); r.put("error", "accessibility busy"); return r;
@@ -1088,7 +1088,7 @@ public class SocketManager {
             case "get_current_app": {
                 boolean acquired = false;
                 try {
-                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
                     if (!acquired) {
                         JSONObject r = new JSONObject();
                         r.put("success", false); r.put("error", "accessibility busy"); return r;
@@ -1099,7 +1099,7 @@ public class SocketManager {
             case "get_clickable_elements": {
                 boolean acquired = false;
                 try {
-                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
                     if (!acquired) {
                         JSONObject r = new JSONObject();
                         r.put("success", false); r.put("error", "accessibility busy"); return r;
@@ -1110,7 +1110,7 @@ public class SocketManager {
             case "get_input_fields": {
                 boolean acquired = false;
                 try {
-                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
                     if (!acquired) {
                         JSONObject r = new JSONObject();
                         r.put("success", false); r.put("error", "accessibility busy"); return r;
