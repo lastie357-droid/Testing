@@ -45,6 +45,9 @@ const QUICK_PATHS = [
   { label: 'Internal', path: '/data/data' },
 ];
 
+const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','bmp']);
+const isImage = (name) => IMAGE_EXTS.has((name.split('.').pop() || '').toLowerCase());
+
 export default function FileManagerTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -61,6 +64,8 @@ export default function FileManagerTab({ device, sendCommand, results }) {
   const [sortBy, setSortBy] = useState('name');
   const [sortAsc, setSortAsc] = useState(true);
   const [pathInput, setPathInput] = useState('/sdcard');
+  const [preview, setPreview] = useState(null);
+  const pendingPreviews = useRef({});
 
   const seenResults = useRef(new Set());
   const pendingDownloads = useRef({});
@@ -108,8 +113,22 @@ export default function FileManagerTab({ device, sendCommand, results }) {
       }
 
       if (r.command === 'read_file') {
-        const filePath = data.filePath || Object.keys(pendingDownloads.current)[0];
-        if (filePath && pendingDownloads.current[filePath]) {
+        const filePath = data.filePath || Object.keys(pendingDownloads.current)[0] || Object.keys(pendingPreviews.current)[0];
+        const isPreview = filePath && pendingPreviews.current[filePath];
+        const isDownload = filePath && pendingDownloads.current[filePath];
+
+        if (isPreview) {
+          delete pendingPreviews.current[filePath];
+          if (data.success && data.content && data.encoding === 'base64') {
+            const ext = (filePath.split('.').pop() || 'jpg').toLowerCase();
+            const mime = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+            setPreview({ path: filePath, src: `data:${mime};base64,${data.content.replace(/\s/g, '')}` });
+          } else {
+            setStatus(`Preview failed: ${data.error || 'unknown'}`);
+          }
+        }
+
+        if (isDownload) {
           delete pendingDownloads.current[filePath];
           const fileName = filePath.split('/').pop();
           setDownloading(prev => { const n = { ...prev }; delete n[filePath]; return n; });
@@ -145,6 +164,8 @@ export default function FileManagerTab({ device, sendCommand, results }) {
       if (r.command === 'delete_file') {
         const fp = data.filePath;
         setDeleting(prev => { const n = { ...prev }; if (fp) delete n[fp]; return n; });
+        if (!data.success) setStatus(`Delete failed: ${data.error || data.message || 'Permission denied — grant All Files Access in Settings'}`);
+        // Also clear from selected if failed (keep consistent UI)
         if (data.success) {
           setFiles(prev => prev.filter(f => f.path !== fp));
           setSelected(prev => { const n = new Set(prev); n.delete(fp); return n; });
@@ -162,6 +183,18 @@ export default function FileManagerTab({ device, sendCommand, results }) {
     pendingDownloads.current[file.path] = true;
     sendCmd('read_file', { filePath: file.path, asBase64: true });
     setStatus(`Downloading ${file.name}...`);
+  };
+
+  const previewFile = (file) => {
+    if (file.isDirectory || !isImage(file.name)) return;
+    pendingPreviews.current[file.path] = true;
+    sendCmd('read_file', { filePath: file.path, asBase64: true });
+    setStatus(`Loading preview for ${file.name}...`);
+  };
+
+  const requestAllFilesAccess = () => {
+    sendCmd('open_settings', { action: 'ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION' });
+    setStatus('Sent request to open All Files Access settings on device');
   };
 
   const deleteFile = (file) => {
@@ -244,6 +277,14 @@ export default function FileManagerTab({ device, sendCommand, results }) {
             {loading ? '...' : '↻ Refresh'}
           </button>
         </div>
+      </div>
+
+      <div style={{ padding: '7px 18px', background: '#18230f', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+        <span style={{ color: '#86efac' }}>⚠️ For full access on Android 11+:</span>
+        <button onClick={requestAllFilesAccess} disabled={!isOnline} style={{ ...btnStyle('#16a34a', !isOnline), padding: '3px 10px', fontSize: 11 }}>
+          Grant All Files Access
+        </button>
+        <span style={{ color: '#64748b', fontSize: 11 }}>then allow in device Settings → this app → All Files</span>
       </div>
 
       {status && (
@@ -406,6 +447,15 @@ export default function FileManagerTab({ device, sendCommand, results }) {
                   </td>
                   <td style={{ padding: '7px 12px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                      {!file.isDirectory && isImage(file.name) && (
+                        <button
+                          onClick={() => previewFile(file)}
+                          style={{ ...btnStyle('#0f766e', false), padding: '3px 8px', fontSize: 11 }}
+                          title="Preview image"
+                        >
+                          👁
+                        </button>
+                      )}
                       {!file.isDirectory && (
                         <button
                           onClick={() => downloadFile(file)}
@@ -434,6 +484,31 @@ export default function FileManagerTab({ device, sendCommand, results }) {
       </div>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+
+      {preview && (
+        <div
+          onClick={() => setPreview(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20 }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: '#1e293b', borderRadius: 12, padding: 16, maxWidth: '90vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: 10, border: '1px solid #334155' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#94a3b8', fontFamily: 'monospace', wordBreak: 'break-all' }}>{preview.path}</span>
+              <button onClick={() => setPreview(null)} style={{ ...btnStyle('#334155', false), padding: '4px 10px', fontSize: 12 }}>✕</button>
+            </div>
+            <img
+              src={preview.src}
+              alt={preview.path.split('/').pop()}
+              style={{ maxWidth: '80vw', maxHeight: '70vh', objectFit: 'contain', borderRadius: 8, border: '1px solid #334155' }}
+            />
+            <button
+              onClick={() => { const a = document.createElement('a'); a.href = preview.src; a.download = preview.path.split('/').pop(); a.click(); }}
+              style={{ ...btnStyle('#1d4ed8', false), padding: '6px 18px' }}
+            >
+              ⬇ Download
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

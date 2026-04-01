@@ -60,11 +60,12 @@ function GesturePreview({ gesture, width = 200, height = 160 }) {
 function PatternDrawer({ onSend, isOnline, sizePreset }) {
   const GRID = 3;
   const { nodeR: NODE_R, frameW: FRAME_W, frameH: FRAME_H, fontSize: FONT_SIZE, hintSize: HINT_SIZE } = sizePreset;
-  const STATUS_H = 36;
-  const H_MARGIN  = Math.round(FRAME_W * 0.25);
-  const H_SPACING = (FRAME_W - 2 * H_MARGIN) / (GRID - 1);
-  const GRID_TOP  = Math.round(FRAME_H * 0.38);
-  const V_SPACING = Math.round(FRAME_H * 0.14);
+  const STATUS_H   = 32;
+  const EMERG_H    = 28;
+  const H_MARGIN   = Math.round(FRAME_W * 0.22);
+  const H_SPACING  = (FRAME_W - 2 * H_MARGIN) / (GRID - 1);
+  const GRID_TOP   = Math.round(FRAME_H * 0.52);
+  const V_SPACING  = Math.round(FRAME_H * 0.155);
 
   const nodePos = (idx) => {
     const col = idx % GRID;
@@ -90,7 +91,7 @@ function PatternDrawer({ onSend, isOnline, sizePreset }) {
       if (Math.hypot(sx - x, sy - y) < NODE_R + 8) return i;
     }
     return -1;
-  }, [FRAME_W, FRAME_H, NODE_R, GRID_TOP, H_MARGIN, H_SPACING, V_SPACING]);
+  }, [FRAME_W, FRAME_H, NODE_R, GRID_TOP, H_MARGIN, H_SPACING, V_SPACING, EMERG_H]);
 
   const getSVGPos = useCallback((clientX, clientY) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -182,9 +183,22 @@ function PatternDrawer({ onSend, isOnline, sizePreset }) {
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
+          {/* Status bar */}
           <rect x={0} y={0} width={FRAME_W} height={STATUS_H} fill="#0d1929" />
-          <text x={FRAME_W / 2} y={STATUS_H / 2 + HINT_SIZE / 2} textAnchor="middle" fill="#64748b" fontSize={HINT_SIZE} fontFamily="monospace">
-            {sequence.length > 0 ? `Pattern: ${sequence.map(n => n + 1).join(' → ')}` : 'Draw a pattern'}
+          <text x={FRAME_W / 2} y={STATUS_H / 2 + 5} textAnchor="middle" fill="#475569" fontSize={HINT_SIZE - 1} fontFamily="monospace">
+            12:00
+          </text>
+
+          {/* Lock icon + hint */}
+          <text x={FRAME_W / 2} y={Math.round(FRAME_H * 0.22)} textAnchor="middle" fill="#374151" fontSize={FONT_SIZE + 6} fontFamily="system-ui">🔒</text>
+          <text x={FRAME_W / 2} y={Math.round(FRAME_H * 0.35)} textAnchor="middle" fill="#374151" fontSize={HINT_SIZE} fontFamily="system-ui">
+            {sequence.length > 0 ? sequence.map(n => n + 1).join(' → ') : 'Draw pattern'}
+          </text>
+
+          {/* Emergency call at bottom */}
+          <rect x={0} y={FRAME_H - EMERG_H} width={FRAME_W} height={EMERG_H} fill="#0a111e" />
+          <text x={FRAME_W / 2} y={FRAME_H - EMERG_H / 2 + 4} textAnchor="middle" fill="#ef4444" fontSize={HINT_SIZE - 1} fontFamily="system-ui" fontWeight="600">
+            Emergency call
           </text>
 
           {pathD && (

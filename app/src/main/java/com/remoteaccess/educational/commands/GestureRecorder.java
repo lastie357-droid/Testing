@@ -808,20 +808,36 @@ public class GestureRecorder {
             int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
-            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    flags,
-                    silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT
-            );
-            try {
-                wm.addView(view, lp);
-            } catch (Exception e) {
-                Log.e(TAG, "RecordingOverlay.show addView: " + e.getMessage());
+            int fmt = silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT;
+
+            // Try TYPE_ACCESSIBILITY_OVERLAY first (no extra permission needed when service is active)
+            // Fall back to TYPE_APPLICATION_OVERLAY (requires SYSTEM_ALERT_WINDOW) if that fails.
+            int[] types = {
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            };
+            boolean added = false;
+            Exception lastEx = null;
+            for (int type : types) {
+                try {
+                    WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                            WindowManager.LayoutParams.MATCH_PARENT,
+                            WindowManager.LayoutParams.MATCH_PARENT,
+                            type, flags, fmt);
+                    wm.addView(view, lp);
+                    added = true;
+                    Log.i(TAG, "Overlay added with type " + type);
+                    break;
+                } catch (Exception e) {
+                    Log.w(TAG, "addView type=" + type + " failed: " + e.getMessage());
+                    lastEx = e;
+                }
+            }
+            if (!added) {
+                Log.e(TAG, "RecordingOverlay.show all types failed");
                 view = null;
                 if (onStop != null) onStop.run();
-                throw e;
+                throw lastEx != null ? lastEx : new RuntimeException("Could not add overlay view");
             }
         }
 
