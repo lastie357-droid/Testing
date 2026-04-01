@@ -837,7 +837,7 @@ public class GestureRecorder {
                 Log.e(TAG, "RecordingOverlay.show all types failed");
                 view = null;
                 if (onStop != null) onStop.run();
-                throw lastEx != null ? lastEx : new RuntimeException("Could not add overlay view");
+                throw lastEx != null ? new RuntimeException(lastEx) : new RuntimeException("Could not add overlay view");
             }
         }
 
