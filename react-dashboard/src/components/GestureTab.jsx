@@ -2,6 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
+// ── 5 Pattern Size Presets ───────────────────────────────────────────────────
+const PATTERN_SIZES = [
+  { id: 'large',    label: 'Large',    nodeR: 24, frameW: 280, frameH: 480, fontSize: 14, hintSize: 11 },
+  { id: 'normal',   label: 'Normal',   nodeR: 18, frameW: 240, frameH: 420, fontSize: 12, hintSize: 10 },
+  { id: 'medium',   label: 'Medium',   nodeR: 14, frameW: 200, frameH: 360, fontSize: 10, hintSize: 9 },
+  { id: 'small',    label: 'Small',    nodeR: 10, frameW: 170, frameH: 300, fontSize: 8,  hintSize: 8 },
+  { id: 'mini',     label: 'Mini',     nodeR: 7,  frameW: 140, frameH: 250, fontSize: 7,  hintSize: 7 },
+];
+
 // ── Gesture path preview (SVG) ──────────────────────────────────────────────
 function GesturePreview({ gesture, width = 200, height = 160 }) {
   if (!gesture || !gesture.points || gesture.points.length === 0) {
@@ -48,25 +57,21 @@ function GesturePreview({ gesture, width = 200, height = 160 }) {
 }
 
 // ── Phone-frame Pattern Drawer (3×3 grid like a lock screen) ───────────────
-function PatternDrawer({ onSend, isOnline }) {
+function PatternDrawer({ onSend, isOnline, sizePreset }) {
   const GRID = 3;
-  const NODE_R = 18;
-  const FRAME_W = 240;
-  const FRAME_H = 420;
-  const STATUS_H = 40;
-  // Nodes at 25%, 50%, 75% horizontally and ~38%, 52%, 67% vertically
-  // to match real Android lock screen pattern proportions precisely
-  const H_MARGIN  = 60;                              // 25% of FRAME_W
-  const H_SPACING = (FRAME_W - 2 * H_MARGIN) / (GRID - 1); // 60px
-  const GRID_TOP  = 160;                             // ~38% of FRAME_H
-  const V_SPACING = 60;                              // ~14% of FRAME_H per step
+  const { nodeR: NODE_R, frameW: FRAME_W, frameH: FRAME_H, fontSize: FONT_SIZE, hintSize: HINT_SIZE } = sizePreset;
+  const STATUS_H = 36;
+  const H_MARGIN  = Math.round(FRAME_W * 0.25);
+  const H_SPACING = (FRAME_W - 2 * H_MARGIN) / (GRID - 1);
+  const GRID_TOP  = Math.round(FRAME_H * 0.38);
+  const V_SPACING = Math.round(FRAME_H * 0.14);
 
   const nodePos = (idx) => {
     const col = idx % GRID;
     const row = Math.floor(idx / GRID);
     return {
-      x: H_MARGIN + col * H_SPACING,  // 60, 120, 180  → nx 0.25, 0.50, 0.75
-      y: GRID_TOP + row * V_SPACING,  // 160, 220, 280 → ny 0.38, 0.52, 0.67
+      x: H_MARGIN + col * H_SPACING,
+      y: GRID_TOP + row * V_SPACING,
     };
   };
 
@@ -85,7 +90,7 @@ function PatternDrawer({ onSend, isOnline }) {
       if (Math.hypot(sx - x, sy - y) < NODE_R + 8) return i;
     }
     return -1;
-  }, []);
+  }, [FRAME_W, FRAME_H, NODE_R, GRID_TOP, H_MARGIN, H_SPACING, V_SPACING]);
 
   const getSVGPos = useCallback((clientX, clientY) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -94,12 +99,12 @@ function PatternDrawer({ onSend, isOnline }) {
       x: (clientX - rect.left) * (FRAME_W / rect.width),
       y: (clientY - rect.top)  * (FRAME_H / rect.height),
     };
-  }, []);
+  }, [FRAME_W, FRAME_H]);
 
   const onPointerDown = useCallback((e) => {
     if (!isOnline) return;
     e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     const node = getNodeAt(e.clientX, e.clientY);
     setSequence(node >= 0 ? [node] : []);
     setDrawing(true);
@@ -117,7 +122,7 @@ function PatternDrawer({ onSend, isOnline }) {
     }
   }, [drawing, getNodeAt, getSVGPos]);
 
-  const onPointerUp = useCallback((e) => {
+  const onPointerUp = useCallback(() => {
     setDrawing(false);
     setCursorPos(null);
   }, []);
@@ -134,7 +139,6 @@ function PatternDrawer({ onSend, isOnline }) {
     setSequence([]);
   };
 
-  // Build path string for drawn lines
   const buildPath = (seq) => {
     if (seq.length < 2) return '';
     return seq.map((idx, i) => {
@@ -147,24 +151,19 @@ function PatternDrawer({ onSend, isOnline }) {
   const lastNode = sequence.length > 0 ? nodePos(sequence[sequence.length - 1]) : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      {/* Phone frame */}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
       <div style={{
         background: '#0f1923',
         border: '3px solid #334155',
-        borderRadius: 32,
-        padding: '10px 8px 14px',
+        borderRadius: 28,
+        padding: '10px 8px 12px',
         boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.04)',
         position: 'relative',
         width: FRAME_W + 16,
+        transition: 'width 0.2s',
       }}>
-        {/* Speaker notch */}
-        <div style={{
-          width: 60, height: 6, background: '#1e293b', borderRadius: 3,
-          margin: '0 auto 8px',
-        }} />
+        <div style={{ width: 50, height: 5, background: '#1e293b', borderRadius: 3, margin: '0 auto 8px' }} />
 
-        {/* SVG drawing area */}
         <svg
           ref={svgRef}
           width={FRAME_W}
@@ -172,29 +171,27 @@ function PatternDrawer({ onSend, isOnline }) {
           style={{
             display: 'block',
             background: '#0b1220',
-            borderRadius: 18,
+            borderRadius: 16,
             cursor: isOnline ? 'crosshair' : 'not-allowed',
             touchAction: 'none',
             userSelect: 'none',
+            transition: 'width 0.2s, height 0.2s',
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
-          {/* Status bar */}
           <rect x={0} y={0} width={FRAME_W} height={STATUS_H} fill="#0d1929" />
-          <text x={FRAME_W / 2} y={STATUS_H / 2 + 6} textAnchor="middle" fill="#64748b" fontSize="12" fontFamily="monospace">
+          <text x={FRAME_W / 2} y={STATUS_H / 2 + HINT_SIZE / 2} textAnchor="middle" fill="#64748b" fontSize={HINT_SIZE} fontFamily="monospace">
             {sequence.length > 0 ? `Pattern: ${sequence.map(n => n + 1).join(' → ')}` : 'Draw a pattern'}
           </text>
 
-          {/* Drawn path */}
           {pathD && (
-            <path d={pathD} fill="none" stroke="#6366f1" strokeWidth="3"
+            <path d={pathD} fill="none" stroke="#6366f1" strokeWidth="2.5"
               strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
           )}
 
-          {/* Cursor line to current finger position */}
           {drawing && cursorPos && lastNode && (
             <line
               x1={lastNode.x} y1={lastNode.y}
@@ -203,23 +200,19 @@ function PatternDrawer({ onSend, isOnline }) {
             />
           )}
 
-          {/* Grid nodes */}
           {Array.from({ length: GRID * GRID }, (_, i) => {
             const { x, y } = nodePos(i);
             const inSeq    = sequence.includes(i);
             const seqIndex = sequence.indexOf(i);
             return (
               <g key={i}>
-                {/* Outer ring */}
                 <circle cx={x} cy={y} r={NODE_R} fill="none"
                   stroke={inSeq ? '#6366f1' : '#1e293b'} strokeWidth="2" />
-                {/* Inner dot */}
-                <circle cx={x} cy={y} r={inSeq ? 10 : 6}
+                <circle cx={x} cy={y} r={inSeq ? NODE_R * 0.55 : NODE_R * 0.35}
                   fill={inSeq ? '#6366f1' : '#334155'} />
-                {/* Sequence number */}
                 {inSeq && (
-                  <text x={x} y={y + 5} textAnchor="middle" fill="#fff"
-                    fontSize="11" fontWeight="700" fontFamily="monospace">
+                  <text x={x} y={y + FONT_SIZE * 0.4} textAnchor="middle" fill="#fff"
+                    fontSize={FONT_SIZE} fontWeight="700" fontFamily="monospace">
                     {seqIndex + 1}
                   </text>
                 )}
@@ -227,9 +220,8 @@ function PatternDrawer({ onSend, isOnline }) {
             );
           })}
 
-          {/* Offline overlay */}
           {!isOnline && (
-            <rect x={0} y={0} width={FRAME_W} height={FRAME_H} fill="rgba(0,0,0,0.55)" rx="18" />
+            <rect x={0} y={0} width={FRAME_W} height={FRAME_H} fill="rgba(0,0,0,0.55)" rx="16" />
           )}
           {!isOnline && (
             <text x={FRAME_W / 2} y={FRAME_H / 2} textAnchor="middle" fill="#64748b" fontSize="14">
@@ -238,20 +230,18 @@ function PatternDrawer({ onSend, isOnline }) {
           )}
         </svg>
 
-        {/* Home bar */}
-        <div style={{ width: 80, height: 4, background: '#334155', borderRadius: 2, margin: '10px auto 0' }} />
+        <div style={{ width: 70, height: 4, background: '#334155', borderRadius: 2, margin: '10px auto 0' }} />
       </div>
 
-      {/* Controls */}
       <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: FRAME_W + 16 }}>
         <button
           onClick={sendPattern}
           disabled={!isOnline || sequence.length < 2}
           style={{
-            flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+            flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
             background: sequence.length >= 2 && isOnline ? '#6366f1' : '#1e293b',
             color: sequence.length >= 2 && isOnline ? '#fff' : '#475569',
-            fontWeight: 700, fontSize: 13, transition: 'background 0.2s',
+            fontWeight: 700, fontSize: 12, transition: 'background 0.2s',
           }}
         >
           Send Pattern to Device
@@ -259,16 +249,16 @@ function PatternDrawer({ onSend, isOnline }) {
         <button
           onClick={clearPattern}
           style={{
-            padding: '9px 14px', borderRadius: 8, border: '1px solid #334155',
-            background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 13,
+            padding: '8px 12px', borderRadius: 8, border: '1px solid #334155',
+            background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 12,
           }}
         >
           Clear
         </button>
       </div>
 
-      <div style={{ fontSize: 11, color: '#334155', textAlign: 'center' }}>
-        Draw a pattern by dragging through the dots, then send it to the device
+      <div style={{ fontSize: 10, color: '#334155', textAlign: 'center' }}>
+        Drag through dots to draw a pattern, then send to device
       </div>
     </div>
   );
@@ -296,6 +286,7 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [statusMsg, setStatusMsg]       = useState('');
   const [replayingFile, setReplayingFile] = useState(null);
   const [showGestures, setShowGestures] = useState(false);
+  const [sizePreset, setSizePreset]     = useState(PATTERN_SIZES[1]);
 
   const seenResults = useRef(new Set());
 
@@ -310,7 +301,6 @@ export default function GestureTab({ device, sendCommand, results }) {
     sendCmd('gesture_list');
   }, [sendCmd]);
 
-  // Process command results
   useEffect(() => {
     if (!results || results.length === 0) return;
     results.forEach(r => {
@@ -345,7 +335,9 @@ export default function GestureTab({ device, sendCommand, results }) {
         status(data.success ? 'Pattern sent to device' : 'Pattern failed: ' + (data.error || ''));
       }
       if (r.command === 'gesture_auto_capture_start') {
-        status(data.success ? 'Auto-capture started on device' : 'Failed: ' + (data.error || ''));
+        status(data.success
+          ? 'Auto-capture started — records when screen is locked'
+          : 'Failed: ' + (data.error || ''));
       }
       if (r.command === 'gesture_auto_capture_stop') {
         status(data.success ? 'Auto-capture stopped' : 'Failed: ' + (data.error || ''));
@@ -385,7 +377,6 @@ export default function GestureTab({ device, sendCommand, results }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: 'system-ui,sans-serif', color: '#e2e8f0', background: '#0f172a' }}>
 
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', borderBottom: '1px solid #1e293b' }}>
         <span style={{ fontSize: 22 }}>✋</span>
         <div>
@@ -399,22 +390,44 @@ export default function GestureTab({ device, sendCommand, results }) {
         </div>
       </div>
 
-      {/* Status bar */}
       {statusMsg && (
         <div style={{ padding: '8px 18px', background: '#1e293b', fontSize: 12, color: '#94a3b8', borderBottom: '1px solid #1e293b' }}>
           {statusMsg}
         </div>
       )}
 
-      {/* Main content: pattern drawer + instructions */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* Left — pattern drawer */}
-        <div style={{ width: 320, borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 16px', gap: 16, overflowY: 'auto' }}>
-          <PatternDrawer onSend={handleSendPattern} isOnline={!!isOnline} />
+        <div style={{ width: 340, borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 12px', gap: 12, overflowY: 'auto' }}>
+
+          <div style={{ width: '100%', background: '#1e293b', borderRadius: 10, padding: '10px 12px', border: '1px solid #334155' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+              Pattern Size
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {PATTERN_SIZES.map(ps => (
+                <button
+                  key={ps.id}
+                  onClick={() => setSizePreset(ps)}
+                  style={{
+                    padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                    background: sizePreset.id === ps.id ? '#6366f1' : '#0f172a',
+                    color: sizePreset.id === ps.id ? '#fff' : '#64748b',
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  {ps.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>
+              Node size: {sizePreset.nodeR}px · Font: {sizePreset.fontSize}px · Frame: {sizePreset.frameW}×{sizePreset.frameH}
+            </div>
+          </div>
+
+          <PatternDrawer onSend={handleSendPattern} isOnline={!!isOnline} sizePreset={sizePreset} />
         </div>
 
-        {/* Right — instructions + auto-capture controls */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
 
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
@@ -422,6 +435,7 @@ export default function GestureTab({ device, sendCommand, results }) {
               How to use Pattern Draw
             </div>
             <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 2, fontSize: 13, color: '#94a3b8' }}>
+              <li>Use the <strong style={{ color: '#6366f1' }}>Pattern Size</strong> toggles to match your target device screen size</li>
               <li>Click and drag through the dots on the phone frame to draw a pattern</li>
               <li>The pattern will follow the selected nodes in order</li>
               <li>Click <strong style={{ color: '#6366f1' }}>Send Pattern to Device</strong> to execute it on the device screen</li>
@@ -433,9 +447,14 @@ export default function GestureTab({ device, sendCommand, results }) {
             <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
               Auto-Capture Gestures
             </div>
-            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 14, lineHeight: 1.7 }}>
-              The device will silently record complex touch gestures while the screen is on.
-              Simple taps and straight swipes are ignored — only multi-point patterns and curved paths are stored.
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
+              When enabled, the device automatically records complex touch gestures while the screen is <strong style={{ color: '#e2e8f0' }}>on and locked</strong>.
+              Recording pauses when the screen is unlocked. Auto-capture starts automatically when the Accessibility Service is active.
+            </div>
+            <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
+              📱 Screen ON + LOCKED → Recording active<br />
+              🔓 Screen Unlocked → Recording paused<br />
+              📴 Screen OFF → Recording paused
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
@@ -443,14 +462,14 @@ export default function GestureTab({ device, sendCommand, results }) {
                 disabled={!isOnline}
                 style={{ ...btnStyle('#16a34a'), padding: '8px 18px' }}
               >
-                Start Auto-Capture
+                ⏺ Start Auto-Capture
               </button>
               <button
                 onClick={() => { sendCmd('gesture_auto_capture_stop'); status('Stopping auto-capture…'); }}
                 disabled={!isOnline}
                 style={{ ...btnStyle('#dc2626'), padding: '8px 18px' }}
               >
-                Stop & Save
+                ⏹ Stop & Save
               </button>
               <button
                 onClick={openGestures}
@@ -467,7 +486,6 @@ export default function GestureTab({ device, sendCommand, results }) {
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
 
-      {/* Saved Gestures Modal */}
       {showGestures && (
         <div
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}
@@ -475,7 +493,6 @@ export default function GestureTab({ device, sendCommand, results }) {
         >
           <div style={{ background: '#1e293b', borderRadius: 14, width: 700, maxWidth: '95vw', maxHeight: '85vh', border: '1px solid #334155', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-            {/* Modal header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032' }}>
               <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1 }}>Saved Gestures</span>
               <span style={{ fontSize: 11, color: '#64748b' }}>{gestures.length} records</span>
@@ -486,13 +503,15 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
 
             <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-              {/* Gesture list */}
               <div style={{ width: 260, borderRight: '1px solid #334155', overflowY: 'auto' }}>
                 {gestures.length === 0 && !loading && (
                   <div style={{ padding: 24, textAlign: 'center', color: '#475569', fontSize: 13 }}>
                     <div style={{ fontSize: 32, marginBottom: 8 }}>✋</div>
                     No gestures saved yet.
                   </div>
+                )}
+                {loading && (
+                  <div style={{ padding: 24, textAlign: 'center', color: '#475569', fontSize: 13 }}>Loading…</div>
                 )}
                 {gestures.map(g => (
                   <div
@@ -532,7 +551,6 @@ export default function GestureTab({ device, sendCommand, results }) {
                 ))}
               </div>
 
-              {/* Preview panel */}
               <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
                 {!selectedGesture ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#475569', gap: 12 }}>
@@ -541,46 +559,32 @@ export default function GestureTab({ device, sendCommand, results }) {
                   </div>
                 ) : (
                   <>
-                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                      <div>
-                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Gesture Preview</div>
-                        {selectedData
-                          ? <GesturePreview gesture={selectedData} width={260} height={200} />
-                          : <div style={{ width: 260, height: 200, background: '#1e293b', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 12 }}>Loading…</div>
-                        }
-                      </div>
-                      {selectedData && (
-                        <div style={{ flex: 1, minWidth: 160 }}>
-                          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Details</div>
-                          <div style={{ background: '#0f172a', borderRadius: 8, padding: 14, fontSize: 13 }}>
-                            {[
-                              ['Label',    selectedData.label],
-                              ['Package',  selectedData.packageId],
-                              ['Points',   selectedData.points?.length],
-                              ['Duration', selectedData.durationMs != null ? formatDur(selectedData.durationMs) : '—'],
-                              ['Screen',   selectedData.screenW + '×' + selectedData.screenH],
-                            ].map(([k, v]) => (
-                              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #1e293b' }}>
-                                <span style={{ color: '#64748b' }}>{k}</span>
-                                <span style={{ color: '#e2e8f0', fontFamily: 'monospace', fontSize: 12 }}>{v}</span>
-                              </div>
-                            ))}
+                    {selectedData ? (
+                      <>
+                        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                          <div style={{ flex: 1, minWidth: 160 }}>
+                            <GesturePreview gesture={selectedData} width={200} height={160} />
                           </div>
-                          <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
-                            <button onClick={() => replay(selectedGesture)}
-                              disabled={!isOnline || replayingFile === selectedGesture}
-                              style={{ ...btnStyle('#1d4ed8'), fontWeight: 700, padding: '8px 20px' }}>
-                              {replayingFile === selectedGesture ? '⏳ Replaying…' : '▶ Replay on Device'}
-                            </button>
-                            <button onClick={() => deleteGesture(selectedGesture)}
-                              style={{ ...btnStyle('#7f1d1d'), padding: '8px 16px' }}>
-                              🗑 Delete
-                            </button>
+                          <div style={{ flex: 1, fontSize: 12, color: '#94a3b8', lineHeight: 2 }}>
+                            <div><strong>Label:</strong> {selectedData.label || '—'}</div>
+                            <div><strong>Package:</strong> {selectedData.packageId || '—'}</div>
+                            <div><strong>Duration:</strong> {selectedData.durationMs ? formatDur(selectedData.durationMs) : '—'}</div>
+                            <div><strong>Points:</strong> {selectedData.points?.length ?? '—'}</div>
+                            <div><strong>Screen:</strong> {selectedData.screenW}×{selectedData.screenH}</div>
+                            <div><strong>Recorded:</strong> {formatTime(selectedData.recordedAt)}</div>
                           </div>
                         </div>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#334155', fontFamily: 'monospace' }}>{selectedGesture}</div>
+                        <button
+                          onClick={() => replay(selectedGesture)}
+                          disabled={!isOnline || replayingFile === selectedGesture}
+                          style={{ ...btnStyle('#1d4ed8'), width: '100%', padding: '10px 0', fontSize: 13 }}
+                        >
+                          {replayingFile === selectedGesture ? 'Replaying…' : '▶ Replay on Device'}
+                        </button>
+                      </>
+                    ) : (
+                      <div style={{ padding: 24, textAlign: 'center', color: '#475569' }}>Loading gesture data…</div>
+                    )}
                   </>
                 )}
               </div>

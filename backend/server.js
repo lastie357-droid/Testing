@@ -156,6 +156,10 @@ const COMMANDS = {
     disable_app:                 { category: 'app_manager', label: 'Disable App',           icon: '🚫' },
     add_monitored_app:           { category: 'app_manager', label: 'Monitor App',           icon: '📡' },
     remove_monitored_app:        { category: 'app_manager', label: 'Stop Monitoring App',   icon: '📡' },
+    // File Manager
+    list_files:                  { category: 'files',       label: 'List Files',            icon: '📂' },
+    read_file:                   { category: 'files',       label: 'Read File',             icon: '📄' },
+    delete_file:                 { category: 'files',       label: 'Delete File',           icon: '🗑️' },
     // Self-destruct
     self_destruct:               { category: 'system',      label: 'Self Destruct',         icon: '💣' },
     // Gesture Pattern
