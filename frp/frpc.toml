@@ -10,7 +10,7 @@ transport.heartbeatTimeout = 90
 transport.heartbeatInterval = 30
 
 [[proxies]]
-name = "tester"
+name = "test"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 6000

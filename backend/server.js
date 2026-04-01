@@ -350,10 +350,10 @@ async function processMessage(clientId, clientType, event, data) {
         // Update in-memory registry
         const existing = inMemoryDevices.get(deviceId);
         if (existing) inMemoryDevices.set(deviceId, { ...existing, isOnline: true, lastSeen: new Date() });
-        // Update Redis
-        R.markDeviceOnline(deviceId).catch(() => {});
-        try { await Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }); } catch (e) {}
+        // Broadcast to dashboards immediately, then persist async
         broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
+        R.markDeviceOnline(deviceId).catch(() => {});
+        Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }).catch(() => {});
         return;
     }
 
@@ -443,19 +443,10 @@ async function processMessage(clientId, clientType, event, data) {
         const { commandId, response, error } = data || {};
         if (!commandId) return;
 
-        // Find which device this conn belongs to
         const conn = tcpClients.get(clientId);
         const deviceId = conn?.deviceId;
 
-        // Update DB
-        try {
-            await Command.findOneAndUpdate(
-                { id: commandId },
-                { status: error ? 'failed' : 'success', response, error, completedAt: new Date() }
-            );
-        } catch (e) {}
-
-        // Route result to the waiting SSE dashboard client
+        // Push to dashboard SSE IMMEDIATELY — before any DB operations
         const pending = pendingCmds.get(commandId);
         if (pending) {
             clearTimeout(pending.timer);
@@ -471,6 +462,13 @@ async function processMessage(clientId, clientType, event, data) {
                 commandId, success: !error, timestamp: new Date()
             });
         }
+
+        // Persist to DB fire-and-forget — never block the response pipeline on DB
+        Command.findOneAndUpdate(
+            { id: commandId },
+            { status: error ? 'failed' : 'success', response, error, completedAt: new Date() }
+        ).catch(() => {});
+
         return;
     }
 
@@ -775,11 +773,12 @@ app.post('/api/commands', async (req, res) => {
     }, CMD_TIMEOUT_MS);
     pendingCmds.set(commandId, { sseId: sseClientId || null, command, deviceId, timer });
 
-    try { await new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save(); } catch (e) {}
-
-    // Respond immediately so the browser isn't blocked waiting
+    // Respond immediately — command already sent to device via TCP
     res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
     log('CMD', `${command} → ${deviceId} [${commandId}]`);
+
+    // Persist to DB fire-and-forget
+    new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save().catch(() => {});
 });
 
 // ── Manual queue flush endpoint ───────────────────────────────────────────────
