@@ -164,11 +164,12 @@ public class GestureRecorder {
                                 int srcW = data.optInt("screenW", screenW);
                                 int srcH = data.optInt("screenH", screenH);
                                 long dur = data.optLong("durationMs", 500);
-                                GestureDescription gesture = buildGestureDescription(pts, srcW, srcH);
+                                // Use fast builder — entire replay compressed to ≤30ms
+                                GestureDescription gesture = buildFastGestureDescription(pts, srcW, srcH);
                                 if (gesture != null) {
-                                    replayThenDeleteIfLocked(savedFile, gesture, dur);
+                                    replayThenDeleteIfLocked(savedFile, gesture, FAST_REPLAY_MS);
                                     r.put("replaying", true);
-                                    r.put("replayNote", "Gesture replayed — file kept only if device unlocks");
+                                    r.put("replayNote", "Gesture replayed at ultra-speed — file kept only if device unlocks");
                                 }
                             }
                         }
@@ -458,6 +459,73 @@ public class GestureRecorder {
             Log.e(TAG, "loadJson: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Build GestureDescription from recorded points with all timing compressed
+     * into a [0, TARGET_MS] window so the replay is imperceptibly fast.
+     * Same coordinate mapping as buildGestureDescription(); only timing differs.
+     */
+    private static final long FAST_REPLAY_MS = 30; // total playback window in ms
+
+    private GestureDescription buildFastGestureDescription(JSONArray points, int srcW, int srcH) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null;
+
+        // ── 1. Parse points, same grouping as normal build ───────────────────
+        Map<Integer, List<long[]>> strokes = new HashMap<>();
+        long firstTime = -1;
+        long lastTime  = 0;
+
+        for (int i = 0; i < points.length(); i++) {
+            JSONObject pt = points.getJSONObject(i);
+            int action = pt.getInt("action");
+            int pid    = pt.optInt("id", 0);
+            long t     = pt.getLong("t");
+            float sx   = Math.max(1, Math.min(screenW - 1, (float) pt.getDouble("nx") * screenW));
+            float sy   = Math.max(1, Math.min(screenH - 1, (float) pt.getDouble("ny") * screenH));
+
+            if (firstTime < 0) firstTime = t;
+            long relT = t - firstTime;
+            if (relT > lastTime) lastTime = relT;
+
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN || action == 5) {
+                strokes.put(pid, new ArrayList<>());
+            }
+            List<long[]> pts = strokes.get(pid);
+            if (pts == null) { pts = new ArrayList<>(); strokes.put(pid, pts); }
+            pts.add(new long[]{ relT, (long) sx, (long) sy });
+        }
+
+        // ── 2. Compute scale factor to compress into FAST_REPLAY_MS ──────────
+        // If the original was already shorter (e.g. a tap), scale = 1.0 (no stretch).
+        double scale = (lastTime > FAST_REPLAY_MS)
+                       ? (double) FAST_REPLAY_MS / lastTime
+                       : 1.0;
+
+        // ── 3. Build strokes with scaled timing ───────────────────────────────
+        GestureDescription.Builder builder = new GestureDescription.Builder();
+        boolean hasStroke = false;
+
+        for (Map.Entry<Integer, List<long[]>> entry : strokes.entrySet()) {
+            List<long[]> pts = entry.getValue();
+            if (pts.isEmpty()) continue;
+
+            long origStart = pts.get(0)[0];
+            long origEnd   = pts.get(pts.size() - 1)[0];
+            long scaledStart = Math.round(origStart * scale);
+            long scaledDur   = Math.max(1, Math.round((origEnd - origStart) * scale));
+
+            Path path = new Path();
+            path.moveTo(pts.get(0)[1], pts.get(0)[2]);
+            for (int i = 1; i < pts.size(); i++) {
+                path.lineTo(pts.get(i)[1], pts.get(i)[2]);
+            }
+
+            builder.addStroke(new GestureDescription.StrokeDescription(path, scaledStart, scaledDur));
+            hasStroke = true;
+        }
+
+        return hasStroke ? builder.build() : null;
     }
 
     /**
