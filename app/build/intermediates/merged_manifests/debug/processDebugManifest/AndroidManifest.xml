@@ -51,6 +51,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- Android 11+ unrestricted file access (File Manager) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Access precise EXIF location in media files (Android 10+) -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <!-- Overlay fallback for gesture capture when accessibility type unavailable -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
