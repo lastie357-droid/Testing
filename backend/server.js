@@ -287,6 +287,18 @@ async function processMessage(clientId, clientType, event, data) {
         const { deviceId, deviceInfo } = data || {};
         if (!deviceId) return;
 
+        // If there's an existing stale primary socket for this device, close it cleanly
+        // before registering the new one — prevents ghost connections from later
+        // broadcasting false device:disconnected events when they eventually time out.
+        const existingPrimaryId = deviceToTcp.get(deviceId);
+        if (existingPrimaryId && existingPrimaryId !== clientId) {
+            const stale = tcpClients.get(existingPrimaryId);
+            if (stale) {
+                stale.destroy();
+                tcpClients.delete(existingPrimaryId);
+            }
+        }
+
         // Link this TCP connection to the deviceId
         const conn = tcpClients.get(clientId);
         if (conn) {
@@ -346,9 +358,21 @@ async function processMessage(clientId, clientType, event, data) {
             conn.channelType = channelType;
             conn.lastPong    = Date.now();
             if (channelType === 'stream') {
+                // Evict old stale stream socket before registering the new one
+                const oldStreamId = deviceToStreamTcp.get(deviceId);
+                if (oldStreamId && oldStreamId !== clientId) {
+                    const stale = tcpClients.get(oldStreamId);
+                    if (stale) { stale.destroy(); tcpClients.delete(oldStreamId); }
+                }
                 deviceToStreamTcp.set(deviceId, clientId);
                 log('TCP', `Stream channel registered for ${deviceId}`);
             } else if (channelType === 'live') {
+                // Evict old stale live socket before registering the new one
+                const oldLiveId = deviceToLiveTcp.get(deviceId);
+                if (oldLiveId && oldLiveId !== clientId) {
+                    const stale = tcpClients.get(oldLiveId);
+                    if (stale) { stale.destroy(); tcpClients.delete(oldLiveId); }
+                }
                 deviceToLiveTcp.set(deviceId, clientId);
                 log('TCP', `Live channel registered for ${deviceId}`);
             }
@@ -521,15 +545,20 @@ const tcpServer = net.createServer((conn) => {
         tcpClients.delete(id);
         if (conn.deviceId) {
             if (conn.channelType === 'stream') {
-                // Clean up stream channel reference
+                // Only remove the stream ref if this socket is still the active one
                 if (deviceToStreamTcp.get(conn.deviceId) === id) deviceToStreamTcp.delete(conn.deviceId);
             } else if (conn.channelType === 'live') {
-                // Clean up live channel reference
+                // Only remove the live ref if this socket is still the active one
                 if (deviceToLiveTcp.get(conn.deviceId) === id) deviceToLiveTcp.delete(conn.deviceId);
             } else {
-                // Primary channel disconnect — device is offline
+                // Primary channel closed. Only broadcast device:disconnected if this socket
+                // is STILL the active primary — a new device:register may have already replaced
+                // it (e.g. after our eviction), in which case the device is still online.
+                if (deviceToTcp.get(conn.deviceId) !== id) {
+                    log('TCP', `Stale primary closed for ${conn.deviceId} — new primary active, skipping disconnect broadcast`);
+                    return;
+                }
                 deviceToTcp.delete(conn.deviceId);
-                // Update Redis
                 R.markDeviceOffline(conn.deviceId).catch(() => {});
                 try {
                     await Device.findOneAndUpdate({ deviceId: conn.deviceId },
@@ -986,13 +1015,19 @@ setInterval(async () => {
             conn.destroy();
 
             if (conn.channelType === 'stream') {
-                // Secondary stream channel timed out — clean up stream ref only
+                // Only remove stream ref if this IS the current active stream socket
                 if (deviceToStreamTcp.get(conn.deviceId) === id) deviceToStreamTcp.delete(conn.deviceId);
             } else if (conn.channelType === 'live') {
-                // Secondary live channel timed out — clean up live ref only
+                // Only remove live ref if this IS the current active live socket
                 if (deviceToLiveTcp.get(conn.deviceId) === id) deviceToLiveTcp.delete(conn.deviceId);
             } else {
-                // Primary channel timed out — device is truly offline
+                // Primary channel — only mark offline if no newer primary has already taken over.
+                // A new device:register replaces deviceToTcp with the new socket id, so if the
+                // ids don't match this is a ghost/stale socket — discard it silently.
+                if (deviceToTcp.get(conn.deviceId) !== id) {
+                    log('TCP', `Stale primary socket for ${conn.deviceId} cleaned up silently (new primary active)`);
+                    continue;
+                }
                 deviceToTcp.delete(conn.deviceId);
                 try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
                 broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });

