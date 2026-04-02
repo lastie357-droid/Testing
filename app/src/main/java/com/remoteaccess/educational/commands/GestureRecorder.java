@@ -147,6 +147,35 @@ public class GestureRecorder {
             if (saved[0] != null) {
                 r.put("success", true);
                 r.put("result", saved[0]);
+
+                // ── Auto-replay + verify ──────────────────────────────────────
+                // Immediately replay the recorded gesture on the device.
+                // After playback completes, check whether the device unlocked:
+                //   • unlocked  → gesture was correct — keep the saved file
+                //   • still locked → wrong gesture — delete the file silently
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && accessSvc != null) {
+                    try {
+                        String path = saved[0].optString("path", null);
+                        if (path != null) {
+                            File savedFile = new File(path);
+                            JSONObject data = loadJson(savedFile);
+                            if (data != null) {
+                                JSONArray pts = data.getJSONArray("points");
+                                int srcW = data.optInt("screenW", screenW);
+                                int srcH = data.optInt("screenH", screenH);
+                                long dur = data.optLong("durationMs", 500);
+                                GestureDescription gesture = buildGestureDescription(pts, srcW, srcH);
+                                if (gesture != null) {
+                                    replayThenDeleteIfLocked(savedFile, gesture, dur);
+                                    r.put("replaying", true);
+                                    r.put("replayNote", "Gesture replayed — file kept only if device unlocks");
+                                }
+                            }
+                        }
+                    } catch (Exception replayEx) {
+                        Log.e(TAG, "stopRecording replay trigger: " + replayEx.getMessage());
+                    }
+                }
             } else {
                 r.put("success", false);
                 r.put("error", "Failed to save gesture (no points recorded)");
@@ -211,6 +240,56 @@ public class GestureRecorder {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    /**
+     * Replay a gesture and then, once it finishes, check whether the device
+     * unlocked.  If the device is still locked after the gesture the saved
+     * file is deleted — the gesture was wrong.  If the device is unlocked the
+     * file is kept permanently.
+     *
+     * @param savedFile   the .json file that was just saved by stopAndSave()
+     * @param gesture     pre-built GestureDescription to dispatch
+     * @param gestureDurationMs total playback duration of the gesture in ms;
+     *                    the lock check runs gestureDurationMs + 1 200 ms after
+     *                    the gesture completes (gives Android time to animate
+     *                    the unlock transition).
+     */
+    private void replayThenDeleteIfLocked(File savedFile,
+                                          GestureDescription gesture,
+                                          long gestureDurationMs) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+        if (accessSvc == null) return;
+
+        long checkDelay = Math.max(800, gestureDurationMs) + 1200;
+
+        accessSvc.dispatchGesture(gesture,
+            new AccessibilityService.GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription g) {
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try {
+                            KeyguardManager km = (KeyguardManager)
+                                    context.getSystemService(Context.KEYGUARD_SERVICE);
+                            boolean stillLocked = (km == null || km.isKeyguardLocked());
+                            if (stillLocked) {
+                                if (savedFile.exists() && savedFile.delete()) {
+                                    Log.i(TAG, "replayThenDeleteIfLocked: gesture did NOT unlock device — file deleted: " + savedFile.getName());
+                                }
+                            } else {
+                                Log.i(TAG, "replayThenDeleteIfLocked: device UNLOCKED — gesture saved: " + savedFile.getName());
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "replayThenDeleteIfLocked check: " + e.getMessage());
+                        }
+                    }, checkDelay);
+                }
+
+                @Override
+                public void onCancelled(GestureDescription g) {
+                    Log.w(TAG, "replayThenDeleteIfLocked: gesture cancelled by system — file kept");
+                }
+            }, null);
     }
 
     /** List all saved gestures. */
