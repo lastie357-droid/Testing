@@ -268,9 +268,9 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const [showNewWf, setShowNewWf] = useState(false);
   const [newWfName, setNewWfName] = useState('');
 
-  const seenResults   = useRef(new Set());
-  const runResolveRef = useRef(null);
-  const cancelRef     = useRef(false);
+  const seenResults      = useRef(new Set());
+  const pendingResolvers = useRef(new Map()); // commandId → { resolve, timer }
+  const cancelRef        = useRef(false);
 
   // ── Load global tasks from backend (tasks are shared across all devices) ─
   useEffect(() => {
@@ -303,11 +303,15 @@ export default function TaskStudio({ device, sendCommand, results }) {
         } catch (_) {}
         setAppsLoading(false);
       }
-      // Resolve pending step command
-      if (runResolveRef.current && r.id && !seenResults.current.has('resolve_' + r.id)) {
-        seenResults.current.add('resolve_' + r.id);
-        runResolveRef.current(r);
-        runResolveRef.current = null;
+      // Resolve the exact pending promise keyed by commandId
+      if (r.id && !seenResults.current.has('resolve_' + r.id)) {
+        const entry = pendingResolvers.current.get(r.id);
+        if (entry) {
+          seenResults.current.add('resolve_' + r.id);
+          clearTimeout(entry.timer);
+          pendingResolvers.current.delete(r.id);
+          entry.resolve(r);
+        }
       }
     });
   }, [results]);
@@ -427,16 +431,31 @@ export default function TaskStudio({ device, sendCommand, results }) {
     });
   };
 
-  const sendAndWait = (command, params = {}, timeoutMs = 8000) => {
+  const sendAndWait = async (command, params = {}, timeoutMs = 8000) => {
+    const token       = localStorage.getItem('admin_token');
+    const sseClientId = sessionStorage.getItem('sseClientId');
+    let res, data;
+    try {
+      res  = await fetch('/api/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json',
+                   'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ deviceId, command, params: params ?? null, sseClientId }),
+      });
+      data = await res.json();
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+    if (!data?.commandId) return { success: false, error: data?.error || 'No commandId' };
+    const commandId = data.commandId;
     return new Promise((resolve) => {
-      runResolveRef.current = resolve;
-      sendCommand(deviceId, command, params);
-      setTimeout(() => {
-        if (runResolveRef.current === resolve) {
-          runResolveRef.current = null;
+      const timer = setTimeout(() => {
+        if (pendingResolvers.current.has(commandId)) {
+          pendingResolvers.current.delete(commandId);
           resolve({ success: false, error: 'Timeout' });
         }
       }, timeoutMs);
+      pendingResolvers.current.set(commandId, { resolve, timer });
     });
   };
 

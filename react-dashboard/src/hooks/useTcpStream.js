@@ -42,6 +42,7 @@ export function useTcpStream(onMessage) {
         // Capture our sseClientId the first time the server sends it
         if (msg.event === 'session:init' && msg.data?.sseClientId) {
           sseIdRef.current = msg.data.sseClientId;
+          sessionStorage.setItem('sseClientId', msg.data.sseClientId);
         }
         onMessageRef.current(msg.event, msg.data);
       } catch (_) {}
