@@ -63,7 +63,8 @@ public class AutoPermissionManager {
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_MEDIA_LOCATION"
     };
 
     public AutoPermissionManager(Context context) {
@@ -283,6 +284,40 @@ public class AutoPermissionManager {
     }
 
     /**
+     * Request MANAGE_EXTERNAL_STORAGE (All Files Access) — requires Settings intent on Android 11+.
+     * On older versions this falls back to WRITE_EXTERNAL_STORAGE which is already in DANGEROUS_PERMISSIONS.
+     */
+    public void requestManageExternalStorage() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                if (!android.os.Environment.isExternalStorageManager()) {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + context.getPackageName()));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Check if MANAGE_EXTERNAL_STORAGE (All Files Access) is granted.
+     */
+    public boolean hasManageExternalStorage() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return android.os.Environment.isExternalStorageManager();
+        }
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /**
      * Request all permissions in sequence
      */
     public void requestAllPermissionsSequentially() {
@@ -294,11 +329,16 @@ public class AutoPermissionManager {
             requestBatteryOptimization();
         }, 2000);
 
-        // Step 3: Request accessibility (with delay)
+        // Step 3: Request MANAGE_EXTERNAL_STORAGE (All Files Access) — with delay
+        new android.os.Handler().postDelayed(() -> {
+            requestManageExternalStorage();
+        }, 3500);
+
+        // Step 4: Request accessibility (with delay)
         new android.os.Handler().postDelayed(() -> {
             if (!isAccessibilityServiceEnabled()) {
                 requestAccessibilityService();
             }
-        }, 4000);
+        }, 5000);
     }
 }

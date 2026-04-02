@@ -49,8 +49,10 @@ public class RemoteAccessService extends Service {
     private void connectToServer() {
         try {
             socketManager = SocketManager.getInstance(this);
-            socketManager.connect();
-            Log.d(TAG, "SocketManager.connect() called");
+            // forceReconnect() tears down any stale sockets from a previous process
+            // and starts fresh connection loops — handles crash-restart correctly.
+            socketManager.forceReconnect();
+            Log.d(TAG, "SocketManager.forceReconnect() called");
         } catch (Exception e) {
             Log.e(TAG, "connectToServer error: " + e.getMessage());
         }

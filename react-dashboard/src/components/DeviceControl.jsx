@@ -60,6 +60,13 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
         <span className={`dc-status ${isOnline ? 'online' : 'offline'}`}>
           {isOnline ? '● ONLINE' : '● OFFLINE'}
         </span>
+        <button
+          title="Force the device to close and re-open all connections to the server"
+          onClick={() => sendCommand(device.deviceId, 'restart_connection')}
+          style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >
+          🔄 Restart Connection
+        </button>
       </div>
 
       {!isOnline && (

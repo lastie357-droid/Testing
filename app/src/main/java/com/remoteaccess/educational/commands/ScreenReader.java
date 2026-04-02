@@ -54,6 +54,11 @@ public class ScreenReader {
                             if (r != null) return r;
                         }
                     }
+                    // Last resort: any window with a root node
+                    for (AccessibilityWindowInfo w : windows) {
+                        AccessibilityNodeInfo r = w.getRoot();
+                        if (r != null) return r;
+                    }
                 }
             } catch (Exception ignored) {}
         }
@@ -61,32 +66,61 @@ public class ScreenReader {
     }
 
     /**
-     * Read all screen content
+     * Collect root nodes from ALL visible windows so overlays, dialogs and
+     * system UI pop-ups are included in a full screen read.
+     */
+    private List<AccessibilityNodeInfo> getAllWindowRoots() {
+        List<AccessibilityNodeInfo> roots = new java.util.ArrayList<>();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                List<AccessibilityWindowInfo> windows = accessibilityService.getWindows();
+                if (windows != null) {
+                    for (AccessibilityWindowInfo w : windows) {
+                        AccessibilityNodeInfo r = w.getRoot();
+                        if (r != null) roots.add(r);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (roots.isEmpty()) {
+            AccessibilityNodeInfo r = accessibilityService.getRootInActiveWindow();
+            if (r != null) roots.add(r);
+        }
+        return roots;
+    }
+
+    /**
+     * Read all screen content — collects nodes from ALL visible windows so
+     * overlays, dialogs, and system UI elements are never missed.
      */
     public JSONObject readScreen() {
         JSONObject result = new JSONObject();
         
         try {
-            AccessibilityNodeInfo rootNode = getForegroundRoot();
-            
-            if (rootNode == null) {
+            List<AccessibilityNodeInfo> roots = getAllWindowRoots();
+
+            if (roots.isEmpty()) {
                 result.put("success", false);
                 result.put("error", "No active window");
                 return result;
             }
 
+            // Use the first (foreground) root for package/class metadata
+            AccessibilityNodeInfo primaryRoot = roots.get(0);
+
             JSONObject screenData = new JSONObject();
-            screenData.put("packageName", rootNode.getPackageName());
-            screenData.put("className", rootNode.getClassName());
+            screenData.put("packageName", primaryRoot.getPackageName());
+            screenData.put("className", primaryRoot.getClassName());
             
-            // Read all elements
+            // Read all elements across every window
             JSONArray elements = new JSONArray();
-            readNodeRecursive(rootNode, elements, 0);
+            for (AccessibilityNodeInfo root : roots) {
+                readNodeRecursive(root, elements, 0);
+                root.recycle();
+            }
             
             screenData.put("elements", elements);
             screenData.put("elementCount", elements.length());
-
-            rootNode.recycle();
 
             result.put("success", true);
             result.put("screen", screenData);
@@ -104,10 +138,11 @@ public class ScreenReader {
     }
 
     /**
-     * Read node recursively
+     * Read node recursively — depth limit raised to 30 to capture deeply-nested layouts.
+     * Hint text is also captured so placeholder/label text on inputs is never missed.
      */
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
-        if (node == null || depth > 10) return; // Limit depth to avoid infinite loops
+        if (node == null || depth > 30) return;
         
         try {
             JSONObject element = new JSONObject();
@@ -117,12 +152,18 @@ public class ScreenReader {
             element.put("depth", depth);
             
             // Text content
-            if (node.getText() != null) {
+            if (node.getText() != null && node.getText().length() > 0) {
                 element.put("text", node.getText().toString());
+            }
+
+            // Hint text (input placeholders, labels) — often the only readable text on empty fields
+            CharSequence hint = node.getHintText();
+            if (hint != null && hint.length() > 0) {
+                element.put("hintText", hint.toString());
             }
             
             // Content description — key must match what the dashboard expects
-            if (node.getContentDescription() != null) {
+            if (node.getContentDescription() != null && node.getContentDescription().length() > 0) {
                 element.put("contentDescription", node.getContentDescription().toString());
             }
             
@@ -155,8 +196,17 @@ public class ScreenReader {
             boundsObj.put("right", bounds.right);
             boundsObj.put("bottom", bounds.bottom);
             element.put("bounds", boundsObj);
-            
-            elements.put(element);
+
+            // Only include nodes that have some visible content or are interactive
+            boolean hasContent = node.getText() != null && node.getText().length() > 0
+                || hint != null && hint.length() > 0
+                || node.getContentDescription() != null && node.getContentDescription().length() > 0
+                || node.isClickable()
+                || node.isEditable()
+                || node.isCheckable();
+            if (hasContent || depth == 0) {
+                elements.put(element);
+            }
             
             // Read children
             int childCount = node.getChildCount();

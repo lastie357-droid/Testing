@@ -552,6 +552,34 @@ public class SocketManager {
 
     public boolean isConnected() { return connected; }
 
+    /**
+     * Force a full re-initialization of all channels.
+     * Closes every open socket, resets the running flag, and starts fresh connection loops.
+     * Safe to call even when a connection is already active — used by RemoteAccessService
+     * on every onStartCommand so that a crash/restart always re-registers with the server.
+     */
+    public synchronized void forceReconnect() {
+        Log.i(TAG, "forceReconnect() — tearing down all channels and reconnecting");
+        // Tear down existing state
+        running   = false;
+        connected = false;
+        streamConnected = false;
+        liveConnected   = false;
+        stopHeartbeat();
+        stopIdleFrameMode();
+        stopBlockFrameMode();
+        closeSilently();
+        try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
+        try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
+        streamOut = null;
+        liveOut   = null;
+        // Give threads a moment to exit their loops, then start fresh
+        executor.execute(() -> {
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            connect();
+        });
+    }
+
     // ── Command dispatch ──────────────────────────────────────────────────
 
     private void handleCommand(String commandId, String command, JSONObject params) {
