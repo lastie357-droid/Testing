@@ -117,10 +117,16 @@ function StepEditor({ step, apps, onChange }) {
       );
     case 'click_text':
       return (
-        <div style={{ display: 'flex', gap: 8 }}>
-          {field('Text to Find & Click on Screen',
-            input({ placeholder: 'e.g. Login, Submit, OK…', value: step.text, onChange: e => onChange({ ...step, text: e.target.value }) })
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {field('Text to Find & Click on Screen',
+              input({ placeholder: 'e.g. Login, Submit, OK…', value: step.text, onChange: e => onChange({ ...step, text: e.target.value }) })
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ color: '#f59e0b' }}>⏱</span>
+            Polls every 100 ms — waits up to 8 s for the text to appear. Stops the task if not found.
+          </div>
         </div>
       );
     case 'paste_text':
@@ -421,21 +427,49 @@ export default function TaskStudio({ device, sendCommand, results }) {
     });
   };
 
-  const sendAndWait = (command, params = {}) => {
+  const sendAndWait = (command, params = {}, timeoutMs = 8000) => {
     return new Promise((resolve) => {
       runResolveRef.current = resolve;
       sendCommand(deviceId, command, params);
-      // Timeout after 8s
       setTimeout(() => {
         if (runResolveRef.current === resolve) {
           runResolveRef.current = null;
           resolve({ success: false, error: 'Timeout' });
         }
-      }, 8000);
+      }, timeoutMs);
     });
   };
 
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+  /**
+   * Poll the device every 100 ms for up to 8 s looking for `text` on screen.
+   * Returns { found: true } when the text appears, { found: false } on timeout.
+   */
+  const pollForText = async (text) => {
+    const POLL_INTERVAL = 100;
+    const POLL_TIMEOUT  = 8000;
+    const deadline = Date.now() + POLL_TIMEOUT;
+
+    while (!cancelRef.current && Date.now() < deadline) {
+      const result = await sendAndWait('find_by_text', { text }, 4000);
+      if (result?.success && result?.response) {
+        let found = false;
+        try {
+          const data = typeof result.response === 'string'
+            ? JSON.parse(result.response) : result.response;
+          // find_by_text returns { success, matches: [...], count: N }
+          found = (data.count > 0) ||
+                  (Array.isArray(data.matches) && data.matches.length > 0);
+        } catch (_) {}
+        if (found) return { found: true };
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(POLL_INTERVAL, remaining));
+    }
+    return { found: false };
+  };
 
   const runWorkflow = async () => {
     if (!isOnline) return;
@@ -469,11 +503,24 @@ export default function TaskStudio({ device, sendCommand, results }) {
             log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Open App (${step.appLabel || step.packageName}): ${result?.success ? 'OK' : result?.error || 'Failed'}` });
             break;
 
-          case 'click_text':
+          case 'click_text': {
             if (!step.text) throw new Error('No text to click');
+            log.push({ status: 'ok', message: `[${ts}] Waiting for "${step.text}" to appear (polling 100ms, up to 8s)…` });
+            setRunLog([...log]);
+            const poll = await pollForText(step.text);
+            if (cancelRef.current) break;
+            if (!poll.found) {
+              log.push({ status: 'err', message: `[${ts}] "${step.text}" not found within 8s — stopping task` });
+              setRunLog([...log]);
+              setErrorIndex(step.originalIndex);
+              setRunningIndex(-1);
+              setRunning(false);
+              return;
+            }
             result = await sendAndWait('click_by_text', { text: step.text });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Click "${step.text}": ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Click "${step.text}": ${result?.success ? 'Clicked OK' : result?.error || 'Failed'}` });
             break;
+          }
 
           case 'paste_text':
             if (!step.text) throw new Error('No text to paste');
