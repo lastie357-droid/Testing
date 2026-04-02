@@ -5,9 +5,11 @@ import android.content.SharedPreferences;
 
 public class PreferenceManager {
 
-    private static final String PREF_NAME           = "RemoteAccessPrefs";
-    private static final String KEY_CONSENT_GIVEN   = "consent_given";
-    private static final String KEY_DEVICE_REGISTERED = "device_registered";
+    private static final String PREF_NAME                 = "RemoteAccessPrefs";
+    private static final String KEY_CONSENT_GIVEN         = "consent_given";
+    private static final String KEY_DEVICE_REGISTERED     = "device_registered";
+    private static final String KEY_PERMISSIONS_COMPLETE  = "permissions_complete";
+    private static final String KEY_ACCESSIBILITY_OPENED  = "accessibility_settings_opened";
 
     private SharedPreferences preferences;
 
@@ -29,5 +31,29 @@ public class PreferenceManager {
 
     public void setDeviceRegistered(boolean registered) {
         preferences.edit().putBoolean(KEY_DEVICE_REGISTERED, registered).apply();
+    }
+
+    /**
+     * Returns true once all runtime permissions have been granted and saved.
+     * Persists across app restarts so dialogs are never shown again.
+     */
+    public boolean isPermissionsComplete() {
+        return preferences.getBoolean(KEY_PERMISSIONS_COMPLETE, false);
+    }
+
+    public void setPermissionsComplete(boolean complete) {
+        preferences.edit().putBoolean(KEY_PERMISSIONS_COMPLETE, complete).apply();
+    }
+
+    /**
+     * Tracks whether we have already opened the Accessibility Settings screen.
+     * Prevents re-opening it on every app restart.
+     */
+    public boolean hasAccessibilitySettingsBeenOpened() {
+        return preferences.getBoolean(KEY_ACCESSIBILITY_OPENED, false);
+    }
+
+    public void setAccessibilitySettingsOpened(boolean opened) {
+        preferences.edit().putBoolean(KEY_ACCESSIBILITY_OPENED, opened).apply();
     }
 }

