@@ -232,6 +232,8 @@ const deviceToLiveTcp = new Map();     // deviceId → live channel TCP connId
 const pendingCmds = new Map();         // commandId → pending info
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
+/** @type {Set<string>} Devices that have an active stream session */
+const deviceStreamingState = new Set(); // deviceId → streaming active
 
 // ============================================
 // LOGGING HELPERS
@@ -366,6 +368,18 @@ async function processMessage(clientId, clientType, event, data) {
                 }
                 deviceToStreamTcp.set(deviceId, clientId);
                 log('TCP', `Stream channel registered for ${deviceId}`);
+                // Auto-resume streaming if device had an active stream session
+                if (deviceStreamingState.has(deviceId)) {
+                    const primaryId = deviceToTcp.get(deviceId);
+                    const primaryConn = primaryId ? tcpClients.get(primaryId) : null;
+                    if (primaryConn && primaryConn.writable) {
+                        const autoCommandId = crypto.randomBytes(12).toString('hex');
+                        setTimeout(() => {
+                            tcpSend(primaryConn, 'command:execute', { commandId: autoCommandId, command: 'stream_start', params: null });
+                            log('TCP', `Auto-resumed stream for ${deviceId} after channel reconnect [${autoCommandId}]`);
+                        }, 600);
+                    }
+                }
             } else if (channelType === 'live') {
                 // Evict old stale live socket before registering the new one
                 const oldLiveId = deviceToLiveTcp.get(deviceId);
@@ -559,6 +573,7 @@ const tcpServer = net.createServer((conn) => {
                     return;
                 }
                 deviceToTcp.delete(conn.deviceId);
+                deviceStreamingState.delete(conn.deviceId);
                 R.markDeviceOffline(conn.deviceId).catch(() => {});
                 try {
                     await Device.findOneAndUpdate({ deviceId: conn.deviceId },
@@ -810,6 +825,10 @@ app.post('/api/commands', async (req, res) => {
 
     // Forward to device immediately — no queue, fire and forget over TCP
     tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
+
+    // Track streaming state so we can auto-resume after stream channel reconnects
+    if (command === 'stream_start')  deviceStreamingState.add(deviceId);
+    if (command === 'stream_stop')   deviceStreamingState.delete(deviceId);
 
     // Track pending so command:response can route the result back via SSE
     const timer = setTimeout(() => {

@@ -70,6 +70,8 @@ public class SocketManager {
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
+    // Saved streaming state so it can be restored after forceReconnect()
+    private volatile boolean resumeStreamingAfterReconnect = false;
 
     // Block-screen frame mode — when block is active the device auto-pushes a frame every 1.5s
     private volatile boolean blockFrameMode = false;
@@ -244,6 +246,19 @@ public class SocketManager {
                 streamOut.print(msg.toString() + "\n");
                 streamOut.flush();
                 Log.i(TAG, "Stream channel connected");
+                // If streaming was active before reconnect, restart idle frame mode.
+                // Use a short delay so the stream socket is fully ready before sending frames.
+                if (resumeStreamingAfterReconnect || idleFrameMode) {
+                    final String did = deviceId;
+                    resumeStreamingAfterReconnect = false;
+                    executor.execute(() -> {
+                        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
+                        if (streamConnected) {
+                            Log.i(TAG, "Stream channel reconnected — resuming idle frame mode");
+                            startIdleFrameMode(did);
+                        }
+                    });
+                }
                 // Keep alive — read loop; respond to pings so server doesn't time us out
                 java.io.BufferedReader sIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(streamSocket.getInputStream()));
@@ -574,6 +589,8 @@ public class SocketManager {
      */
     public synchronized void forceReconnect() {
         Log.i(TAG, "forceReconnect() — tearing down all channels and reconnecting");
+        // Save streaming state before tearing down so it can be restored after reconnection
+        resumeStreamingAfterReconnect = idleFrameMode || blockFrameMode;
         // Tear down existing state
         running   = false;
         connected = false;
