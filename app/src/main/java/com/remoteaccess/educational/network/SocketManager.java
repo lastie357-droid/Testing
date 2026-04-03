@@ -765,6 +765,13 @@ public class SocketManager {
                 case "gesture_auto_capture_stop":  return gestureRecorder.stopAutoCapture();
                 case "gesture_mirror_start":        return gestureRecorder.startAutoMirror();
                 case "gesture_mirror_stop":         return gestureRecorder.stopAutoMirror();
+                // Live Stream
+                case "gesture_live_start":   return gestureRecorder.startLiveStream();
+                case "gesture_live_stop":    return gestureRecorder.stopLiveStream();
+                case "gesture_live_points":  return gestureRecorder.getLiveStreamPoints();
+                case "gesture_live_delete":  return gestureRecorder.deleteLiveStream(params.getString("filename"));
+                case "gesture_live_replay":  return gestureRecorder.replayLiveStream(params.getString("filename"));
+                case "gesture_live_list":    return gestureRecorder.listLiveStreams();
             }
         }
 

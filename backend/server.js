@@ -170,6 +170,12 @@ const COMMANDS = {
     gesture_get:                 { category: 'gesture',     label: 'Get Gesture',           icon: '📄' },
     gesture_replay:              { category: 'gesture',     label: 'Replay Gesture',        icon: '▶️' },
     gesture_delete:              { category: 'gesture',     label: 'Delete Gesture',        icon: '🗑️' },
+    gesture_live_start:          { category: 'gesture',     label: 'Live Stream Start',     icon: '📡' },
+    gesture_live_stop:           { category: 'gesture',     label: 'Live Stream Stop',      icon: '⏹' },
+    gesture_live_points:         { category: 'gesture',     label: 'Live Stream Points',    icon: '📍' },
+    gesture_live_delete:         { category: 'gesture',     label: 'Live Stream Delete',    icon: '🗑️' },
+    gesture_live_replay:         { category: 'gesture',     label: 'Live Stream Replay',    icon: '▶️' },
+    gesture_live_list:           { category: 'gesture',     label: 'Live Stream List',      icon: '📋' },
     // Connection management
     restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
 };
