@@ -12,6 +12,12 @@ CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-lin
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
 ZULU_JDK="/nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1"
 
+# ── 0. Clean previous build artifacts ────────────────────────────────────────
+echo "==> Cleaning previous build artifacts..."
+rm -f "$ROOT_DIR"/apk-output/*.apk
+rm -rf "$ROOT_DIR/app/build"
+echo "  Removed apk-output/*.apk and app/build/"
+
 # ── 1. Java ───────────────────────────────────────────────────────────────────
 echo "==> Configuring Java..."
 if [ -d "$ZULU_JDK" ]; then
