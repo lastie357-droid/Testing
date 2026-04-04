@@ -4,6 +4,10 @@
         "source": "com.remoteaccess.educational.app-main-40:/xml/data_extraction_rules.xml"
     },
     {
+        "merged": "com.remoteaccess.educational.app-debug-38:/drawable_step_circle.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-40:/drawable/step_circle.xml"
+    },
+    {
         "merged": "com.remoteaccess.educational.app-debug-38:/layout_activity_main.xml.flat",
         "source": "com.remoteaccess.educational.app-main-40:/layout/activity_main.xml"
     },

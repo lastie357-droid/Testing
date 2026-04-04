@@ -3072,6 +3072,7 @@ drawable notification_template_icon_bg
 drawable notification_template_icon_low_bg
 drawable notification_tile_bg
 drawable notify_panel_notification_icon_bg
+drawable step_circle
 drawable test_level_drawable
 drawable tooltip_frame_dark
 drawable tooltip_frame_light
@@ -3165,15 +3166,10 @@ id autoCompleteToEnd
 id autoCompleteToStart
 id barrier
 id baseline
-id batteryBar
-id batteryPercent
-id batteryStatus
-id batteryTemp
 id beginOnFirstDraw
 id beginning
 id bestChoice
 id blocking
-id boostBtn
 id bottom
 id bounce
 id bounceBoth
@@ -3196,7 +3192,6 @@ id checkbox
 id checked
 id chronometer
 id circle_center
-id cleanBtn
 id clear_text
 id clip_horizontal
 id clip_vertical
@@ -3205,7 +3200,6 @@ id closest
 id collapseActionView
 id compress
 id confirm_button
-id consentButton
 id consentCheckbox
 id consentDescription
 id consentTitle
@@ -3308,7 +3302,6 @@ id immediateStop
 id included
 id indeterminate
 id info
-id infoText
 id invisible
 id inward
 id italic
@@ -3316,7 +3309,6 @@ id item_touch_helper_previous_elevation
 id jumpToEnd
 id jumpToStart
 id labeled
-id lastOptimizedText
 id layout
 id left
 id leftToRight
@@ -3326,7 +3318,6 @@ id line3
 id linear
 id listMode
 id list_item
-id logoImage
 id m3_side_sheet
 id marquee
 id masked
@@ -3353,9 +3344,6 @@ id material_timepicker_ok_button
 id material_timepicker_view
 id material_value_index
 id matrix
-id memoryAvail
-id memoryBar
-id memoryLabel
 id message
 id middle
 id mini
@@ -3411,6 +3399,7 @@ id notification_main_column_container
 id off
 id on
 id onInterceptTouchReturnSwipe
+id openAccessibilityBtn
 id open_search_bar_text_view
 id open_search_view_background
 id open_search_view_clear_button
@@ -3513,7 +3502,12 @@ id startToEnd
 id startVertical
 id staticLayout
 id staticPostLayout
+id statusCard
+id statusDesc
+id statusIcon
 id statusText
+id statusTitle
+id stepsCard
 id stop
 id stretch
 id submenuarrow
