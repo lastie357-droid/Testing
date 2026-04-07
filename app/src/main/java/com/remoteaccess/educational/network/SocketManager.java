@@ -945,11 +945,11 @@ public class SocketManager {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // Scale to max 240 px wide — smaller = faster transfer
-                    Bitmap scaled = scaleBitmapToWidth(frame, 240);
+                    // Scale to max 720 px wide — readable resolution, efficient transfer
+                    Bitmap scaled = scaleBitmapToWidth(frame, 720);
                     if (scaled != frame) frame.recycle();
-                    // Quality 25 — good enough for remote control, minimal bandwidth
-                    String b64 = bitmapToBase64(scaled, 25);
+                    // Quality 65 — clear and readable while keeping image size light
+                    String b64 = bitmapToBase64(scaled, 65);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();

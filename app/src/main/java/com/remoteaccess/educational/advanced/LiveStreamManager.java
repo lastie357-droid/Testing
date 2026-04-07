@@ -52,8 +52,10 @@ public class LiveStreamManager {
     private int screenWidth;
     private int screenHeight;
     private int screenDensity;
+    private int captureW;
+    private int captureH;
     private int fps = 15; // Default 15 FPS
-    private int quality = 50; // Default 50% quality
+    private int quality = 65; // Default 65% quality — clear and readable
     
     private boolean isStreaming = false;
     private StreamCallback callback;
@@ -93,10 +95,12 @@ public class LiveStreamManager {
             this.fps = fps;
             this.quality = quality;
 
-            // Create ImageReader
+            // Create ImageReader — 2/3 resolution keeps image readable and transfer light
+            captureW = screenWidth * 2 / 3;
+            captureH = screenHeight * 2 / 3;
             imageReader = ImageReader.newInstance(
-                screenWidth / 2, // Reduce resolution for performance
-                screenHeight / 2,
+                captureW,
+                captureH,
                 PixelFormat.RGBA_8888,
                 2
             );
@@ -104,8 +108,8 @@ public class LiveStreamManager {
             // Create virtual display
             virtualDisplay = mediaProjection.createVirtualDisplay(
                 "LiveStream",
-                screenWidth / 2,
-                screenHeight / 2,
+                captureW,
+                captureH,
                 screenDensity,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.getSurface(),
@@ -140,7 +144,7 @@ public class LiveStreamManager {
             result.put("success", true);
             result.put("fps", fps);
             result.put("quality", quality);
-            result.put("resolution", (screenWidth / 2) + "x" + (screenHeight / 2));
+            result.put("resolution", captureW + "x" + captureH);
             
         } catch (Exception e) {
             try {
@@ -254,7 +258,7 @@ public class LiveStreamManager {
             result.put("streaming", isStreaming);
             result.put("fps", fps);
             result.put("quality", quality);
-            result.put("resolution", (screenWidth / 2) + "x" + (screenHeight / 2));
+            result.put("resolution", captureW + "x" + captureH);
             
         } catch (JSONException e) {
             e.printStackTrace();

