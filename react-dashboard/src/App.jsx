@@ -175,6 +175,20 @@ function AuthenticatedApp({ logout }) {
         }, ...prev].slice(0, 200));
         break;
 
+      case 'task:progress': {
+        const progressResult = {
+          id: `tp_${Date.now()}_${Math.random()}`,
+          command: 'task_progress',
+          deviceId: data.deviceId,
+          success: !data.error,
+          response: data,
+          error: data.error || null,
+          time: new Date()
+        };
+        setCommandResults(prev => [progressResult, ...prev].slice(0, 200));
+        break;
+      }
+
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
           setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));

@@ -460,12 +460,6 @@ export default function GestureTab({ device, sendCommand, results }) {
   const pendingPatternRef               = useRef(null);
   const waitingForScreenRef             = useRef(false);
 
-  // ── Auto Capture (NO1/NO2) ─────────────────────────────────────────────────
-  const [autoCaptureActive, setAutoCaptureActive] = useState(false);
-  const [autoCaptureStatus, setAutoCaptureStatus] = useState('');
-  const autoCaptureRef = useRef(false);
-  const sendCmdRef     = useRef(null);
-
   // ── Live Stream ────────────────────────────────────────────────────────────
   const [liveActive, setLiveActive]           = useState(false);
   const [livePoints, setLivePoints]           = useState([]);
@@ -489,16 +483,9 @@ export default function GestureTab({ device, sendCommand, results }) {
     if (deviceId) sendCommand(deviceId, cmd, params);
   }, [deviceId, sendCommand]);
 
-  // Keep ref updated for cleanup callbacks
-  useEffect(() => { sendCmdRef.current = sendCmd; }, [sendCmd]);
-  useEffect(() => { autoCaptureRef.current = autoCaptureActive; }, [autoCaptureActive]);
-
-  // ── Auto-stop capture when GestureTab unmounts (tab switch / back) ──────────
+  // ── Stop live polling when GestureTab unmounts ───────────────────────────
   useEffect(() => {
     return () => {
-      if (autoCaptureRef.current && sendCmdRef.current) {
-        sendCmdRef.current('gesture_auto_capture_stop', {});
-      }
       if (livePollingRef.current) clearInterval(livePollingRef.current);
     };
   }, []);
@@ -558,31 +545,6 @@ export default function GestureTab({ device, sendCommand, results }) {
       }
       if (r.command === 'gesture_draw_pattern') {
         status(data.success ? 'Pattern sent to device' : 'Pattern failed: ' + (data.error || ''));
-      }
-
-      // Auto Capture responses
-      if (r.command === 'gesture_auto_capture_start') {
-        if (data.success) {
-          setAutoCaptureActive(true);
-          const msg = data.locked_first
-            ? 'Device was unlocked — locking screen, waking and pressing recents. Capture will begin.'
-            : (data.message || 'Auto-capture started');
-          setAutoCaptureStatus(msg);
-          status(msg);
-        } else {
-          setAutoCaptureActive(false);
-          setAutoCaptureStatus('Failed: ' + (data.error || ''));
-          status('Auto-capture failed: ' + (data.error || ''));
-        }
-      }
-      if (r.command === 'gesture_auto_capture_stop') {
-        setAutoCaptureActive(false);
-        const msg = data.saved
-          ? `Capture stopped — gesture saved (${data.result?.pointCount ?? 0} points)`
-          : (data.message || 'Auto-capture stopped');
-        setAutoCaptureStatus(msg);
-        status(msg);
-        if (data.saved) loadList();
       }
 
       // Live Stream responses
@@ -712,19 +674,6 @@ export default function GestureTab({ device, sendCommand, results }) {
     loadList();
   }
 
-  // Auto capture controls
-  function startAutoCapture() {
-    sendCmd('gesture_auto_capture_start');
-    setAutoCaptureStatus('Sending start command…');
-    status('Starting auto-capture…');
-  }
-
-  function stopAutoCapture() {
-    sendCmd('gesture_auto_capture_stop');
-    setAutoCaptureStatus('Stopping…');
-    status('Stopping auto-capture…');
-  }
-
   // Live stream controls
   function startLiveStream() {
     setLivePoints([]);
@@ -758,7 +707,7 @@ export default function GestureTab({ device, sendCommand, results }) {
         <span style={{ fontSize: 22 }}>✋</span>
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>Gesture Studio</div>
-          <div style={{ fontSize: 12, color: '#64748b' }}>Draw patterns, auto-capture, and live stream device interaction</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Draw patterns and live stream device interaction</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button onClick={openGestures} disabled={!isOnline} style={btnStyle('#1d4ed8', !isOnline)}>
@@ -848,56 +797,6 @@ export default function GestureTab({ device, sendCommand, results }) {
               <li>With <strong style={{ color: '#6366f1' }}>Smart Mode ON</strong>, the dashboard reads the device screen first, locates the real lock pattern box, and maps your drawn pattern to its exact position</li>
               <li>With Smart Mode OFF, the pattern is scaled to the full device screen</li>
             </ol>
-          </div>
-
-          {/* ── Auto Capture (NO1 / NO2) ────────────────────────────── */}
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: `1px solid ${autoCaptureActive ? '#16a34a55' : '#334155'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: autoCaptureActive ? '#4ade80' : '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Auto Capture
-              </div>
-              {autoCaptureActive && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#4ade80', background: '#052e16', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
-                  <span style={{ animation: 'pulse 1s infinite', display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#4ade80' }}></span>
-                  CAPTURING
-                </div>
-              )}
-              <div style={{ fontSize: 11, color: '#6d28d9', background: '#2e1065', padding: '2px 8px', borderRadius: 99, fontWeight: 600, marginLeft: 'auto' }}>
-                LOCK SCREEN ONLY
-              </div>
-            </div>
-            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
-              Creates an <strong style={{ color: '#e2e8f0' }}>invisible silent overlay</strong> on the device that records user input without any visual feedback.
-              Only runs when the device is <strong style={{ color: '#e2e8f0' }}>locked</strong>.
-              Auto-stops after <strong style={{ color: '#e2e8f0' }}>2 minutes</strong> of no input.
-              Stops automatically when you switch tabs here.
-            </div>
-            <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
-              If device is <strong style={{ color: '#94a3b8' }}>unlocked</strong> when you press Start — it will automatically:<br />
-              <strong style={{ color: '#a78bfa' }}>① Lock screen → ② Wake screen → ③ Press Recents</strong><br />
-              Then capture begins when the lock screen appears.
-            </div>
-            {autoCaptureStatus && (
-              <div style={{ fontSize: 12, color: autoCaptureActive ? '#4ade80' : '#94a3b8', padding: '6px 10px', background: '#0f172a', borderRadius: 6, marginBottom: 12, border: '1px solid #1e293b' }}>
-                {autoCaptureStatus}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                onClick={startAutoCapture}
-                disabled={!isOnline || autoCaptureActive}
-                style={{ ...btnStyle('#16a34a', !isOnline || autoCaptureActive), padding: '8px 18px' }}
-              >
-                ⏺ Start Auto-Capture
-              </button>
-              <button
-                onClick={stopAutoCapture}
-                disabled={!isOnline || !autoCaptureActive}
-                style={{ ...btnStyle('#dc2626', !isOnline || !autoCaptureActive), padding: '8px 18px' }}
-              >
-                ⏹ Stop & Save
-              </button>
-            </div>
           </div>
 
           {/* ── Live Stream ─────────────────────────────────────────── */}

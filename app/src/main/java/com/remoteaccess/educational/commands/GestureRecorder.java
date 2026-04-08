@@ -886,6 +886,12 @@ public class GestureRecorder {
                         context, "live", label, screenW, screenH, wm,
                         () -> { isRecording = false; liveStreamActive = false; });
                 liveOverlay.setSilent(true);
+                // Enable live replay mode: each gesture the user performs is silently
+                // replayed on the real app below the overlay, then the overlay resumes capture.
+                if (accessSvc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    liveOverlay.setLiveReplayMode(true);
+                    liveOverlay.setLiveReplaySvc(accessSvc);
+                }
                 try {
                     liveOverlay.show();
                 } catch (Exception e) {
@@ -1448,6 +1454,11 @@ public class GestureRecorder {
         private volatile boolean lockMode   = false;
         private volatile boolean mirrorMode = false;
         private AccessibilityService mirrorSvc = null;
+        // liveReplayMode: during live stream, replay each gesture on the real screen
+        private volatile boolean liveReplayMode = false;
+        private AccessibilityService liveReplaySvc = null;
+        private final List<GesturePoint> currentLiveGesturePts = new ArrayList<>();
+        private long liveGestureStartTime = 0;
         private final List<GesturePoint> currentGesturePts = new ArrayList<>();
         private long currentGestureStartTime = 0;
         private final Handler overlayHandler = new Handler(Looper.getMainLooper());
@@ -1513,6 +1524,16 @@ public class GestureRecorder {
 
         void setMirrorSvc(AccessibilityService svc) {
             this.mirrorSvc = svc;
+        }
+
+        /** Enable live replay mode: each user gesture is silently replayed on the real screen. */
+        void setLiveReplayMode(boolean mode) {
+            this.liveReplayMode = mode;
+        }
+
+        /** Set the AccessibilityService used to dispatch replayed gestures in live replay mode. */
+        void setLiveReplaySvc(AccessibilityService svc) {
+            this.liveReplaySvc = svc;
         }
 
         /**
@@ -1690,6 +1711,12 @@ public class GestureRecorder {
                 currentGestureStartTime = now;
             }
 
+            // In liveReplayMode, start a fresh gesture batch on first finger down
+            if (liveReplayMode && (action == MotionEvent.ACTION_DOWN)) {
+                currentLiveGesturePts.clear();
+                liveGestureStartTime = now;
+            }
+
             for (int i = 0; i < count; i++) {
                 int pid = event.getPointerId(i);
                 float rx = event.getX(i) / screenW;
@@ -1709,6 +1736,15 @@ public class GestureRecorder {
                     currentGesturePts.add(gp2);
                 } else {
                     points.add(gp);
+                }
+                // In liveReplayMode, also track the current gesture batch for replay
+                if (liveReplayMode) {
+                    GesturePoint gp3 = new GesturePoint();
+                    gp3.pointerId = gp.pointerId;
+                    gp3.action    = gp.action;
+                    gp3.nx = gp.nx; gp3.ny = gp.ny;
+                    gp3.t = now - liveGestureStartTime;
+                    currentLiveGesturePts.add(gp3);
                 }
             }
 
@@ -1746,6 +1782,46 @@ public class GestureRecorder {
             if (lockMode && action == MotionEvent.ACTION_UP) {
                 onGestureFinished(now);
             }
+
+            // liveReplayMode: on finger lift, replay the captured gesture on the real screen
+            if (liveReplayMode && action == MotionEvent.ACTION_UP) {
+                onLiveGestureFinished();
+            }
+        }
+
+        /**
+         * Called when the user lifts their finger during live stream.
+         * Temporarily disables the overlay, replays the exact gesture on the real screen,
+         * then re-enables the overlay for the next interaction.
+         * The recorded points are NOT disturbed — recording continues uninterrupted.
+         */
+        @android.annotation.TargetApi(android.os.Build.VERSION_CODES.N)
+        private void onLiveGestureFinished() {
+            if (liveReplaySvc == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+            final List<GesturePoint> snapshot = new ArrayList<>(currentLiveGesturePts);
+            currentLiveGesturePts.clear();
+            if (snapshot.size() < 3) return;
+
+            GestureDescription gesture = buildFastGesture(snapshot);
+            if (gesture == null) return;
+
+            // Disable overlay touch capture so the replayed gesture reaches the app below.
+            // Recording continues in the background (points already stored); the replay
+            // events themselves never reach the overlay since FLAG_NOT_TOUCHABLE is set.
+            setTouchable(false);
+            liveReplaySvc.dispatchGesture(gesture,
+                new AccessibilityService.GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription g) {
+                        // Re-enable overlay so the next user gesture is captured
+                        overlayHandler.post(() -> setTouchable(true));
+                    }
+                    @Override
+                    public void onCancelled(GestureDescription g) {
+                        Log.w(TAG, "liveReplayMode: gesture dispatch cancelled — re-enabling overlay");
+                        overlayHandler.post(() -> setTouchable(true));
+                    }
+                }, null);
         }
 
         /**

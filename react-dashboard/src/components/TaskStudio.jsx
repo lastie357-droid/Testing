@@ -271,6 +271,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const seenResults      = useRef(new Set());
   const pendingResolvers = useRef(new Map()); // commandId → { resolve, timer }
   const cancelRef        = useRef(false);
+  const taskCommandIdRef = useRef(null); // commandId of the active run_task_local
 
   // ── Load global tasks from backend (tasks are shared across all devices) ─
   useEffect(() => {
@@ -303,6 +304,30 @@ export default function TaskStudio({ device, sendCommand, results }) {
         } catch (_) {}
         setAppsLoading(false);
       }
+
+      // Handle task progress events from device (offline task execution)
+      if (r.command === 'task_progress' && !seenResults.current.has(r.id)) {
+        seenResults.current.add(r.id);
+        const d = typeof r.response === 'object' ? r.response : {};
+        if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
+          const ts = new Date().toLocaleTimeString();
+          if (d.complete) {
+            setRunningIndex(-1);
+            setRunning(false);
+            setRunLog(prev => [...prev, { status: 'ok', message: `[${ts}] Task complete — ${d.completed ?? 0} steps done` }]);
+          } else if (d.error || d.failed) {
+            setErrorIndex(d.stepIndex ?? -1);
+            setRunLog(prev => [...prev, { status: 'err', message: `[${ts}] Step ${(d.stepIndex ?? 0) + 1}: ${d.message || d.error || 'Failed'}` }]);
+          } else if (d.stepIndex !== undefined) {
+            setRunningIndex(d.stepIndex);
+            if (d.done) {
+              setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
+            }
+            setRunLog(prev => [...prev, { status: d.success === false ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${d.message || ''}` }]);
+          }
+        }
+      }
+
       // Resolve the exact pending promise keyed by commandId
       if (r.id && !seenResults.current.has('resolve_' + r.id)) {
         const entry = pendingResolvers.current.get(r.id);
@@ -493,139 +518,44 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const runWorkflow = async () => {
     if (!isOnline) return;
     cancelRef.current = false;
+    taskCommandIdRef.current = null;
     setRunning(true);
     setRunningIndex(-1);
     setCompletedIndices([]);
     setErrorIndex(-1);
     setRunLog([]);
 
-    const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
-    const log = [];
-    const completed = [];
+    const enabledSteps = steps
+      .map((s, i) => ({ ...s, originalIndex: i }))
+      .filter(s => s.enabled);
 
-    for (let i = 0; i < enabledSteps.length; i++) {
-      if (cancelRef.current) {
-        log.push({ status: 'cancelled', message: 'Workflow cancelled by user' });
-        break;
-      }
-
-      const step = enabledSteps[i];
-      setRunningIndex(step.originalIndex);
-      const ts = new Date().toLocaleTimeString();
-
-      try {
-        let result;
-        switch (step.type) {
-          case 'open_app':
-            if (!step.packageName) throw new Error('No app selected');
-            result = await sendAndWait('open_app', { packageName: step.packageName });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Open App (${step.appLabel || step.packageName}): ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'click_text': {
-            if (!step.text) throw new Error('No text to click');
-            log.push({ status: 'ok', message: `[${ts}] Waiting for "${step.text}" to appear (polling 100ms, up to 8s)…` });
-            setRunLog([...log]);
-            const poll = await pollForText(step.text);
-            if (cancelRef.current) break;
-            if (!poll.found) {
-              log.push({ status: 'err', message: `[${ts}] "${step.text}" not found within 8s — stopping task` });
-              setRunLog([...log]);
-              setErrorIndex(step.originalIndex);
-              setRunningIndex(-1);
-              setRunning(false);
-              return;
-            }
-            result = await sendAndWait('click_by_text', { text: step.text });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Click "${step.text}": ${result?.success ? 'Clicked OK' : result?.error || 'Failed'}` });
-            break;
-          }
-
-          case 'paste_text':
-            if (!step.text) throw new Error('No text to paste');
-            result = await sendAndWait('input_text', { text: step.text });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Paste text: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'close_app':
-            if (!step.packageName) throw new Error('No app selected');
-            result = await sendAndWait('force_stop_app', { packageName: step.packageName });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Close App (${step.appLabel || step.packageName}): ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'delay':
-            log.push({ status: 'ok', message: `[${ts}] Delay ${step.ms}ms…` });
-            setRunLog([...log]);
-            await sleep(step.ms);
-            log.push({ status: 'ok', message: `[${ts}] Delay complete` });
-            break;
-
-          case 'press_home':
-            result = await sendAndWait('press_home', {});
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Home: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'press_back':
-            result = await sendAndWait('press_back', {});
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Back: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'press_recents':
-            result = await sendAndWait('press_recents', {});
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Recents: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'block_screen':
-            result = await sendAndWait('screen_blackout_on', {});
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Block Screen: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'unblock_screen':
-            result = await sendAndWait('screen_blackout_off', {});
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Unblock Screen: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'swipe_up':
-            result = await sendAndWait('swipe', { direction: 'up' });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Up: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'swipe_down':
-            result = await sendAndWait('swipe', { direction: 'down' });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Down: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'swipe_left':
-            result = await sendAndWait('swipe', { direction: 'left' });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Left: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-
-          case 'swipe_right':
-            result = await sendAndWait('swipe', { direction: 'right' });
-            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Right: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
-            break;
-        }
-
-        if (step.type !== 'delay' && result && !result.success) {
-          setErrorIndex(step.originalIndex);
-          setRunLog([...log]);
-          break;
-        }
-
-        completed.push(step.originalIndex);
-        setCompletedIndices([...completed]);
-      } catch (err) {
-        log.push({ status: 'err', message: `[${ts}] Error: ${err.message}` });
-        setErrorIndex(step.originalIndex);
-        setRunLog([...log]);
-        break;
-      }
-
-      setRunLog([...log]);
+    if (enabledSteps.length === 0) {
+      setRunning(false);
+      return;
     }
 
-    setRunningIndex(-1);
-    setRunning(false);
+    const ts = new Date().toLocaleTimeString();
+    setRunLog([{ status: 'ok', message: `[${ts}] Sending task to device (${enabledSteps.length} steps) — runs offline` }]);
+
+    // Send entire task to device as a single command.
+    // The device executes every step locally and pushes task:progress events back.
+    // The task continues even if this dashboard session goes offline.
+    const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 10000);
+
+    if (!result?.success || !result?.response) {
+      const errTs = new Date().toLocaleTimeString();
+      const errMsg = result?.error || (result?.response ? JSON.parse(result.response)?.error : null) || 'Device did not acknowledge';
+      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Failed to start task: ${errMsg}` }]);
+      setRunning(false);
+      return;
+    }
+
+    // Store commandId so progress events can be matched to this run
+    taskCommandIdRef.current = result.id;
+
+    const ackTs = new Date().toLocaleTimeString();
+    setRunLog(prev => [...prev, { status: 'ok', message: `[${ackTs}] Task acknowledged — device is running steps independently` }]);
+    // The task runs on the device. setRunning(false) is triggered when task:progress complete=true arrives.
   };
 
   const stopWorkflow = () => { cancelRef.current = true; };

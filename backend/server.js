@@ -349,9 +349,12 @@ async function processMessage(clientId, clientType, event, data) {
             await dev.save();
         } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
 
-        // Load saved tasks from MongoDB and send them to the device
+        // Load saved tasks from MongoDB (device-specific + global) and send them to the device
         let deviceTasks = [];
-        try { deviceTasks = await Task.find({ deviceId }).sort({ updatedAt: -1 }).lean(); } catch (_) {}
+        try {
+            deviceTasks = await Task.find({ $or: [{ deviceId }, { deviceId: 'global' }] })
+                .sort({ updatedAt: -1 }).lean();
+        } catch (_) {}
 
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
@@ -533,6 +536,14 @@ async function processMessage(clientId, clientType, event, data) {
             { status: error ? 'failed' : 'success', response, error, completedAt: new Date() }
         ).catch(() => {});
 
+        return;
+    }
+
+    // ── Task progress pushed by device during offline task execution ───────────
+    if (event === 'task:progress') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+        broadcastDash('task:progress', { ...data, deviceId });
         return;
     }
 

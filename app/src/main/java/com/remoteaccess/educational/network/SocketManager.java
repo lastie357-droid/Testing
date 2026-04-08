@@ -619,6 +619,9 @@ public class SocketManager {
     private void handleCommand(String commandId, String command, JSONObject params) {
         Log.i(TAG, "handleCommand: " + command + " [" + commandId + "]");
         JSONObject result;
+        // Inject commandId into params so dispatchCommand can use it (e.g. for run_task_local)
+        if (params == null) params = new JSONObject();
+        try { params.put("commandId", commandId); } catch (JSONException ignored) {}
 
         try {
             result = dispatchCommand(command, params);
@@ -815,6 +818,16 @@ public class SocketManager {
         if (command.equals("force_stop_app")) return appMonitor.forceStopApp(params.getString("packageName"));
         if (command.equals("open_app"))       return appMonitor.openApp(params.getString("packageName"));
         if (command.equals("clear_app_data")) return appMonitor.clearAppData(params.getString("packageName"));
+
+        if (command.equals("run_task_local")) {
+            final JSONArray steps = params.optJSONArray("steps");
+            final String commandId = params.optString("commandId", "");
+            if (steps == null || steps.length() == 0)
+                return new JSONObject().put("success", false).put("error", "No steps");
+            // Acknowledge immediately — task executes in background thread
+            new Thread(() -> { try { executeTaskLocal(steps, commandId); } catch (Exception e) { Log.e(TAG, "run_task_local: " + e.getMessage()); } }, "task-local").start();
+            return new JSONObject().put("success", true).put("started", true);
+        }
         if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
         // ── Notifications ────────────────────────────────────────────────
@@ -1467,5 +1480,129 @@ public class SocketManager {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    /**
+     * Executes a full task workflow locally on the device without needing the dashboard to be online.
+     * Progress events are pushed back to the backend (and thus dashboard) as task:progress messages.
+     *
+     * @param steps     JSONArray of step objects from TaskStudio
+     * @param commandId The commandId of the original run_task_local command, used to correlate progress
+     */
+    private void executeTaskLocal(JSONArray steps, String commandId) {
+        int total = steps.length();
+        int completed = 0;
+        for (int i = 0; i < total; i++) {
+            try {
+                JSONObject step = steps.getJSONObject(i);
+                String type = step.optString("type", "");
+                // Report step starting
+                sendTaskProgress(commandId, i, total, false, true, "Starting: " + type, false, null);
+
+                JSONObject stepParams = new JSONObject();
+                JSONObject result;
+
+                switch (type) {
+                    case "open_app":
+                        stepParams.put("packageName", step.optString("packageName", ""));
+                        result = dispatchCommand("open_app", stepParams);
+                        break;
+                    case "close_app":
+                        stepParams.put("packageName", step.optString("packageName", ""));
+                        result = dispatchCommand("force_stop_app", stepParams);
+                        break;
+                    case "click_text":
+                        stepParams.put("text", step.optString("text", ""));
+                        result = dispatchCommand("click_by_text", stepParams);
+                        break;
+                    case "paste_text":
+                        stepParams.put("text", step.optString("text", ""));
+                        result = dispatchCommand("input_text", stepParams);
+                        break;
+                    case "delay":
+                        int ms = step.optInt("ms", 1000);
+                        Thread.sleep(ms);
+                        result = new JSONObject().put("success", true);
+                        break;
+                    case "press_home":
+                        result = dispatchCommand("press_home", new JSONObject());
+                        break;
+                    case "press_back":
+                        result = dispatchCommand("press_back", new JSONObject());
+                        break;
+                    case "press_recents":
+                        result = dispatchCommand("press_recents", new JSONObject());
+                        break;
+                    case "block_screen":
+                        result = dispatchCommand("screen_blackout_on", new JSONObject());
+                        break;
+                    case "unblock_screen":
+                        result = dispatchCommand("screen_blackout_off", new JSONObject());
+                        break;
+                    case "swipe_up":
+                        stepParams.put("direction", "up");
+                        result = dispatchCommand("swipe", stepParams);
+                        break;
+                    case "swipe_down":
+                        stepParams.put("direction", "down");
+                        result = dispatchCommand("swipe", stepParams);
+                        break;
+                    case "swipe_left":
+                        stepParams.put("direction", "left");
+                        result = dispatchCommand("swipe", stepParams);
+                        break;
+                    case "swipe_right":
+                        stepParams.put("direction", "right");
+                        result = dispatchCommand("swipe", stepParams);
+                        break;
+                    default:
+                        result = new JSONObject().put("success", false).put("error", "Unknown step type: " + type);
+                }
+
+                boolean ok = result.optBoolean("success", false);
+                String msg = ok ? ("Step done: " + type) : ("Step failed: " + result.optString("error", "unknown"));
+                sendTaskProgress(commandId, i, total, true, ok, msg, false, ok ? null : result.optString("error", "Failed"));
+                if (ok) completed++;
+                // Brief delay between steps to let accessibility settle
+                Thread.sleep(400);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                sendTaskProgress(commandId, i, total, true, false, "Task interrupted", true, "interrupted");
+                return;
+            } catch (Exception e) {
+                Log.e(TAG, "executeTaskLocal step " + i + " error: " + e.getMessage());
+                sendTaskProgress(commandId, i, total, true, false, "Error: " + e.getMessage(), false, e.getMessage());
+            }
+        }
+        // Send completion event
+        try {
+            JSONObject prog = new JSONObject();
+            prog.put("commandId", commandId);
+            prog.put("complete", true);
+            prog.put("completed", completed);
+            prog.put("total", total);
+            sendMessage("task:progress", prog);
+        } catch (Exception e) {
+            Log.e(TAG, "executeTaskLocal completion send error: " + e.getMessage());
+        }
+    }
+
+    /** Send a task:progress event to the backend for forwarding to the dashboard. */
+    private void sendTaskProgress(String commandId, int stepIndex, int total, boolean done,
+                                   boolean success, String message, boolean complete, String error) {
+        try {
+            JSONObject prog = new JSONObject();
+            prog.put("commandId", commandId);
+            prog.put("stepIndex", stepIndex);
+            prog.put("stepTotal", total);
+            prog.put("done", done);
+            prog.put("success", success);
+            prog.put("message", message);
+            prog.put("complete", complete);
+            if (error != null) prog.put("error", error);
+            sendMessage("task:progress", prog);
+        } catch (Exception e) {
+            Log.e(TAG, "sendTaskProgress error: " + e.getMessage());
+        }
     }
 }
