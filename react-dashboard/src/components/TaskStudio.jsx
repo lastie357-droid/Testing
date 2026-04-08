@@ -314,16 +314,25 @@ export default function TaskStudio({ device, sendCommand, results }) {
           if (d.complete) {
             setRunningIndex(-1);
             setRunning(false);
-            setRunLog(prev => [...prev, { status: 'ok', message: `[${ts}] Task complete — ${d.completed ?? 0} steps done` }]);
-          } else if (d.error || d.failed) {
-            setErrorIndex(d.stepIndex ?? -1);
-            setRunLog(prev => [...prev, { status: 'err', message: `[${ts}] Step ${(d.stepIndex ?? 0) + 1}: ${d.message || d.error || 'Failed'}` }]);
+            const allDone = (d.completed ?? 0) >= (d.total ?? 1);
+            const status  = allDone ? 'ok' : 'err';
+            const label   = allDone
+              ? `Task complete — all ${d.completed} step(s) done`
+              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s) — aborted on failure`;
+            setRunLog(prev => [...prev, { status, message: `[${ts}] ${label}` }]);
           } else if (d.stepIndex !== undefined) {
             setRunningIndex(d.stepIndex);
-            if (d.done) {
+            const stepFailed = d.success === false || d.error || d.failed;
+            if (d.done && !stepFailed) {
               setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
             }
-            setRunLog(prev => [...prev, { status: d.success === false ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${d.message || ''}` }]);
+            if (stepFailed && d.done) {
+              setErrorIndex(d.stepIndex);
+            }
+            const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
+            if (logMsg) {
+              setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
+            }
           }
         }
       }

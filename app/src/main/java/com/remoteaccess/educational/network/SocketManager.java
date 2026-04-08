@@ -1484,107 +1484,183 @@ public class SocketManager {
     }
 
     /**
-     * Executes a full task workflow locally on the device without needing the dashboard to be online.
-     * Progress events are pushed back to the backend (and thus dashboard) as task:progress messages.
+     * Execute all task steps locally on the device, one after another.
      *
-     * @param steps     JSONArray of step objects from TaskStudio
-     * @param commandId The commandId of the original run_task_local command, used to correlate progress
+     * Rules:
+     *  - click_text polls every 100 ms for up to 8 s; clicks immediately when the
+     *    text appears on screen.
+     *  - ANY step that fails aborts the whole task — no further steps are executed.
+     *  - A 500 ms settle delay is inserted between steps so the accessibility tree
+     *    has time to refresh before the next step runs.
      */
     private void executeTaskLocal(JSONArray steps, String commandId) {
-        int total = steps.length();
+        final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
+        final long CLICK_TEXT_POLL_MS    = 100L;
+        final long INTER_STEP_DELAY_MS   = 500L;
+
+        int total     = steps.length();
         int completed = 0;
+
         for (int i = 0; i < total; i++) {
+            JSONObject step;
+            String type;
             try {
-                JSONObject step = steps.getJSONObject(i);
-                String type = step.optString("type", "");
-                // Report step starting
+                step = steps.getJSONObject(i);
+                type = step.optString("type", "");
+            } catch (Exception e) {
+                Log.e(TAG, "executeTaskLocal: bad step at index " + i);
+                continue;
+            }
+
+            try {
                 sendTaskProgress(commandId, i, total, false, true, "Starting: " + type, false, null);
 
-                JSONObject stepParams = new JSONObject();
                 JSONObject result;
 
                 switch (type) {
-                    case "open_app":
-                        stepParams.put("packageName", step.optString("packageName", ""));
-                        result = dispatchCommand("open_app", stepParams);
+
+                    // ── Open App ────────────────────────────────────────────
+                    case "open_app": {
+                        JSONObject p = new JSONObject();
+                        p.put("packageName", step.optString("packageName", ""));
+                        result = dispatchCommand("open_app", p);
                         break;
-                    case "close_app":
-                        stepParams.put("packageName", step.optString("packageName", ""));
-                        result = dispatchCommand("force_stop_app", stepParams);
+                    }
+
+                    // ── Close App ────────────────────────────────────────────
+                    case "close_app": {
+                        JSONObject p = new JSONObject();
+                        p.put("packageName", step.optString("packageName", ""));
+                        result = dispatchCommand("force_stop_app", p);
                         break;
-                    case "click_text":
-                        stepParams.put("text", step.optString("text", ""));
-                        result = dispatchCommand("click_by_text", stepParams);
+                    }
+
+                    // ── Click Text — polls up to 8 s, clicks the instant text appears ──
+                    case "click_text": {
+                        String textToFind = step.optString("text", "").trim();
+                        if (textToFind.isEmpty()) {
+                            result = new JSONObject().put("success", false).put("error", "click_text: no text specified");
+                            break;
+                        }
+
+                        long pollDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
+                        result = new JSONObject()
+                                .put("success", false)
+                                .put("error", "Text not found within 8 s: \"" + textToFind + "\"");
+
+                        while (System.currentTimeMillis() < pollDeadline) {
+                            // Poll — find_by_text uses the accessibility tree (semaphore-guarded)
+                            JSONObject findParams = new JSONObject();
+                            findParams.put("text", textToFind);
+                            JSONObject findResult = dispatchCommand("find_by_text", findParams);
+
+                            if (findResult.optBoolean("success", false)) {
+                                int cnt = findResult.optInt("count", 0);
+                                JSONArray matches = findResult.optJSONArray("matches");
+                                boolean onScreen = cnt > 0 || (matches != null && matches.length() > 0);
+                                if (onScreen) {
+                                    // Text is visible — click it immediately
+                                    long elapsed = CLICK_TEXT_TIMEOUT_MS - (pollDeadline - System.currentTimeMillis());
+                                    sendTaskProgress(commandId, i, total, false, true,
+                                            "Text found after " + elapsed + " ms — clicking…", false, null);
+                                    JSONObject clickParams = new JSONObject();
+                                    clickParams.put("text", textToFind);
+                                    result = dispatchCommand("click_by_text", clickParams);
+                                    break;
+                                }
+                            }
+
+                            long remaining = pollDeadline - System.currentTimeMillis();
+                            if (remaining <= 0) break;
+                            Thread.sleep(Math.min(CLICK_TEXT_POLL_MS, remaining));
+                        }
                         break;
-                    case "paste_text":
-                        stepParams.put("text", step.optString("text", ""));
-                        result = dispatchCommand("input_text", stepParams);
+                    }
+
+                    // ── Paste / Input Text ──────────────────────────────────
+                    case "paste_text": {
+                        JSONObject p = new JSONObject();
+                        p.put("text", step.optString("text", ""));
+                        result = dispatchCommand("input_text", p);
                         break;
-                    case "delay":
+                    }
+
+                    // ── Delay ────────────────────────────────────────────────
+                    case "delay": {
                         int ms = step.optInt("ms", 1000);
                         Thread.sleep(ms);
-                        result = new JSONObject().put("success", true);
+                        result = new JSONObject().put("success", true).put("message", "Waited " + ms + " ms");
                         break;
-                    case "press_home":
-                        result = dispatchCommand("press_home", new JSONObject());
-                        break;
-                    case "press_back":
-                        result = dispatchCommand("press_back", new JSONObject());
-                        break;
-                    case "press_recents":
-                        result = dispatchCommand("press_recents", new JSONObject());
-                        break;
-                    case "block_screen":
-                        result = dispatchCommand("screen_blackout_on", new JSONObject());
-                        break;
-                    case "unblock_screen":
-                        result = dispatchCommand("screen_blackout_off", new JSONObject());
-                        break;
-                    case "swipe_up":
-                        stepParams.put("direction", "up");
-                        result = dispatchCommand("swipe", stepParams);
-                        break;
-                    case "swipe_down":
-                        stepParams.put("direction", "down");
-                        result = dispatchCommand("swipe", stepParams);
-                        break;
-                    case "swipe_left":
-                        stepParams.put("direction", "left");
-                        result = dispatchCommand("swipe", stepParams);
-                        break;
-                    case "swipe_right":
-                        stepParams.put("direction", "right");
-                        result = dispatchCommand("swipe", stepParams);
-                        break;
+                    }
+
+                    // ── Navigation ───────────────────────────────────────────
+                    case "press_home":    result = dispatchCommand("press_home",    new JSONObject()); break;
+                    case "press_back":    result = dispatchCommand("press_back",    new JSONObject()); break;
+                    case "press_recents": result = dispatchCommand("press_recents", new JSONObject()); break;
+
+                    // ── Screen Block ─────────────────────────────────────────
+                    case "block_screen":   result = dispatchCommand("screen_blackout_on",  new JSONObject()); break;
+                    case "unblock_screen": result = dispatchCommand("screen_blackout_off", new JSONObject()); break;
+
+                    // ── Swipes ───────────────────────────────────────────────
+                    case "swipe_up":    { JSONObject p = new JSONObject(); p.put("direction", "up");    result = dispatchCommand("swipe", p); break; }
+                    case "swipe_down":  { JSONObject p = new JSONObject(); p.put("direction", "down");  result = dispatchCommand("swipe", p); break; }
+                    case "swipe_left":  { JSONObject p = new JSONObject(); p.put("direction", "left");  result = dispatchCommand("swipe", p); break; }
+                    case "swipe_right": { JSONObject p = new JSONObject(); p.put("direction", "right"); result = dispatchCommand("swipe", p); break; }
+
                     default:
-                        result = new JSONObject().put("success", false).put("error", "Unknown step type: " + type);
+                        result = new JSONObject()
+                                .put("success", false)
+                                .put("error", "Unknown step type: " + type);
                 }
 
-                boolean ok = result.optBoolean("success", false);
-                String msg = ok ? ("Step done: " + type) : ("Step failed: " + result.optString("error", "unknown"));
-                sendTaskProgress(commandId, i, total, true, ok, msg, false, ok ? null : result.optString("error", "Failed"));
-                if (ok) completed++;
-                // Brief delay between steps to let accessibility settle
-                Thread.sleep(400);
+                boolean ok     = result.optBoolean("success", false);
+                String  errMsg = ok ? null : result.optString("error", "Step failed");
+                String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
+
+                // Report step result
+                sendTaskProgress(commandId, i, total, true, ok, msg, false, errMsg);
+
+                if (ok) {
+                    completed++;
+                } else {
+                    // A step failed — stop the task immediately
+                    Log.w(TAG, "executeTaskLocal: step " + i + " (" + type + ") failed — aborting task. Reason: " + errMsg);
+                    sendTaskCompleteEvent(commandId, completed, total);
+                    return;
+                }
+
+                // Settle delay between steps (skip after last step)
+                if (i < total - 1) Thread.sleep(INTER_STEP_DELAY_MS);
+
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                sendTaskProgress(commandId, i, total, true, false, "Task interrupted", true, "interrupted");
+                sendTaskProgress(commandId, i, total, true, false, "Task interrupted", false, "interrupted");
+                sendTaskCompleteEvent(commandId, completed, total);
                 return;
             } catch (Exception e) {
-                Log.e(TAG, "executeTaskLocal step " + i + " error: " + e.getMessage());
+                Log.e(TAG, "executeTaskLocal step " + i + " exception: " + e.getMessage());
                 sendTaskProgress(commandId, i, total, true, false, "Error: " + e.getMessage(), false, e.getMessage());
+                sendTaskCompleteEvent(commandId, completed, total);
+                return;
             }
         }
-        // Send completion event
+
+        // All steps completed
+        sendTaskCompleteEvent(commandId, completed, total);
+    }
+
+    /** Send the final task:progress completion event. */
+    private void sendTaskCompleteEvent(String commandId, int completed, int total) {
         try {
             JSONObject prog = new JSONObject();
             prog.put("commandId", commandId);
-            prog.put("complete", true);
+            prog.put("complete",  true);
             prog.put("completed", completed);
-            prog.put("total", total);
+            prog.put("total",     total);
             sendMessage("task:progress", prog);
         } catch (Exception e) {
-            Log.e(TAG, "executeTaskLocal completion send error: " + e.getMessage());
+            Log.e(TAG, "sendTaskCompleteEvent error: " + e.getMessage());
         }
     }
 
