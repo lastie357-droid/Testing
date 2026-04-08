@@ -10,6 +10,7 @@ import com.remoteaccess.educational.commands.*;
 import com.remoteaccess.educational.services.UnifiedAccessibilityService;
 import com.remoteaccess.educational.utils.Constants;
 import com.remoteaccess.educational.utils.DeviceInfo;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.BufferedReader;
