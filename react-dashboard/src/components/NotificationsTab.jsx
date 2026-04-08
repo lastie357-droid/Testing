@@ -52,19 +52,24 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
           const combined = [...d.notifications, ...prev];
           const seen = new Set();
           return combined.filter(n => {
-            const key = `${n.packageName}|${n.postTime}|${n.title}`;
+            const key = `${n.packageName}|${n.postTime}|${n.title}|${n.text}`;
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
-          }).slice(0, 500);
+          }).slice(0, 100);
         });
       } catch (_) {}
     });
   }, [results]);
 
   useEffect(() => {
-    if (isOnline) sendCommand(deviceId, 'get_notifications', { limit: 100 });
-  }, [isOnline]);
+    if (!isOnline) return;
+    sendCommand(deviceId, 'get_notifications', { limit: 100 });
+    const id = setInterval(() => {
+      sendCommand(deviceId, 'get_notifications', { limit: 100 });
+    }, 30000);
+    return () => clearInterval(id);
+  }, [isOnline, deviceId]);
 
   const allEntries = React.useMemo(() => {
     const combined = [...(notifPushEntries || []), ...storedNotifs];

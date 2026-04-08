@@ -130,6 +130,9 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           notifEntries={notifPushEntries || []}
           activityEntries={activityAppEntries || []}
           keylogEntries={keylogPushEntries || []}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
         />
       )}
 

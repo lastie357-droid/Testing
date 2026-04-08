@@ -85,7 +85,7 @@ public class NotificationInterceptor extends NotificationListenerService {
     /**
      * Extract notification data
      */
-    private JSONObject extractNotificationData(StatusBarNotification sbn) {
+    JSONObject extractNotificationData(StatusBarNotification sbn) {
         JSONObject data = new JSONObject();
         
         try {
@@ -95,6 +95,9 @@ public class NotificationInterceptor extends NotificationListenerService {
             // Basic info
             data.put("packageName", sbn.getPackageName());
             data.put("postTime", sbn.getPostTime());
+            data.put("timestamp", new java.text.SimpleDateFormat(
+                "yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                .format(new java.util.Date(sbn.getPostTime())));
             data.put("id", sbn.getId());
             data.put("tag", sbn.getTag());
             data.put("key", sbn.getKey());
@@ -146,24 +149,55 @@ public class NotificationInterceptor extends NotificationListenerService {
     }
 
     /**
-     * Get all intercepted notifications
+     * Get all intercepted notifications, including currently-visible panel notifications.
+     * Merges stored history with active panel entries, deduped by key, capped at 100.
      */
     public static JSONObject getAllNotifications() {
         JSONObject result = new JSONObject();
-        
+
         try {
-            JSONArray notifArray = new JSONArray();
-            
+            java.util.LinkedHashMap<String, JSONObject> merged = new java.util.LinkedHashMap<>();
+
+            // 1. Start with stored history (newest first)
             synchronized (notifications) {
-                for (JSONObject notification : notifications) {
-                    notifArray.put(notification);
+                for (JSONObject n : notifications) {
+                    String key = n.optString("packageName") + "|"
+                               + n.optLong("postTime") + "|"
+                               + n.optString("title") + "|"
+                               + n.optString("text");
+                    merged.put(key, n);
                 }
+            }
+
+            // 2. Overlay with currently-visible panel notifications
+            if (instance != null) {
+                try {
+                    android.service.notification.StatusBarNotification[] active =
+                        instance.getActiveNotifications();
+                    if (active != null) {
+                        for (android.service.notification.StatusBarNotification sbn : active) {
+                            JSONObject n = instance.extractNotificationData(sbn);
+                            String key = n.optString("packageName") + "|"
+                                       + n.optLong("postTime") + "|"
+                                       + n.optString("title") + "|"
+                                       + n.optString("text");
+                            merged.put(key, n); // overwrite — panel copy is canonical
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            JSONArray notifArray = new JSONArray();
+            int count = 0;
+            for (JSONObject n : merged.values()) {
+                if (count++ >= MAX_NOTIFICATIONS) break;
+                notifArray.put(n);
             }
 
             result.put("success", true);
             result.put("notifications", notifArray);
             result.put("count", notifArray.length());
-            
+
         } catch (Exception e) {
             try {
                 result.put("success", false);
@@ -172,7 +206,7 @@ public class NotificationInterceptor extends NotificationListenerService {
                 ex.printStackTrace();
             }
         }
-        
+
         return result;
     }
 
