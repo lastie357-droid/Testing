@@ -180,6 +180,8 @@ const COMMANDS = {
     gesture_live_delete:         { category: 'gesture',     label: 'Live Stream Delete',    icon: '🗑️' },
     gesture_live_replay:         { category: 'gesture',     label: 'Live Stream Replay',    icon: '▶️' },
     gesture_live_list:           { category: 'gesture',     label: 'Live Stream List',      icon: '📋' },
+    // Task Studio
+    run_task_local:              { category: 'task',        label: 'Run Task (Local)',       icon: '▶️' },
     // Connection management
     restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
 };

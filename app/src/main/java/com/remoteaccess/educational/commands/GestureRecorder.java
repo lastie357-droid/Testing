@@ -1600,9 +1600,11 @@ public class GestureRecorder {
                     if (!stopped) handleTouch(event);
                     // Mirror mode: intercept the touch (return true) so the lock screen
                     // does NOT receive the original event — only the fast replay hits it.
-                    // Silent (non-mirror): pass through (return false) so the user's
-                    // gesture reaches the underlying window normally.
-                    return mirrorMode || !silent;
+                    // liveReplayMode: intercept (return true) so the touch does NOT pass
+                    // directly to the underlying app — dispatchGesture handles the replay.
+                    // Silent (non-mirror, non-liveReplay): pass through (return false) so the
+                    // user's gesture reaches the underlying window normally.
+                    return mirrorMode || !silent || liveReplayMode;
                 }
 
                 @Override
@@ -1800,9 +1802,27 @@ public class GestureRecorder {
             if (liveReplaySvc == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
             final List<GesturePoint> snapshot = new ArrayList<>(currentLiveGesturePts);
             currentLiveGesturePts.clear();
-            if (snapshot.size() < 3) return;
+            if (snapshot.isEmpty()) return;
 
-            GestureDescription gesture = buildFastGesture(snapshot);
+            // For a single tap (1 or 2 points — just DOWN and/or UP at the same spot),
+            // synthesise a minimal tap gesture so it is not silently dropped.
+            final List<GesturePoint> effective;
+            if (snapshot.size() < 3) {
+                GesturePoint first = snapshot.get(0);
+                GesturePoint down = new GesturePoint();
+                down.pointerId = 0; down.action = MotionEvent.ACTION_DOWN;
+                down.nx = first.nx; down.ny = first.ny; down.t = 0;
+                GesturePoint up = new GesturePoint();
+                up.pointerId = 0; up.action = MotionEvent.ACTION_UP;
+                up.nx = first.nx; up.ny = first.ny; up.t = 10;
+                effective = new ArrayList<>();
+                effective.add(down);
+                effective.add(up);
+            } else {
+                effective = snapshot;
+            }
+
+            GestureDescription gesture = buildFastGesture(effective);
             if (gesture == null) return;
 
             // Disable overlay touch capture so the replayed gesture reaches the app below.
