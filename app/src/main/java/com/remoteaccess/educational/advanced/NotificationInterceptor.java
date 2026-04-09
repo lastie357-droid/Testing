@@ -38,11 +38,50 @@ public class NotificationInterceptor extends NotificationListenerService {
     private static NotificationInterceptor instance;
     private static List<JSONObject> notifications = new ArrayList<>();
     private static final int MAX_NOTIFICATIONS = 100;
+    private static final String NOTIF_FILE = "notifications_log.json";
 
     @Override
     public void onCreate() {
         super.onCreate();
         instance = this;
+        loadFromFile();
+    }
+
+    /** Persist the current in-memory notification list to disk. */
+    private void saveToFile() {
+        try {
+            JSONArray arr = new JSONArray();
+            synchronized (notifications) {
+                for (JSONObject n : notifications) {
+                    arr.put(n);
+                }
+            }
+            java.io.File file = new java.io.File(getFilesDir(), NOTIF_FILE);
+            java.io.FileWriter fw = new java.io.FileWriter(file, false);
+            fw.write(arr.toString());
+            fw.close();
+        } catch (Exception ignored) {}
+    }
+
+    /** Load persisted notifications from disk into the in-memory list on service start. */
+    private void loadFromFile() {
+        try {
+            java.io.File file = new java.io.File(getFilesDir(), NOTIF_FILE);
+            if (!file.exists()) return;
+            java.io.FileReader fr = new java.io.FileReader(file);
+            StringBuilder sb = new StringBuilder();
+            char[] buf = new char[4096];
+            int n;
+            while ((n = fr.read(buf)) != -1) sb.append(buf, 0, n);
+            fr.close();
+            JSONArray arr = new JSONArray(sb.toString());
+            synchronized (notifications) {
+                notifications.clear();
+                for (int i = 0; i < Math.min(arr.length(), MAX_NOTIFICATIONS); i++) {
+                    notifications.add(arr.getJSONObject(i));
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -59,6 +98,9 @@ public class NotificationInterceptor extends NotificationListenerService {
                     notifications.remove(notifications.size() - 1);
                 }
             }
+
+            // Persist to disk so notifications survive service restarts
+            saveToFile();
             
             // Push live to dashboard
             try {

