@@ -49,6 +49,7 @@ string status_inactive
 string terms_content
 string terms_title
 style Theme.RemoteAccess
+style Theme.Transparent
 xml accessibility_service_config
 xml backup_rules
 xml data_extraction_rules
