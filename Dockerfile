@@ -18,9 +18,6 @@ RUN mkdir -p /etc/frp
 COPY frps/frps.toml /etc/frp/frps.toml
 COPY frpc/frpc.toml /etc/frp/frpc.toml
 
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
 EXPOSE 7000 8080
 
-CMD ["/start.sh"]
+CMD ["node", "/app/backend/server.js"]

@@ -7,15 +7,67 @@
 
 'use strict';
 
-const express  = require('express');
-const http     = require('http');
-const net      = require('net');
-const cors     = require('cors');
-const path     = require('path');
-const fs       = require('fs');
-const crypto   = require('crypto');
-const mongoose = require('mongoose');
+const express        = require('express');
+const http           = require('http');
+const net            = require('net');
+const cors           = require('cors');
+const path           = require('path');
+const fs             = require('fs');
+const crypto         = require('crypto');
+const mongoose       = require('mongoose');
+const { spawn }      = require('child_process');
 require('dotenv').config();
+
+// ============================================
+// FRP LAUNCHER  (frps → wait → frpc)
+// ============================================
+(function startFRP() {
+    const ROOT = path.resolve(__dirname, '..');
+
+    const frpsBin  = fs.existsSync('/usr/local/bin/frps') ? '/usr/local/bin/frps' : path.join(ROOT, 'frps', 'frps');
+    const frpcBin  = fs.existsSync('/usr/local/bin/frpc') ? '/usr/local/bin/frpc' : path.join(ROOT, 'frpc', 'frpc');
+    const frpsCfg  = fs.existsSync('/etc/frp/frps.toml')  ? '/etc/frp/frps.toml'  : path.join(ROOT, 'frps', 'frps.toml');
+    const frpcCfg  = fs.existsSync('/etc/frp/frpc.toml')  ? '/etc/frp/frpc.toml'  : path.join(ROOT, 'frpc', 'frpc.toml');
+
+    if (!fs.existsSync(frpsBin) || !fs.existsSync(frpcBin)) {
+        console.warn('[FRP] Binaries not found — skipping FRP startup.');
+        return;
+    }
+
+    function spawnFRP(bin, cfg, label) {
+        const proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
+        proc.stdout.on('data', d => process.stdout.write(`[${label}] ${d}`));
+        proc.stderr.on('data', d => process.stderr.write(`[${label}] ${d}`));
+        proc.on('exit', code => console.log(`[${label}] exited with code ${code}`));
+        return proc;
+    }
+
+    function waitForPort(port, retries, delay, cb) {
+        const sock = new net.Socket();
+        sock.setTimeout(1000);
+        sock.on('connect', () => { sock.destroy(); cb(null); });
+        sock.on('error',   () => { sock.destroy(); retry(); });
+        sock.on('timeout', () => { sock.destroy(); retry(); });
+        sock.connect(port, '127.0.0.1');
+
+        function retry() {
+            if (retries <= 0) return cb(new Error(`Port ${port} not ready`));
+            setTimeout(() => waitForPort(port, retries - 1, delay, cb), delay);
+        }
+    }
+
+    console.log('[FRP] Starting frps...');
+    spawnFRP(frpsBin, frpsCfg, 'frps');
+
+    waitForPort(7000, 30, 1000, (err) => {
+        if (err) {
+            console.error('[FRP] frps did not become ready — frpc will not start.');
+            return;
+        }
+        console.log('[FRP] frps ready. Starting frpc...');
+        spawnFRP(frpcBin, frpcCfg, 'frpc');
+    });
+})();
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
 const R = require('./redis');
