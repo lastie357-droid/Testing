@@ -27,7 +27,18 @@ echo "[start.sh] Using frpc config: $FRPC_CONF"
 echo "[start.sh] Starting frps..."
 frps -c "$FRPS_CONF" &
 
-sleep 1
+echo "[start.sh] Waiting for frps to be ready on port 7000..."
+for i in $(seq 1 30); do
+    if nc -z 127.0.0.1 7000 2>/dev/null; then
+        echo "[start.sh] frps is ready."
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "[start.sh] ERROR: frps did not start in time."
+        exit 1
+    fi
+    sleep 1
+done
 
 echo "[start.sh] Starting frpc..."
 frpc -c "$FRPC_CONF" &
