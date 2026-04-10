@@ -5,5 +5,5 @@ serverPort = 7000
 name = "my-tunnel"
 type = "tcp"
 localIP = "0.0.0.0"
-localPort = 8080
-remotePort = 8080
+localPort = 6000
+remotePort = 6009
