@@ -414,7 +414,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const STREAM_H = devW && devH ? Math.min(780, Math.round(STREAM_W * devH / devW)) : 640;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 16 }}>
 
       {/* ── LATENCY BAR ────────────────────────────────────────────────── */}
       <div style={{

@@ -111,7 +111,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
       </div>
 
       {activeTab === 'control_center' && (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
           <ControlCenter
             device={device}
             sendCommand={sendCommand}
