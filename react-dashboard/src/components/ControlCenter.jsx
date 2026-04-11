@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ScreenReaderView from './ScreenReaderView';
+import ScreenReaderRecorder from './ScreenReaderRecorder';
 
 // ── Inline Task Runner ────────────────────────────────────────────────────────
 function TaskRunnerModal({ device, sendCommand, results, onClose }) {
@@ -544,6 +545,21 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           <ScreenReaderView device={device} sendCommand={sendCommand} results={results} screenPushData={screenReaderPushData} />
         </div>
 
+      </div>
+
+      {/* ── SCREEN READER RECORDER ────────────────────────────────────── */}
+      <div style={{
+        background: '#1e293b', borderRadius: 12, border: '1px solid #334155',
+        padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10,
+      }}>
+        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 }}>
+          🎥 Screen Reader Recorder
+        </div>
+        <ScreenReaderRecorder
+          device={device}
+          sendCommand={sendCommand}
+          screenReaderPushData={screenReaderPushData}
+        />
       </div>
 
       {/* ── CONTROL PAD ────────────────────────────────────────────────── */}
