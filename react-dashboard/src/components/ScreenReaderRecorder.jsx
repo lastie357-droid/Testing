@@ -19,6 +19,27 @@ function isLauncherPkg(pkg) {
   return false;
 }
 
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m > 0) return `${m}m ${rem}s`;
+  return `${s}s`;
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 function renderFrameElements(screenData, devW, devH) {
   if (!screenData) return null;
   const elements = (screenData.elements || []).filter(
@@ -77,9 +98,7 @@ function renderFrameElements(screenData, devW, devH) {
 
 function addRecording(prev, rec) {
   const next = [rec, ...prev];
-  if (next.length > MAX_RECORDINGS) {
-    return next.slice(0, MAX_RECORDINGS);
-  }
+  if (next.length > MAX_RECORDINGS) return next.slice(0, MAX_RECORDINGS);
   return next;
 }
 
@@ -94,22 +113,24 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   const [recordings, setRecordings]       = useState([]);
   const [currentFrames, setCurrentFrames] = useState([]);
   const [loadingRecs, setLoadingRecs]     = useState(false);
+  const [lastFetched, setLastFetched]     = useState(null);
 
   const [playing, setPlaying]       = useState(null);
   const [playIdx, setPlayIdx]       = useState(0);
   const [isPlaying, setIsPlaying]   = useState(false);
   const [playSpeed, setPlaySpeed]   = useState(500);
 
-  // Keep-alive: periodically send wake_screen so the device stays on until toggled off
   const [keepAlive, setKeepAlive]   = useState(false);
-  const keepAliveTimerRef           = useRef(null);
+  const [recElapsed, setRecElapsed] = useState(0);
 
-  const isRecordingRef  = useRef(false);
-  const framesRef       = useRef([]);
-  const playTimerRef    = useRef(null);
-  const prevPkgRef      = useRef(null);
-  const startTimeRef    = useRef(null);
-  const seenRecordingIds = useRef(new Set());
+  const keepAliveTimerRef  = useRef(null);
+  const isRecordingRef     = useRef(false);
+  const framesRef          = useRef([]);
+  const playTimerRef       = useRef(null);
+  const prevPkgRef         = useRef(null);
+  const startTimeRef       = useRef(null);
+  const seenRecordingIds   = useRef(new Set());
+  const elapsedTimerRef    = useRef(null);
 
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
@@ -138,10 +159,12 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             const newRec = {
               id: data.filename,
               filename: data.filename,
-              label: data.label || `Recording ${new Date(data.startTime || 0).toLocaleTimeString()}`,
+              label: data.label || `Recording ${formatTime(data.startTime || Date.now())}`,
               frames: data.frames || [],
               duration: ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
               frameCount: data.frameCount || (data.frames || []).length,
+              startTime: data.startTime,
+              endTime: data.endTime,
             };
             return [newRec, ...prev].slice(0, 100);
           });
@@ -151,22 +174,19 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   }, [results, isOnline, deviceId, sendCommand]);
 
   const fetchRecordings = useCallback(() => {
-    if (!deviceId || !isOnline) return;
+    if (!deviceId) return;
     setLoadingRecs(true);
     sendCommand(deviceId, 'list_screen_recordings', {});
+    setLastFetched(Date.now());
     setTimeout(() => setLoadingRecs(false), 3000);
-  }, [deviceId, isOnline, sendCommand]);
+  }, [deviceId, sendCommand]);
 
-  useEffect(() => {
-    fetchRecordings();
-  }, [fetchRecordings]);
+  useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
-  // Re-fetch when an offline recording is uploaded from the device
   useEffect(() => {
     if (offlineRecordingVersion) fetchRecordings();
   }, [offlineRecordingVersion, fetchRecordings]);
 
-  // Periodic refresh every 30 seconds to pick up any recordings saved while away
   useEffect(() => {
     const id = setInterval(() => { if (!isRecordingRef.current) fetchRecordings(); }, 30000);
     return () => clearInterval(id);
@@ -196,10 +216,12 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     if (sendStopCmd) sendCommand(deviceId, 'screen_reader_stop', {});
     setIsRecording(false);
     isRecordingRef.current = false;
+    clearInterval(elapsedTimerRef.current);
+    setRecElapsed(0);
     const captured = frames || framesRef.current;
     if (captured.length > 0) {
       const now = Date.now();
-      const label = `Recording ${new Date().toLocaleTimeString()}`;
+      const label = `Recording ${formatTime(startTimeRef.current || now)} · ${formatDate(startTimeRef.current || now)}`;
       const rec = {
         id: now,
         label,
@@ -210,7 +232,6 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
         endTime: now,
       };
       setRecordings(prev => addRecording(prev, rec));
-
       saveRecordingToBackend(rec).then(filename => {
         if (filename) {
           setRecordings(prev => prev.map(r =>
@@ -230,18 +251,19 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     startTimeRef.current = Date.now();
     setCurrentFrames([]);
     prevPkgRef.current = null;
-    if (!auto) {
-      sendCommand(deviceId, 'screen_reader_start', {});
-    }
+    setRecElapsed(0);
+    if (!auto) sendCommand(deviceId, 'screen_reader_start', {});
     setIsRecording(true);
     isRecordingRef.current = true;
+    clearInterval(elapsedTimerRef.current);
+    elapsedTimerRef.current = setInterval(() => {
+      setRecElapsed(e => e + 1);
+    }, 1000);
   }, [deviceId, sendCommand]);
 
   useEffect(() => {
     if (!screenReaderPushData) return;
-
     const autoEvent = screenReaderPushData.autoEvent;
-
     if (autoEvent === 'start') {
       framesRef.current = [];
       startTimeRef.current = Date.now();
@@ -249,33 +271,33 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
       prevPkgRef.current = null;
       setIsRecording(true);
       isRecordingRef.current = true;
+      setRecElapsed(0);
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = setInterval(() => setRecElapsed(e => e + 1), 1000);
       return;
     }
-
     if (autoEvent === 'stop') {
-      if (isRecordingRef.current) {
-        stopRecording(framesRef.current, false);
-      }
+      if (isRecordingRef.current) stopRecording(framesRef.current, false);
       return;
     }
-
     if (!isRecordingRef.current) return;
     if (!screenReaderPushData?.success || !screenReaderPushData?.screen) return;
-
     const screen = screenReaderPushData.screen;
     const pkg    = screen.packageName || '';
-
     const prevPkg = prevPkgRef.current;
     prevPkgRef.current = pkg;
-
     const frame = { ts: Date.now(), screen };
     framesRef.current = [...framesRef.current, frame];
     setCurrentFrames([...framesRef.current]);
-
     if (prevPkg === LOCK_PKG && pkg !== LOCK_PKG && isLauncherPkg(pkg)) {
       stopRecording(framesRef.current);
     }
   }, [screenReaderPushData, stopRecording]);
+
+  useEffect(() => () => {
+    clearInterval(elapsedTimerRef.current);
+    clearInterval(playTimerRef.current);
+  }, []);
 
   const stopPlayback = useCallback(() => {
     clearInterval(playTimerRef.current);
@@ -300,9 +322,6 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     }, playSpeed);
   }, [playSpeed]);
 
-  useEffect(() => () => clearInterval(playTimerRef.current), []);
-
-  // Keep-alive: send wake_screen every 25 s while toggled on
   useEffect(() => {
     clearInterval(keepAliveTimerRef.current);
     if (keepAlive && isOnline) {
@@ -314,7 +333,6 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     return () => clearInterval(keepAliveTimerRef.current);
   }, [keepAlive, isOnline, deviceId, sendCommand]);
 
-  // Stop keep-alive when device goes offline or unmounts
   useEffect(() => {
     if (!isOnline) { setKeepAlive(false); clearInterval(keepAliveTimerRef.current); }
   }, [isOnline]);
@@ -331,22 +349,38 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     }
   };
 
+  const exportRecording = (rec) => {
+    const blob = new Blob([JSON.stringify(rec, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${rec.filename || `recording_${rec.id}`}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const displayFrame = playing
     ? (playing.frames[playIdx]?.screen || null)
     : (currentFrames.length > 0 ? currentFrames[currentFrames.length - 1]?.screen : null);
 
   const displayPkg = displayFrame?.packageName || '';
 
-  const btn = (label, onClick, bg, disabled = false, extra = {}) => (
+  const totalRecFrames = playing?.frames?.length || 0;
+  const progress = totalRecFrames > 1 ? (playIdx / (totalRecFrames - 1)) * 100 : 0;
+
+  const Btn = ({ label, onClick, bg, disabled = false, small = false, style = {} }) => (
     <button
       onClick={onClick}
       disabled={disabled}
       style={{
-        border: 'none', borderRadius: 6, padding: '5px 12px',
-        background: disabled ? '#1e293b' : bg, color: disabled ? '#475569' : '#f1f5f9',
+        border: 'none', borderRadius: 6,
+        padding: small ? '4px 9px' : '5px 13px',
+        background: disabled ? '#1e293b' : bg,
+        color: disabled ? '#475569' : '#f1f5f9',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
-        ...extra,
+        fontSize: small ? 10 : 11, fontWeight: 600, whiteSpace: 'nowrap',
+        transition: 'opacity 0.15s',
+        ...style,
       }}
     >
       {label}
@@ -354,20 +388,44 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   );
 
   return (
-    <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
-      {/* Phone Frame */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, textAlign: 'center' }}>
-          {isRecording ? '🔴 Recording…' : playing ? '▶ Playback' : '🎥 Screen Rec'}
+      {/* LEFT: Phone viewer + controls */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+        {/* Status badge */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          padding: '4px 12px', borderRadius: 20,
+          background: isRecording ? 'rgba(220,38,38,0.15)' : playing ? 'rgba(124,58,237,0.15)' : 'rgba(15,23,42,0.6)',
+          border: `1px solid ${isRecording ? '#dc2626' : playing ? '#7c3aed' : '#334155'}`,
+          alignSelf: 'center',
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1.5, textTransform: 'uppercase',
+            color: isRecording ? '#ef4444' : playing ? '#a78bfa' : '#475569' }}>
+            {isRecording ? '● REC' : playing ? '▶ PLAYBACK' : '○ STANDBY'}
+          </span>
+          {isRecording && (
+            <span style={{ fontSize: 10, color: '#fca5a5', fontVariantNumeric: 'tabular-nums' }}>
+              {formatDuration(recElapsed * 1000)} · {currentFrames.length} frames
+            </span>
+          )}
+          {playing && (
+            <span style={{ fontSize: 10, color: '#c4b5fd', fontVariantNumeric: 'tabular-nums' }}>
+              {playIdx + 1} / {totalRecFrames}
+            </span>
+          )}
         </div>
 
+        {/* Phone frame */}
         <div style={{
           background: '#1e293b', borderRadius: 28, padding: '16px 10px 12px',
           border: `2px solid ${isRecording ? '#dc2626' : playing ? '#7c3aed' : '#334155'}`,
           display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-          boxShadow: isRecording ? '0 0 18px rgba(220,38,38,0.25)' : '0 4px 20px rgba(0,0,0,0.4)',
-          transition: 'border-color 0.3s, box-shadow 0.3s',
+          boxShadow: isRecording
+            ? '0 0 24px rgba(220,38,38,0.3)'
+            : playing ? '0 0 24px rgba(124,58,237,0.2)' : '0 4px 20px rgba(0,0,0,0.4)',
+          transition: 'all 0.3s',
         }}>
           <div style={{ width: 56, height: 5, background: '#334155', borderRadius: 4, marginBottom: 2 }} />
 
@@ -378,10 +436,12 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             overflow: 'hidden', position: 'relative',
           }}>
             {!displayFrame && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#334155', gap: 8 }}>
-                <div style={{ fontSize: 36 }}>🎥</div>
-                <div style={{ fontSize: 11, color: '#475569' }}>
-                  {isRecording ? 'Waiting for frame…' : playing ? 'No frame' : 'Auto-records when locked'}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 10 }}>
+                <div style={{ fontSize: 40, opacity: 0.3 }}>🎥</div>
+                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', lineHeight: 1.6, padding: '0 16px' }}>
+                  {isRecording ? 'Waiting for accessibility frame…'
+                    : playing ? 'No frame data'
+                    : 'Auto-records when device locks.\nPush Record to capture manually.'}
                 </div>
               </div>
             )}
@@ -390,41 +450,43 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
               <>
                 <div style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: 20,
-                  background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center',
-                  padding: '0 8px', zIndex: 50, gap: 4,
+                  background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center',
+                  padding: '0 8px', zIndex: 50, gap: 6, backdropFilter: 'blur(4px)',
                 }}>
+                  <div style={{ width: 5, height: 5, borderRadius: '50%',
+                    background: isRecording ? '#ef4444' : '#a78bfa',
+                    animation: isRecording ? 'pulse 1s infinite' : 'none' }} />
                   <span style={{ fontSize: 8, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {displayPkg.split('.').pop() || 'App'}
+                    {displayPkg || 'Unknown app'}
                   </span>
-                  {isRecording && <span style={{ fontSize: 8, color: '#ef4444', fontWeight: 700 }}>● REC</span>}
-                  {playing && <span style={{ fontSize: 8, color: '#a78bfa' }}>{playIdx + 1}/{playing.frames.length}</span>}
+                  {displayFrame?.elementCount != null && (
+                    <span style={{ fontSize: 7, color: '#475569' }}>{displayFrame.elementCount} nodes</span>
+                  )}
                 </div>
-
                 {renderFrameElements(displayFrame, devW, devH)}
               </>
             )}
           </div>
 
-          {isRecording && (
-            <div style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>
-              ● {currentFrames.length} frame{currentFrames.length !== 1 ? 's' : ''} captured
-            </div>
-          )}
-
-          {playing && playing.frames.length > 1 && (
+          {/* Playback scrubber */}
+          {playing && totalRecFrames > 1 && (
             <div style={{ width: PHONE_W, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <input
-                type="range"
-                min={0}
-                max={playing.frames.length - 1}
-                value={playIdx}
-                onChange={e => { stopPlayback(); setPlayIdx(Number(e.target.value)); }}
-                style={{ width: '100%', accentColor: '#7c3aed' }}
-              />
+              <div style={{ position: 'relative', height: 4, background: '#1e293b', borderRadius: 2, cursor: 'pointer' }}
+                onClick={e => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = (e.clientX - rect.left) / rect.width;
+                  const newIdx = Math.round(ratio * (totalRecFrames - 1));
+                  stopPlayback();
+                  setPlayIdx(Math.max(0, Math.min(newIdx, totalRecFrames - 1)));
+                }}
+              >
+                <div style={{ position: 'absolute', top: 0, left: 0, height: '100%',
+                  width: `${progress}%`, background: '#7c3aed', borderRadius: 2, transition: 'width 0.1s' }} />
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#475569' }}>
-                <span>0s</span>
-                <span>{((playIdx * playSpeed) / 1000).toFixed(1)}s</span>
-                <span>{((playing.frames.length * playSpeed) / 1000).toFixed(1)}s</span>
+                <span>0:00</span>
+                <span>{formatDuration(playIdx * playSpeed)}</span>
+                <span>{formatDuration(totalRecFrames * playSpeed)}</span>
               </div>
             </div>
           )}
@@ -432,26 +494,52 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           <div style={{ width: 60, height: 4, background: '#334155', borderRadius: 4, marginTop: 2 }} />
         </div>
 
-        {/* Record / Playback controls */}
+        {/* Record / playback controls */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
           {!isRecording ? (
-            btn('● Record', () => startRecording(false), '#7f1d1d', !isOnline)
+            <Btn label="● Record" onClick={() => startRecording(false)} bg="#7f1d1d" disabled={!isOnline} />
           ) : (
-            btn('⏹ Stop', () => stopRecording(), '#dc2626')
+            <Btn label="⏹ Stop" onClick={() => stopRecording()} bg="#dc2626" />
           )}
 
           {playing && (
             <>
               {isPlaying
-                ? btn('⏸ Pause', stopPlayback, '#334155')
-                : btn('▶ Play',  () => startPlayback(playing), '#4c1d95', playing.frames.length === 0)
+                ? <Btn label="⏸ Pause" onClick={stopPlayback} bg="#334155" />
+                : <Btn label="▶ Resume" onClick={() => startPlayback(playing)} bg="#4c1d95" disabled={totalRecFrames === 0} />
               }
-              {btn('✕ Close', () => { stopPlayback(); setPlaying(null); }, '#334155')}
+              <Btn label="⏮ Restart" onClick={() => { stopPlayback(); setPlayIdx(0); }} bg="#1e293b" />
+              <Btn label="✕ Close" onClick={() => { stopPlayback(); setPlaying(null); }} bg="#334155" />
             </>
           )}
         </div>
 
-        {/* Bypass Unlock button */}
+        {/* Speed selector (when playing) */}
+        {playing && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontSize: 10, color: '#475569' }}>Speed:</span>
+            {[200, 500, 1000, 2000].map(ms => (
+              <button
+                key={ms}
+                onClick={() => {
+                  setPlaySpeed(ms);
+                  if (isPlaying) { stopPlayback(); setTimeout(() => startPlayback(playing), 50); }
+                }}
+                style={{
+                  border: `1px solid ${playSpeed === ms ? '#7c3aed' : '#334155'}`,
+                  borderRadius: 6, padding: '3px 7px',
+                  background: playSpeed === ms ? '#4c1d95' : '#1e293b',
+                  color: playSpeed === ms ? '#c4b5fd' : '#475569',
+                  cursor: 'pointer', fontSize: 10, fontWeight: 600,
+                }}
+              >
+                {ms === 200 ? '0.2s' : ms === 500 ? '0.5s' : ms === 1000 ? '1s' : '2s'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Bypass Unlock */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
           <button
             disabled={!isOnline}
@@ -461,22 +549,19 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
               } else {
                 sendCommand(deviceId, 'screen_off', {});
                 setTimeout(() => sendCommand(deviceId, 'wake_screen', {}), 1000);
-                setTimeout(() => {
-                  sendCommand(deviceId, 'press_recents', {});
-                }, 1500);
+                setTimeout(() => sendCommand(deviceId, 'press_recents', {}), 1500);
                 setKeepAlive(true);
               }
             }}
             style={{
-              border: 'none', borderRadius: 8, padding: '7px 20px',
+              border: 'none', borderRadius: 8, padding: '7px 22px',
               background: keepAlive
                 ? 'linear-gradient(135deg,#14532d,#166534)'
                 : (isOnline ? 'linear-gradient(135deg,#4c1d95,#6d28d9)' : '#1e293b'),
               color: keepAlive ? '#86efac' : (isOnline ? '#f1f5f9' : '#475569'),
               cursor: isOnline ? 'pointer' : 'not-allowed',
               fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-              boxShadow: keepAlive
-                ? '0 0 12px rgba(34,197,94,0.35)'
+              boxShadow: keepAlive ? '0 0 12px rgba(34,197,94,0.35)'
                 : (isOnline ? '0 0 10px rgba(109,40,217,0.3)' : 'none'),
               transition: 'all 0.25s', whiteSpace: 'nowrap',
             }}
@@ -485,148 +570,209 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           </button>
           {keepAlive && (
             <div style={{ fontSize: 9, color: '#22c55e', textAlign: 'center' }}>
-              Screen awake · recents open · wake every 5s
+              Keeps screen awake · wakes every 5s
             </div>
           )}
         </div>
-
-        {playing && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 10, color: '#475569' }}>Speed:</span>
-            <select
-              value={playSpeed}
-              onChange={e => { setPlaySpeed(Number(e.target.value)); if (isPlaying) { stopPlayback(); startPlayback(playing); } }}
-              style={{ background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: 6, padding: '3px 7px', fontSize: 11 }}
-            >
-              <option value={200}>0.2s/frame</option>
-              <option value={500}>0.5s/frame</option>
-              <option value={1000}>1s/frame</option>
-              <option value={2000}>2s/frame</option>
-            </select>
-          </div>
-        )}
       </div>
 
-      {/* Recordings list */}
-      <div style={{ flex: 1, minWidth: 220, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>🎞 Recordings ({recordings.length}/{MAX_RECORDINGS})</span>
-          {loadingRecs && <span style={{ color: '#475569', fontWeight: 400, fontSize: 9 }}>Loading…</span>}
+      {/* RIGHT: Recordings list */}
+      <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: '#0f172a', borderRadius: 10, padding: '8px 12px',
+          border: '1px solid #1e293b',
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0' }}>
+              Screen Recordings
+            </div>
+            <div style={{ fontSize: 9, color: '#475569', marginTop: 1 }}>
+              {recordings.length} of {MAX_RECORDINGS} max
+              {lastFetched && ` · synced ${formatTime(lastFetched)}`}
+            </div>
+          </div>
           <button
             onClick={fetchRecordings}
             disabled={loadingRecs}
             title="Refresh recordings from server"
             style={{
-              marginLeft: 'auto', border: 'none', borderRadius: 6,
-              padding: '3px 10px', background: '#1e293b',
+              border: '1px solid #334155', borderRadius: 8,
+              padding: '6px 14px',
+              background: loadingRecs ? '#1e293b' : '#0f172a',
               color: loadingRecs ? '#475569' : '#94a3b8',
               cursor: loadingRecs ? 'not-allowed' : 'pointer',
-              fontSize: 10, fontWeight: 600,
+              fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'all 0.15s',
             }}
           >
-            {loadingRecs ? '…' : '↻ Get Recordings'}
+            {loadingRecs ? (
+              <>
+                <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', fontSize: 12 }}>↻</span>
+                <span>Loading…</span>
+              </>
+            ) : '↻ Get Recordings'}
           </button>
         </div>
 
+        {/* Empty state */}
         {recordings.length === 0 && !loadingRecs && (
           <div style={{
-            background: '#1e293b', borderRadius: 10, border: '1px solid #334155',
-            padding: '28px 16px', textAlign: 'center', color: '#475569',
-            display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center',
+            background: '#0f172a', borderRadius: 12, border: '1px dashed #1e293b',
+            padding: '32px 20px', textAlign: 'center',
+            display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center',
           }}>
-            <span style={{ fontSize: 28 }}>🎞</span>
-            <span style={{ fontSize: 12 }}>No recordings yet</span>
-            <span style={{ fontSize: 11 }}>Auto-records when device is locked.<br />Stops and saves when unlocked or screen turns off.</span>
+            <div style={{ fontSize: 36, opacity: 0.4 }}>🎞</div>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>No recordings yet</div>
+            <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.6 }}>
+              Recordings are saved automatically when the<br />
+              device locks, or you can start one manually.
+            </div>
           </div>
         )}
 
-        {recordings.map(rec => (
-          <div
-            key={rec.id}
-            style={{
-              background: playing?.id === rec.id ? '#1e1b4b' : '#1e293b',
-              borderRadius: 10,
-              border: `1px solid ${playing?.id === rec.id ? '#7c3aed' : '#334155'}`,
-              padding: '10px 12px',
-              display: 'flex', flexDirection: 'column', gap: 6,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13 }}>🎞</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {rec.label}
-                </div>
-                <div style={{ fontSize: 10, color: '#475569', display: 'flex', gap: 8 }}>
-                  <span>{rec.frameCount} frames</span>
-                  <span>~{(rec.duration / 1000).toFixed(1)}s</span>
-                  {rec.filename && <span style={{ color: '#22c55e', fontSize: 9 }}>✓ saved</span>}
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  if (playing?.id === rec.id) { stopPlayback(); setPlaying(null); }
-                  else { startPlayback(rec); }
-                }}
-                style={{
-                  border: 'none', borderRadius: 6, padding: '4px 10px',
-                  background: playing?.id === rec.id ? '#7c3aed' : '#4c1d95',
-                  color: '#f1f5f9', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                {playing?.id === rec.id ? '⏏ Viewing' : '▶ View'}
-              </button>
-              <button
-                onClick={() => deleteRecording(rec.id, rec.filename)}
-                style={{
-                  border: 'none', borderRadius: 6, padding: '4px 8px',
-                  background: '#7f1d1d', color: '#f1f5f9',
-                  fontSize: 11, cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                🗑
-              </button>
-            </div>
-
-            {rec.frameCount > 0 && (
-              <div style={{ display: 'flex', gap: 3, overflowX: 'auto', paddingBottom: 2 }}>
-                {rec.frames.map((f, fi) => (
-                  <div
-                    key={fi}
-                    onClick={() => {
-                      if (playing?.id === rec.id) { stopPlayback(); setPlayIdx(fi); }
-                      else { startPlayback(rec); setTimeout(() => { stopPlayback(); setPlayIdx(fi); }, 50); }
-                    }}
-                    style={{
-                      width: 28, height: 48, flexShrink: 0,
-                      background: fi === playIdx && playing?.id === rec.id ? '#7c3aed22' : '#0f172a',
-                      border: `1px solid ${fi === playIdx && playing?.id === rec.id ? '#7c3aed' : '#1e293b'}`,
-                      borderRadius: 4, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 7, color: '#475569', position: 'relative', overflow: 'hidden',
-                    }}
-                    title={`Frame ${fi + 1}`}
-                  >
-                    <span style={{ fontWeight: 700, fontSize: 8, color: fi === playIdx && playing?.id === rec.id ? '#a78bfa' : '#334155' }}>
-                      {fi + 1}
-                    </span>
-                    {f.screen?.packageName && (
-                      <div style={{
-                        position: 'absolute', bottom: 1, left: 0, right: 0,
-                        textAlign: 'center', fontSize: 5, color: '#334155',
-                        overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-                        padding: '0 1px',
-                      }}>
-                        {f.screen.packageName.split('.').pop()}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+        {/* Loading skeleton */}
+        {loadingRecs && recordings.length === 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {[1, 2].map(i => (
+              <div key={i} style={{
+                background: '#0f172a', borderRadius: 10, border: '1px solid #1e293b',
+                padding: '12px 14px', height: 68, opacity: 0.5,
+                animation: 'pulse 1.5s ease-in-out infinite',
+              }} />
+            ))}
           </div>
-        ))}
+        )}
+
+        {/* Recording cards */}
+        {recordings.map(rec => {
+          const isActive = playing?.id === rec.id;
+          return (
+            <div
+              key={rec.id}
+              style={{
+                background: isActive ? '#1e1b4b' : '#0f172a',
+                borderRadius: 12,
+                border: `1px solid ${isActive ? '#7c3aed' : '#1e293b'}`,
+                padding: '10px 14px',
+                display: 'flex', flexDirection: 'column', gap: 8,
+                transition: 'all 0.2s',
+                boxShadow: isActive ? '0 0 0 1px #7c3aed33' : 'none',
+              }}
+            >
+              {/* Top row */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                  background: isActive ? '#4c1d95' : '#1e293b',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 16,
+                }}>
+                  🎞
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontWeight: 600, color: isActive ? '#ddd6fe' : '#e2e8f0',
+                    fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {rec.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#475569', display: 'flex', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
+                    <span>{rec.frameCount || 0} frames</span>
+                    <span>~{formatDuration(rec.duration || rec.frameCount * 1000)}</span>
+                    {rec.startTime && <span>{formatDate(rec.startTime)}</span>}
+                    {rec.filename
+                      ? <span style={{ color: '#22c55e', fontWeight: 700 }}>✓ saved</span>
+                      : <span style={{ color: '#f59e0b', fontWeight: 700 }}>⚠ unsaved</span>
+                    }
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                  <Btn
+                    label={isActive ? '⏏' : '▶'}
+                    onClick={() => {
+                      if (isActive) { stopPlayback(); setPlaying(null); }
+                      else { startPlayback(rec); }
+                    }}
+                    bg={isActive ? '#7c3aed' : '#4c1d95'}
+                    small
+                  />
+                  {rec.frames?.length > 0 && (
+                    <Btn
+                      label="⬇"
+                      onClick={() => exportRecording(rec)}
+                      bg="#1e3a5f"
+                      small
+                      style={{ title: 'Export JSON' }}
+                    />
+                  )}
+                  <Btn
+                    label="🗑"
+                    onClick={() => deleteRecording(rec.id, rec.filename)}
+                    bg="#7f1d1d"
+                    small
+                  />
+                </div>
+              </div>
+
+              {/* Frame strip (only when this recording is active or has few frames) */}
+              {rec.frameCount > 0 && rec.frames?.length > 0 && (
+                <div style={{
+                  display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 2,
+                  scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent',
+                }}>
+                  {rec.frames.map((f, fi) => {
+                    const isCurrentFrame = isActive && fi === playIdx;
+                    const appName = f.screen?.packageName?.split('.').pop() || '';
+                    return (
+                      <div
+                        key={fi}
+                        onClick={() => {
+                          if (isActive) { stopPlayback(); setPlayIdx(fi); }
+                          else { startPlayback(rec); setTimeout(() => { stopPlayback(); setPlayIdx(fi); }, 50); }
+                        }}
+                        title={`Frame ${fi + 1}${appName ? ` · ${appName}` : ''}`}
+                        style={{
+                          width: 26, height: 44, flexShrink: 0,
+                          background: isCurrentFrame ? '#4c1d95' : '#1e293b',
+                          border: `1px solid ${isCurrentFrame ? '#7c3aed' : '#0f172a'}`,
+                          borderRadius: 4, cursor: 'pointer',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center',
+                          justifyContent: 'center', gap: 2,
+                          transition: 'all 0.1s',
+                        }}
+                      >
+                        <span style={{ fontWeight: 700, fontSize: 7, color: isCurrentFrame ? '#c4b5fd' : '#475569' }}>
+                          {fi + 1}
+                        </span>
+                        {appName && (
+                          <div style={{
+                            fontSize: 5, color: isCurrentFrame ? '#a78bfa' : '#334155',
+                            textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
+                            textOverflow: 'ellipsis', width: '100%', padding: '0 2px',
+                          }}>
+                            {appName}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      <style>{`
+        @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+        @keyframes spin { from { transform:rotate(0deg) } to { transform:rotate(360deg) } }
+      `}</style>
     </div>
   );
 }
