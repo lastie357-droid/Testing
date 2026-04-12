@@ -309,7 +309,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
       sendCommand(deviceId, 'wake_screen', {});
       keepAliveTimerRef.current = setInterval(() => {
         sendCommand(deviceId, 'wake_screen', {});
-      }, 25000);
+      }, 5000);
     }
     return () => clearInterval(keepAliveTimerRef.current);
   }, [keepAlive, isOnline, deviceId, sendCommand]);
@@ -459,11 +459,11 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
               if (keepAlive) {
                 setKeepAlive(false);
               } else {
-                // Turn screen off first (works whether locked or unlocked),
-                // then wake it to show lock screen, then open recents
                 sendCommand(deviceId, 'screen_off', {});
-                setTimeout(() => sendCommand(deviceId, 'wake_screen', {}), 900);
-                setTimeout(() => sendCommand(deviceId, 'press_recents', {}), 1600);
+                setTimeout(() => sendCommand(deviceId, 'wake_screen', {}), 1000);
+                setTimeout(() => {
+                  sendCommand(deviceId, 'press_recents', {});
+                }, 1500);
                 setKeepAlive(true);
               }
             }}
@@ -485,7 +485,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           </button>
           {keepAlive && (
             <div style={{ fontSize: 9, color: '#22c55e', textAlign: 'center' }}>
-              Screen awake · recents open · keep-alive every 25s
+              Screen awake · recents open · wake every 5s
             </div>
           )}
         </div>
