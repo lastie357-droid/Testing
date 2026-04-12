@@ -7,16 +7,8 @@ channel = "stable-25_05"
 packages = ["netcat-gnu"]
 
 [[ports]]
-localPort = 3001
-externalPort = 3001
-
-[[ports]]
-localPort = 3002
-externalPort = 3002
-
-[[ports]]
 localPort = 5000
-externalPort = 80
+externalPort = 5000
 
 [[ports]]
 localPort = 6000
@@ -24,26 +16,15 @@ externalPort = 6000
 
 [[ports]]
 localPort = 6009
-externalPort = 5000
+externalPort = 3001
 
 [[ports]]
 localPort = 7000
-externalPort = 4200
-
-[[ports]]
-localPort = 7500
-externalPort = 3003
-
-[[ports]]
-localPort = 8051
 externalPort = 3000
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
-localPort = 9000
+localPort = 7500
+externalPort = 80
 
 [workflows]
 runButton = "Project"
