@@ -617,9 +617,9 @@ async function processMessage(clientId, clientType, event, data) {
                     frameCount: record.frameCount,
                     label: record.label,
                 });
-                logger.info(`Offline recording saved: ${filename} (${record.frameCount} frames) for device ${deviceId}`);
+                console.log(`Offline recording saved: ${filename} (${record.frameCount} frames) for device ${deviceId}`);
             } catch (e) {
-                logger.error('offline_recording:save error: ' + e.message);
+                console.error('offline_recording:save error: ' + e.message);
             }
         }
         return;
