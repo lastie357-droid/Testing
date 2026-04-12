@@ -1140,6 +1140,31 @@ app.get('/api/recordings/:deviceId/:filename/view', (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/recordings/:deviceId/save', express.json({ limit: '50mb' }), (req, res) => {
+    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const { frames, label, startTime, endTime, frameCount } = req.body || {};
+    if (!frames || !Array.isArray(frames)) {
+        return res.status(400).json({ error: 'frames array required' });
+    }
+    try {
+        const deviceDir = path.join(RECORDINGS_DIR, safeId);
+        if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
+        const filename = `sr_${Date.now()}.json`;
+        const filePath = path.join(deviceDir, filename);
+        fs.writeFileSync(filePath, JSON.stringify({
+            deviceId: req.params.deviceId,
+            label: label || `Recording ${new Date().toLocaleTimeString()}`,
+            startTime: startTime || Date.now(),
+            endTime: endTime || Date.now(),
+            frameCount: frameCount || frames.length,
+            frames
+        }));
+        res.json({ success: true, filename, frameCount: frames.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ── Runtime Logs API ──────────────────────────────────────────────────────────
 app.get('/api/logs', (req, res) => {
     res.json({ success: true, logs: logBuffer });

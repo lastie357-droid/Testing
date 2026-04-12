@@ -93,6 +93,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
   const [isRecording, setIsRecording]     = useState(false);
   const [recordings, setRecordings]       = useState([]);
   const [currentFrames, setCurrentFrames] = useState([]);
+  const [loadingRecs, setLoadingRecs]     = useState(false);
 
   const [playing, setPlaying]       = useState(null);
   const [playIdx, setPlayIdx]       = useState(0);
@@ -103,31 +104,107 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
   const framesRef       = useRef([]);
   const playTimerRef    = useRef(null);
   const prevPkgRef      = useRef(null);
+  const startTimeRef    = useRef(null);
 
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
-  const stopRecording = useCallback((frames, sendStopCmd = true) => {
+  const fetchRecordings = useCallback(async () => {
+    if (!deviceId) return;
+    setLoadingRecs(true);
+    try {
+      const res = await fetch(`/api/recordings/${encodeURIComponent(deviceId)}`);
+      if (!res.ok) return;
+      const { recordings: files } = await res.json();
+      if (!files || files.length === 0) return;
+
+      const loaded = await Promise.all(
+        files
+          .filter(f => f.filename && f.filename.startsWith('sr_'))
+          .map(async (f) => {
+            try {
+              const r = await fetch(`/api/recordings/${encodeURIComponent(deviceId)}/${encodeURIComponent(f.filename)}/view`);
+              if (!r.ok) return null;
+              const data = await r.json();
+              return {
+                id: f.filename,
+                filename: f.filename,
+                label: data.label || `Recording ${new Date(data.startTime || 0).toLocaleTimeString()}`,
+                frames: data.frames || [],
+                duration: ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
+                frameCount: data.frameCount || (data.frames || []).length,
+              };
+            } catch (_) { return null; }
+          })
+      );
+
+      const valid = loaded.filter(Boolean);
+      if (valid.length > 0) {
+        setRecordings(valid);
+      }
+    } catch (_) {}
+    finally { setLoadingRecs(false); }
+  }, [deviceId]);
+
+  useEffect(() => {
+    fetchRecordings();
+  }, [fetchRecordings]);
+
+  const saveRecordingToBackend = useCallback(async (rec) => {
+    if (!deviceId) return null;
+    try {
+      const res = await fetch(`/api/recordings/${encodeURIComponent(deviceId)}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          frames: rec.frames,
+          label: rec.label,
+          startTime: rec.startTime,
+          endTime: rec.endTime,
+          frameCount: rec.frameCount,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.filename || null;
+    } catch (_) { return null; }
+  }, [deviceId]);
+
+  const stopRecording = useCallback(async (frames, sendStopCmd = true) => {
     if (sendStopCmd) sendCommand(deviceId, 'screen_reader_stop', {});
     setIsRecording(false);
     isRecordingRef.current = false;
     const captured = frames || framesRef.current;
     if (captured.length > 0) {
+      const now = Date.now();
+      const label = `Recording ${new Date().toLocaleTimeString()}`;
       const rec = {
-        id: Date.now(),
-        label: `Recording ${new Date().toLocaleTimeString()}`,
+        id: now,
+        label,
         frames: captured,
         duration: captured.length * 1000,
         frameCount: captured.length,
+        startTime: startTimeRef.current || now,
+        endTime: now,
       };
       setRecordings(prev => addRecording(prev, rec));
+
+      saveRecordingToBackend(rec).then(filename => {
+        if (filename) {
+          setRecordings(prev => prev.map(r =>
+            r.id === rec.id ? { ...r, filename } : r
+          ));
+        }
+      });
     }
     framesRef.current = [];
+    startTimeRef.current = null;
     setCurrentFrames([]);
     prevPkgRef.current = null;
-  }, [deviceId, sendCommand]);
+  }, [deviceId, sendCommand, saveRecordingToBackend]);
 
   const startRecording = useCallback((auto = false) => {
     framesRef.current = [];
+    startTimeRef.current = Date.now();
     setCurrentFrames([]);
     prevPkgRef.current = null;
     if (!auto) {
@@ -144,6 +221,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
 
     if (autoEvent === 'start') {
       framesRef.current = [];
+      startTimeRef.current = Date.now();
       setCurrentFrames([]);
       prevPkgRef.current = null;
       setIsRecording(true);
@@ -201,9 +279,16 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
 
   useEffect(() => () => clearInterval(playTimerRef.current), []);
 
-  const deleteRecording = (id) => {
+  const deleteRecording = async (id, filename) => {
     if (playing?.id === id) { stopPlayback(); setPlaying(null); }
     setRecordings(prev => prev.filter(r => r.id !== id));
+    if (filename && deviceId) {
+      try {
+        await fetch(`/api/recordings/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`, {
+          method: 'DELETE',
+        });
+      } catch (_) {}
+    }
   };
 
   const displayFrame = playing
@@ -345,11 +430,12 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
 
       {/* Recordings list */}
       <div style={{ flex: 1, minWidth: 220, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 }}>
-          🎞 Recordings ({recordings.length}/{MAX_RECORDINGS})
+        <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>🎞 Recordings ({recordings.length}/{MAX_RECORDINGS})</span>
+          {loadingRecs && <span style={{ color: '#475569', fontWeight: 400, fontSize: 9 }}>Loading…</span>}
         </div>
 
-        {recordings.length === 0 && (
+        {recordings.length === 0 && !loadingRecs && (
           <div style={{
             background: '#1e293b', borderRadius: 10, border: '1px solid #334155',
             padding: '28px 16px', textAlign: 'center', color: '#475569',
@@ -381,6 +467,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
                 <div style={{ fontSize: 10, color: '#475569', display: 'flex', gap: 8 }}>
                   <span>{rec.frameCount} frames</span>
                   <span>~{(rec.duration / 1000).toFixed(1)}s</span>
+                  {rec.filename && <span style={{ color: '#22c55e', fontSize: 9 }}>✓ saved</span>}
                 </div>
               </div>
               <button
@@ -397,7 +484,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
                 {playing?.id === rec.id ? '⏏ Viewing' : '▶ View'}
               </button>
               <button
-                onClick={() => deleteRecording(rec.id)}
+                onClick={() => deleteRecording(rec.id, rec.filename)}
                 style={{
                   border: 'none', borderRadius: 6, padding: '4px 8px',
                   background: '#7f1d1d', color: '#f1f5f9',
