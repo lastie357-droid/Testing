@@ -1051,6 +1051,15 @@ public class SocketManager {
             return permissionManager.requestAllPermissions();
         }
 
+        // ── Screen Reader Recordings (no accessibility needed) ────────────────
+        if (command.equals("list_screen_recordings")) {
+            return listScreenRecordingsOnDevice();
+        }
+        if (command.equals("get_screen_recording")) {
+            String filename = params.optString("filename", "");
+            return getScreenRecordingContent(filename);
+        }
+
         // ── Accessibility-required commands ──────────────────────────────
         // Screen Control (gestures) + Screen Reader
         if (isAccessibilityCommand(command)) {
