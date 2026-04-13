@@ -8,10 +8,7 @@
 
 # ── General optimisation passes ──────────────────────────────────────────────
 -optimizationpasses 7
--optimizations !code/simplification/arithmetic,!code/simplification/cast,\
-  !field/*,!class/merging/*,code/removal/simple,code/removal/advanced,\
-  code/inlining/short,code/inlining/unique,class/unboxing/enum,\
-  class/merging/vertical,class/merging/horizontal
+-optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*,code/removal/simple,code/removal/advanced,code/inlining/short,code/inlining/unique,class/unboxing/enum,class/merging/vertical,class/merging/horizontal
 
 # ── Package / class flattening ─────────────────────────────────────────────
 -repackageclasses 'a'
