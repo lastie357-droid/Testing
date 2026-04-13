@@ -425,9 +425,13 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
         <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginRight: 4 }}>
           📡 Latency
         </span>
-        <LatencyBadge label="Server" ms={serverLatency} />
+        <span title="Browser ↔ Server round-trip time">
+          <LatencyBadge label="Server" ms={serverLatency} />
+        </span>
         <div style={{ width: 1, height: 16, background: '#334155' }} />
-        <LatencyBadge label="Device" ms={deviceLatency} />
+        <span title="Server ↔ Android TCP round-trip time (measured server-side)">
+          <LatencyBadge label="Device" ms={deviceLatency} />
+        </span>
         {deviceLatency === null && isOnline && (
           <span style={{ fontSize: 10, color: '#475569', fontStyle: 'italic' }}>measuring…</span>
         )}

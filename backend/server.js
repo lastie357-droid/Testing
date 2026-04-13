@@ -330,6 +330,8 @@ const pendingCmds = new Map();         // commandId → pending info
 const inMemoryDevices = new Map();     // deviceId → device object
 /** @type {Set<string>} Devices that have an active stream session */
 const deviceStreamingState = new Set(); // deviceId → streaming active
+/** @type {Map<string, number>} Timestamp (ms) of last device:ping sent — used to compute true TCP RTT */
+const devicePingTime = new Map();       // deviceId → Date.now() when ping was sent
 /** @type {Map<string, number>} Track last frame relay time per device for throttling */
 const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relayed frame
 const FRAME_RELAY_MIN_MS = 200;         // Never relay frames faster than 5 FPS to SSE clients
@@ -526,7 +528,15 @@ async function processMessage(clientId, clientType, event, data) {
 
     if (event === 'device:pong') {
         const conn = tcpClients.get(clientId);
-        if (conn) conn.lastPong = Date.now();
+        if (conn) {
+            conn.lastPong = Date.now();
+            // Compute true server-side TCP RTT (only for primary channel pongs)
+            if (!conn.channelType && conn.deviceId && devicePingTime.has(conn.deviceId)) {
+                const rtt = conn.lastPong - devicePingTime.get(conn.deviceId);
+                devicePingTime.delete(conn.deviceId);
+                broadcastDash('device:latency', { deviceId: conn.deviceId, rtt });
+            }
+        }
         return;
     }
 
@@ -1164,10 +1174,14 @@ async function broadcastDeviceList() {
 // PERIODIC TASKS
 // ============================================
 
-// Ping TCP clients (Android devices)
+// Ping TCP clients (Android devices) — record send time for server-side RTT measurement
 setInterval(() => {
+    const now = Date.now();
     for (const conn of tcpClients.values()) {
-        if (conn.writable) tcpSend(conn, 'device:ping', { timestamp: Date.now() });
+        if (!conn.writable) continue;
+        // Only ping the primary channel (it replies with device:pong on the same socket)
+        if (!conn.channelType && conn.deviceId) devicePingTime.set(conn.deviceId, now);
+        tcpSend(conn, 'device:ping', { timestamp: now });
     }
 }, PING_INTERVAL);
 

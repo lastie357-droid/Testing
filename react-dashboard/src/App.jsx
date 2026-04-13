@@ -137,17 +137,26 @@ function AuthenticatedApp({ logout }) {
         break;
       }
 
+      // Server-measured TCP RTT (server → Android → server) — the true device latency
+      case 'device:latency': {
+        if (data?.deviceId && data.rtt != null) {
+          setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        }
+        break;
+      }
+
       case 'command:result': {
         setPendingCommands(prev => {
           const next = { ...prev };
           delete next[data.commandId];
           return next;
         });
-        // If this was a latency-ping command, record device RTT
+        // Ping command fallback: if no server-side RTT yet, use browser round-trip estimate
         if (data.commandId && pingPendingRef.current[data.commandId]) {
           const { deviceId, sentAt } = pingPendingRef.current[data.commandId];
           delete pingPendingRef.current[data.commandId];
-          setDeviceLatencies(prev => ({ ...prev, [deviceId]: Date.now() - sentAt }));
+          // Only use the browser estimate if we have no server-side measurement for this device
+          setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
         const result = {
           id: data.commandId || Date.now(),
@@ -269,23 +278,8 @@ function AuthenticatedApp({ logout }) {
     return () => clearInterval(id);
   }, [connected, send]);
 
-  // ── Periodic device latency ping (every 10 s per selected device) ────
-  const sendDevicePing = useCallback((deviceId) => {
-    const sentAt = Date.now();
-    // Use a pseudo-commandId: the server returns command:sent with the real one
-    // We intercept via command:sent to capture the actual commandId
-    send('command:send', { deviceId, command: 'ping', params: null, _latencyProbe: true });
-    // Store sentAt keyed by deviceId; updated when command:sent arrives
-    pingPendingRef.current[`__pending_${deviceId}`] = sentAt;
-  }, [send]);
-
-  useEffect(() => {
-    if (!connected || !selectedDevice) return;
-    const tick = () => sendDevicePing(selectedDevice);
-    tick();
-    const id = setInterval(tick, 10000);
-    return () => clearInterval(id);
-  }, [connected, selectedDevice, sendDevicePing]);
+  // Device latency is now measured server-side via the periodic device:ping / device:pong
+  // cycle (every 20 s) and broadcast as device:latency events — no manual pinging needed.
 
   return (
     <div className="app">
