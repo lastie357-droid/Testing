@@ -118,6 +118,9 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   // ── Pending auto-play (filename to play once loaded) ──
   const [pendingPlay, setPendingPlay] = useState(null);
 
+  // ── Ref to scroll phone into view when playback starts ──
+  const phoneRef = useRef(null);
+
   // ── Keep-alive (bypass unlock) ──
   const [keepAlive, setKeepAlive]     = useState(false);
   const keepAliveTimerRef             = useRef(null);
@@ -279,13 +282,15 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     }, playSpeed);
   }, [playSpeed]);
 
-  // Auto-play when a pending filename is loaded
+  // Auto-play when a pending filename is loaded — also scroll phone into view
   useEffect(() => {
     if (!pendingPlay) return;
     const rec = recordings.find(r => r.filename === pendingPlay);
     if (rec) {
       setPendingPlay(null);
       startPlayback(rec);
+      // Scroll the phone viewer into view so the user sees the playback immediately
+      setTimeout(() => phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     }
   }, [pendingPlay, recordings, startPlayback]);
 
@@ -334,9 +339,11 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     ? (playing.frames[playIdx]?.screen || null)
     : liveFrame;
 
-  const displayPkg  = displayFrame?.packageName || '';
-  const totalFrames = playing?.frames?.length || 0;
-  const progress    = totalFrames > 1 ? (playIdx / (totalFrames - 1)) * 100 : 0;
+  const displayPkg      = displayFrame?.packageName || '';
+  const totalFrames     = playing?.frames?.length || 0;
+  const progress        = totalFrames > 1 ? (playIdx / (totalFrames - 1)) * 100 : 0;
+  // Which file is currently being fetched from the device (if any)
+  const fetchingFilename = Object.keys(loadingFile).find(k => loadingFile[k]) || null;
 
   // ─────────────────────────────────────────────
   // Render helpers
@@ -366,7 +373,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
       {/* ── LEFT: Phone viewer + controls ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div ref={phoneRef} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
         {/* Status badge */}
         <div style={{
@@ -421,14 +428,36 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 justifyContent: 'center', height: '100%', gap: 10,
               }}>
-                <div style={{ fontSize: 38, opacity: 0.3 }}>🎥</div>
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', lineHeight: 1.7, padding: '0 20px' }}>
-                  {viewState === 'recording'
-                    ? 'Recording in progress on device\nLive feed will appear here'
-                    : viewState === 'playback'
-                    ? 'No frame data'
-                    : 'Select a recording to play,\nor start a new recording on the device.'}
-                </div>
+                {fetchingFilename ? (
+                  <>
+                    <div style={{
+                      width: 40, height: 40, borderRadius: '50%',
+                      border: '3px solid #4c1d95', borderTopColor: '#a78bfa',
+                      animation: 'spin 0.9s linear infinite',
+                    }} />
+                    <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700, textAlign: 'center' }}>
+                      Fetching recording…
+                    </div>
+                    <div style={{
+                      fontSize: 9, color: '#475569', textAlign: 'center',
+                      maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      padding: '0 10px',
+                    }}>
+                      {fetchingFilename}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 38, opacity: 0.3 }}>🎥</div>
+                    <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', lineHeight: 1.7, padding: '0 20px' }}>
+                      {viewState === 'recording'
+                        ? 'Recording in progress on device\nLive feed will appear here'
+                        : viewState === 'playback'
+                        ? 'No frame data'
+                        : 'Select a recording to play,\nor start a new recording on the device.'}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -702,7 +731,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
         {recordingFiles.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ fontSize: 10, color: '#475569', paddingLeft: 4, marginBottom: 2 }}>
-              {recordingFiles.length} file{recordingFiles.length !== 1 ? 's' : ''} found — click View to load
+              {recordingFiles.length} file{recordingFiles.length !== 1 ? 's' : ''} on device — click "Load &amp; Play" to fetch and view
             </div>
             {recordingFiles.map(fileEntry => {
               const fname = fileEntry.filename || fileEntry;
@@ -730,21 +759,23 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
                     onClick={() => {
                       if (isLoaded) {
                         startPlayback(isLoaded);
+                        setTimeout(() => phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
                       } else {
                         setLoadingFile(prev => ({ ...prev, [fname]: true }));
                         sendCommand(deviceId, 'get_screen_recording', { filename: fname });
+                        phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                       }
                     }}
                     disabled={isLoading}
                     style={{
                       border: 'none', borderRadius: 6, padding: '4px 10px',
-                      background: isLoaded ? '#4c1d95' : (isLoading ? '#1e293b' : '#312e81'),
+                      background: isLoaded ? '#4c1d95' : (isLoading ? '#1e293b' : '#1e3a5f'),
                       color: isLoading ? '#475569' : '#e2e8f0',
                       cursor: isLoading ? 'not-allowed' : 'pointer',
                       fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
                     }}
                   >
-                    {isLoading ? '⏳ Loading…' : isLoaded ? '▶ View' : '▶ View'}
+                    {isLoading ? '⏳ Loading…' : isLoaded ? '▶ Play' : '↓ Load & Play'}
                   </button>
                 </div>
               );
