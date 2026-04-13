@@ -337,7 +337,7 @@ const deviceStreamingState = new Set(); // deviceId → streaming active
 const devicePingTime = new Map();       // deviceId → Date.now() when ping was sent
 /** @type {Map<string, number>} Track last frame relay time per device for throttling */
 const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relayed frame
-const FRAME_RELAY_MIN_MS = 200;         // Never relay frames faster than 5 FPS to SSE clients
+const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS to SSE clients
 
 // ============================================
 // LOGGING HELPERS

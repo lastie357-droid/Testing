@@ -68,8 +68,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     if (frameRequestedRef.current) return; // already waiting for a frame
     frameRequestedRef.current = true;
     sendCommand(deviceId, 'stream_request_frame', {});
-    // Reset flag after 600ms regardless (guards against lost frames)
-    setTimeout(() => { frameRequestedRef.current = false; }, 600);
+    // Reset flag after 300ms regardless (guards against lost frames in transit)
+    setTimeout(() => { frameRequestedRef.current = false; }, 300);
   }, [deviceId, sendCommand, isBlackedOut]);
 
   const fetchRecordings = useCallback(async () => {
@@ -107,15 +107,17 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     }
   }, [streamFrame, requestFrame]);
 
-  // Continuous polling fallback — requests a frame every 500ms while streaming
-  // (catches cases where the pipeline stalls e.g. a lost frame)
+  // Continuous polling — requests a fresh frame every 250ms while streaming.
+  // The device-side "latest frame wins" logic ensures only the most current
+  // screen capture is sent back, so polling faster gives lower latency without
+  // flooding the channel with stale frames.
   const pollingIntervalRef = useRef(null);
   useEffect(() => {
     if (isStreaming) {
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = setInterval(() => {
         requestFrame();
-      }, 500);
+      }, 250);
     } else {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);

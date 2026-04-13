@@ -85,6 +85,11 @@ public class SocketManager {
     private ScheduledFuture<?> idleFrameFuture;
     // Saved streaming state so it can be restored after forceReconnect()
     private volatile boolean resumeStreamingAfterReconnect = false;
+    // "Latest frame wins" — if a frame request arrives while the sender is busy,
+    // we record it here.  When the sender finishes it immediately captures + sends
+    // a fresh frame so the dashboard gets the most current screen, not a stale one.
+    private final java.util.concurrent.atomic.AtomicBoolean pendingFrameRequest = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile String streamingDeviceId = null;
 
     // Block-screen frame mode — when block is active the device auto-pushes a frame every 1.5s
     private volatile boolean blockFrameMode = false;
@@ -1135,59 +1140,75 @@ public class SocketManager {
         return unknown;
     }
 
-    // ── Streaming — event-driven single-frame model ───────────────────────
+    // ── Streaming — "latest frame wins" push model ────────────────────────
+    //
+    // Design: the sender is always busy with exactly ONE frame at a time.
+    // If a new frame request arrives while encoding/sending is in progress, we do NOT drop
+    // it — instead we record pendingFrameRequest=true so the sender picks up a fresh capture
+    // the moment it becomes free.  This ensures the dashboard always shows the MOST RECENT
+    // screen, never a stale frame that was queued before the current one finished.
 
-    // Minimum gap between consecutive frame sends (ms) — enforces backpressure on slow links.
-    // After each frame send we record the actual wall-clock time and refuse a new send if the
-    // previous one completed less than MIN_FRAME_GAP_MS ago. This prevents the TCP send buffer
-    // from filling up on 3G where a frame can take 1-2 s to flush.
-    private volatile long lastFrameSentMs = 0L;
-    private static final long MIN_FRAME_GAP_MS = 600; // never exceed ~1.6 FPS on the wire
-
-    /** Send exactly one frame immediately. Drops the call if a frame is already being captured. */
+    /**
+     * Send exactly one frame.  If the sender is already busy, mark a pending request
+     * so the very next send slot captures and delivers a fresh frame.
+     */
     public void sendSingleFrame(String deviceId) {
-        // Backpressure: skip if the last frame was sent too recently (TCP buffer pressure).
-        long now = System.currentTimeMillis();
-        if (now - lastFrameSentMs < MIN_FRAME_GAP_MS) {
-            Log.d(TAG, "sendSingleFrame: throttled — last frame sent " + (now - lastFrameSentMs) + " ms ago");
-            return;
-        }
-        // Throttle: only one frame capture at a time — drop new requests while busy
+        // Track the streaming deviceId so the pending-request path can use it
+        streamingDeviceId = deviceId;
+
         if (!frameBusy.compareAndSet(false, true)) {
-            Log.d(TAG, "sendSingleFrame: dropped — previous frame still in progress");
+            // Sender is busy encoding/transmitting the previous frame.
+            // Mark that a newer frame is wanted — sender will pick it up when free.
+            pendingFrameRequest.set(true);
+            Log.d(TAG, "sendSingleFrame: sender busy — pending flag set for next slot");
             return;
         }
+
+        // Sender is free — kick off capture + encode + send on the executor
+        dispatchFrameSend(deviceId);
+    }
+
+    /**
+     * Internal: capture → encode → send one frame on the executor thread.
+     * After completing, checks pendingFrameRequest and immediately chains another
+     * send if the dashboard requested a fresher frame while we were busy.
+     */
+    private void dispatchFrameSend(final String deviceId) {
         executor.execute(() -> {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // 360 px wide for 3G compatibility — smaller frame = faster upload, lower latency.
-                    // Encodes ~2× faster than 540 px and uses ~55% less data on the wire.
+                    // 360 px wide for 3G — encodes ~2× faster than 540 px, ~55 % less data.
                     Bitmap scaled = scaleBitmapToWidth(frame, 360);
                     if (scaled != frame) frame.recycle();
-                    // Start at 35% quality, max 40 KB raw — safe for 3G uplinks (~0.5 Mbps).
+                    // Adaptive quality: start at 35 %, cap raw size at 40 KB (safe for 3G uplinks).
                     String b64 = bitmapToBase64Adaptive(scaled, 35, 40_000);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
-                        d.put("deviceId",   deviceId);
-                        d.put("frameData",  b64);
-                        d.put("timestamp",  System.currentTimeMillis());
-                        // Always include screen dimensions so dashboard can map clicks correctly
+                        d.put("deviceId",  deviceId);
+                        d.put("frameData", b64);
+                        d.put("timestamp", System.currentTimeMillis());
                         if (deviceScreenW > 0) {
                             d.put("screenWidth",  deviceScreenW);
                             d.put("screenHeight", deviceScreenH);
                         }
-                        // Use dedicated stream channel — keeps command channel clear
                         sendStreamMessage("stream:frame", d);
-                        // Record send time for backpressure — prevents TCP buffer overflow on slow links
-                        lastFrameSentMs = System.currentTimeMillis();
                     }
                 }
             } catch (Exception e) {
-                Log.e(TAG, "sendSingleFrame error: " + e.getMessage());
+                Log.e(TAG, "dispatchFrameSend error: " + e.getMessage());
             } finally {
                 frameBusy.set(false);
+                // "Latest frame wins": if a newer frame was requested while we were busy,
+                // immediately capture and send it now — no waiting for the next poll cycle.
+                if (pendingFrameRequest.getAndSet(false)) {
+                    String did = streamingDeviceId;
+                    if (did != null && (idleFrameMode || blockFrameMode)) {
+                        Log.d(TAG, "dispatchFrameSend: pending frame — dispatching fresh capture immediately");
+                        sendSingleFrame(did);
+                    }
+                }
             }
         });
     }
@@ -1210,8 +1231,8 @@ public class SocketManager {
         // channel and causes TCP buffer back-pressure that stalls the command socket.
         idleFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 0, 1000, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Idle-frame mode started (1000ms delay, ~1 FPS max — 3G compatible)");
+        }, 0, 300, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Idle-frame mode started (300ms poll — latest-frame-wins, ~3 FPS target)");
     }
 
     private void stopIdleFrameMode() {
