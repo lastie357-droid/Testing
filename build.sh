@@ -2,8 +2,10 @@
 set -e
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  RemoteAccess — Single APK build script
-#  Produces: apk-output/RemoteAccess-debug.apk
+#  RemoteAccess — Build script
+#  Produces:
+#    apk-output/RemoteAccess-debug.apk   (debug, unobfuscated)
+#    apk-output/RemoteAccess-release.apk (release, signed + heavily protected)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,6 +13,10 @@ ANDROID_SDK_DIR="/tmp/android-sdk"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
 ZULU_JDK="/nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1"
+KEYSTORE="$ROOT_DIR/app/release.keystore"
+KEY_ALIAS="release"
+KEY_PASS="android"
+STORE_PASS="android"
 
 # ── 0. Clean previous build artifacts ────────────────────────────────────────
 echo "==> Cleaning previous build artifacts..."
@@ -69,7 +75,53 @@ else
     echo "  Already installed: platforms;android-36 + build-tools;35.0.0"
 fi
 
-# ── 5. Project config files ───────────────────────────────────────────────────
+# ── 5. Release keystore ───────────────────────────────────────────────────────
+echo ""
+echo "==> Checking release keystore..."
+if [ ! -f "$KEYSTORE" ]; then
+    echo "  Generating new release keystore..."
+    keytool -genkeypair \
+        -keystore "$KEYSTORE" \
+        -alias "$KEY_ALIAS" \
+        -keyalg RSA \
+        -keysize 4096 \
+        -validity 10000 \
+        -storepass "$STORE_PASS" \
+        -keypass "$KEY_PASS" \
+        -dname "CN=RemoteAccess, OU=Mobile, O=Corp, L=City, ST=State, C=US" \
+        -sigalg SHA256withRSA \
+        2>&1 | sed 's/^/    /'
+    echo "  Keystore created: $KEYSTORE"
+else
+    echo "  Keystore already present: $KEYSTORE"
+fi
+
+# ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
+echo ""
+echo "==> Generating obfuscation dictionary..."
+# Creates a dict of confusing unicode look-alike identifiers so decompiled
+# output is unreadable even if the obfuscated names are extracted.
+python3 - << 'PYEOF'
+import random, string, os
+
+random.seed(0xDEADBEEF)
+
+# Generate 2000 short identifier-safe strings that look alike in most fonts
+words = set()
+chars = ['I', 'l', '1', 'O', '0', 'Il', 'lI', '1l', 'l1', 'II', 'll', '00', 'O0']
+extra = [''.join(random.choices('IlO01', k=random.randint(3,8))) for _ in range(2000)]
+words.update(extra)
+# Remove pure-digit strings (not valid Java identifiers)
+words = [w for w in words if not w.isdigit()]
+random.shuffle(words)
+
+out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app', 'obf-dict.txt')
+with open(out_path, 'w') as f:
+    f.write('\n'.join(words[:1500]))
+print(f"  Written {min(len(words),1500)} entries to app/obf-dict.txt")
+PYEOF
+
+# ── 7. Project config files ───────────────────────────────────────────────────
 echo ""
 echo "==> Writing project config..."
 
@@ -81,14 +133,15 @@ cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
-org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.enableR8.fullMode=true
+org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
 org.gradle.daemon=false
 EOF
 
 echo "  local.properties  — sdk.dir=$ANDROID_SDK_DIR"
-echo "  gradle.properties — AndroidX + Jetifier + suppressUnsupportedCompileSdk"
+echo "  gradle.properties — AndroidX + Jetifier + R8 full mode"
 
-# ── 6. Gradle wrapper JAR ─────────────────────────────────────────────────────
+# ── 8. Gradle wrapper JAR ─────────────────────────────────────────────────────
 echo ""
 echo "==> Checking Gradle wrapper..."
 WRAPPER_JAR="$ROOT_DIR/gradle/wrapper/gradle-wrapper.jar"
@@ -103,20 +156,52 @@ else
 fi
 chmod +x "$ROOT_DIR/gradlew"
 
-# ── 7. Build ──────────────────────────────────────────────────────────────────
+# ── 9. Build debug APK ────────────────────────────────────────────────────────
 echo ""
-echo "==> Building APK..."
+echo "==> Building DEBUG APK..."
 cd "$ROOT_DIR"
 ./gradlew assembleDebug --no-daemon
 
-# ── 8. Copy output ────────────────────────────────────────────────────────────
 mkdir -p "$ROOT_DIR/apk-output"
 cp "$ROOT_DIR/app/build/outputs/apk/debug/app-debug.apk" \
    "$ROOT_DIR/apk-output/RemoteAccess-debug.apk"
 
+DEBUG_SIZE=$(ls -lh "$ROOT_DIR/apk-output/RemoteAccess-debug.apk" | awk '{print $5}')
+echo "  Debug APK: apk-output/RemoteAccess-debug.apk ($DEBUG_SIZE)"
+
+# ── 10. Build release APK (signed + ProGuard/R8 protected) ───────────────────
+echo ""
+echo "==> Building RELEASE APK (signed + R8 full-mode + ProGuard)..."
+cd "$ROOT_DIR"
+./gradlew assembleRelease --no-daemon
+
+# Locate the release APK (could be aligned or unaligned)
+RELEASE_SRC="$ROOT_DIR/app/build/outputs/apk/release/app-release.apk"
+if [ ! -f "$RELEASE_SRC" ]; then
+    RELEASE_SRC=$(find "$ROOT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -1)
+fi
+
+if [ -n "$RELEASE_SRC" ] && [ -f "$RELEASE_SRC" ]; then
+    cp "$RELEASE_SRC" "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+    RELEASE_SIZE=$(ls -lh "$ROOT_DIR/apk-output/RemoteAccess-release.apk" | awk '{print $5}')
+    echo "  Release APK: apk-output/RemoteAccess-release.apk ($RELEASE_SIZE)"
+    echo ""
+    echo "  Protection summary:"
+    echo "    ✔ minifyEnabled    — dead code removed"
+    echo "    ✔ shrinkResources  — unused resources stripped"
+    echo "    ✔ R8 full mode     — maximum class/method merging + inlining"
+    echo "    ✔ 7 optimization   — passes (max obfuscation depth)"
+    echo "    ✔ repackageclasses — all classes flattened to package 'a'"
+    echo "    ✔ Log removal      — all Log.d/i/w/e stripped from bytecode"
+    echo "    ✔ Obf. dictionary  — confusing look-alike identifiers"
+    echo "    ✔ RSA-4096 keystore — release signing"
+else
+    echo "  WARNING: Release APK not found — check build output above"
+fi
+
+# ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  BUILD COMPLETE"
-echo "  APK: apk-output/RemoteAccess-debug.apk"
-ls -lh "$ROOT_DIR/apk-output/RemoteAccess-debug.apk" | awk '{print "  Size: "$5}'
+ls -lh "$ROOT_DIR/apk-output/"*.apk 2>/dev/null | awk '{print "  "$9" ("$5")"}'
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

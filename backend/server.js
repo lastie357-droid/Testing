@@ -685,8 +685,27 @@ async function processMessage(clientId, clientType, event, data) {
             clearTimeout(pending.timer);
             pendingCmds.delete(commandId);
 
+            // Decompress frames if Android sent them GZIP-compressed to save TCP bandwidth.
+            // Android compacts + GZIPs the frames array before sending — decompress here so
+            // the dashboard receives the same JSON structure it always has (no dashboard changes).
+            let finalResponse = response;
+            if (response && response.framesCompressed === true && typeof response.framesData === 'string') {
+                try {
+                    const compressed = Buffer.from(response.framesData, 'base64');
+                    const framesJson  = zlib.gunzipSync(compressed).toString('utf8');
+                    const frames      = JSON.parse(framesJson);
+                    finalResponse = Object.assign({}, response, { frames, framesCompressed: undefined, framesData: undefined });
+                    delete finalResponse.framesCompressed;
+                    delete finalResponse.framesData;
+                    log('MSG', `Decompressed recording ${response.filename || ''}: ${frames.length} frames (${compressed.length} → ${framesJson.length} bytes)`);
+                } catch (decompErr) {
+                    log('MSG', `Failed to decompress recording frames: ${decompErr.message}`, 'warn');
+                    // Fall back to relaying the compressed form; dashboard will handle gracefully
+                }
+            }
+
             const result = { commandId, command: pending.command, deviceId,
-                             response, error: error || null, success: !error,
+                             response: finalResponse, error: error || null, success: !error,
                              timestamp: new Date() };
             // Broadcast to all SSE clients so the result reaches the dashboard even if the
             // SSE connection reconnected (and got a new sseClientId) while the command was in flight.
