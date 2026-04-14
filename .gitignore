@@ -20,4 +20,5 @@ Thumbs.db
 # Gradle
 .gradle/
 gradle/wrapper/gradle-wrapper.jar
-local.properties
+local.properties.jwt_secret
+.jwt_secret_date
