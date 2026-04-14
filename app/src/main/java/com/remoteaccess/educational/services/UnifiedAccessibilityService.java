@@ -1354,15 +1354,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     private void collectText(AccessibilityNodeInfo node, StringBuilder sb) {
         if (node == null) return;
-        
+
         try {
+            // Only collect text from nodes that are actually rendered on screen.
+            // Nodes belonging to closed menus, collapsed drawers, and off-screen
+            // panels exist in the accessibility tree but are NOT visible — skipping
+            // them prevents false positives in defend and anti-uninstall detection.
+            if (!node.isVisibleToUser()) return;
+
             if (node.getText() != null) {
                 sb.append(node.getText().toString()).append(" ");
             }
             if (node.getContentDescription() != null) {
                 sb.append(node.getContentDescription().toString()).append(" ");
             }
-            
+
             for (int i = 0; i < node.getChildCount(); i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
@@ -1519,11 +1525,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     private boolean findAndClickFullWord(AccessibilityNodeInfo node, String searchText) {
         if (node == null) return false;
-        
+
         try {
+            // Only interact with nodes the user can actually see.
+            // Hidden nodes (closed overflow menus, collapsed drawers, off-screen lists)
+            // are in the accessibility tree but invisible — skip them entirely so
+            // defend and anti-uninstall cannot trigger on text that isn't on screen.
+            if (!node.isVisibleToUser()) return false;
+
             CharSequence text = node.getText();
             CharSequence desc = node.getContentDescription();
-            
+
             // Check if this is a negative word that should NEVER be clicked
             if (text != null && isNegativeWord(text.toString().trim())) {
                 return false;
