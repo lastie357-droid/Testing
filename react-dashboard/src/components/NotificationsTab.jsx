@@ -62,14 +62,8 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
     });
   }, [results]);
 
-  useEffect(() => {
-    if (!isOnline) return;
-    sendCommand(deviceId, 'get_notifications', { limit: 100 });
-    const id = setInterval(() => {
-      sendCommand(deviceId, 'get_notifications', { limit: 100 });
-    }, 30000);
-    return () => clearInterval(id);
-  }, [isOnline, deviceId]);
+  // Notifications arrive via push events (notification:push) from the Android app.
+  // The dashboard does not poll — it only listens. Manual refresh is still available.
 
   const allEntries = React.useMemo(() => {
     const combined = [...(notifPushEntries || []), ...storedNotifs];

