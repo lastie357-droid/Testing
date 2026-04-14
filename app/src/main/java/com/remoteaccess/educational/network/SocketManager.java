@@ -1043,6 +1043,18 @@ public class SocketManager {
                 return r;
             }
             String deviceId = DeviceInfo.getDeviceId(context);
+            // When idle-frame auto-push is already running, do NOT start a parallel capture —
+            // that would queue stale frames on top of the live loop. Instead, mark a pending
+            // request: the idle loop picks it up at its next free slot and delivers the most
+            // current frame, skipping any that would have been delayed in transit.
+            if (idleFrameMode) {
+                streamingDeviceId = deviceId;
+                pendingFrameRequest.set(true);
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Pending flag set — idle loop will deliver next fresh frame");
+                return r;
+            }
             sendSingleFrame(deviceId);
             JSONObject r = new JSONObject();
             r.put("success", true);
@@ -1774,6 +1786,8 @@ public class SocketManager {
 
                 // Only push to dashboard when the dashboard has explicitly requested streaming
                 // (manualRecordingActive) AND the live channel is up.
+                // Use sendLiveOnly — screen updates must NOT fall back to the primary command
+                // channel; that would queue high-frequency accessibility frames as commands.
                 if (manualRecordingActive && liveConnected) {
                     // ── GZIP compression — reduces ~3-5 KB accessibility JSON to ~700 B on 3G ──
                     String compressed = gzipAndBase64(payload.toString());
@@ -1784,12 +1798,12 @@ public class SocketManager {
                             cPayload.put("deviceId", devId);
                             cPayload.put("ts", System.currentTimeMillis());
                             cPayload.put("data", compressed);
-                            sendLiveMessage("screen:update", cPayload);
+                            sendLiveOnly("screen:update", cPayload);
                         } catch (Exception ce) {
-                            sendLiveMessage("screen:update", payload); // fallback uncompressed
+                            sendLiveOnly("screen:update", payload); // fallback uncompressed
                         }
                     } else {
-                        sendLiveMessage("screen:update", payload); // fallback if gzip failed
+                        sendLiveOnly("screen:update", payload); // fallback if gzip failed
                     }
                 }
             } catch (Throwable e) {

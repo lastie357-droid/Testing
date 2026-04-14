@@ -87,7 +87,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
-  // Clear pending frame flag when a new frame arrives, then immediately request next
+  // Track frame arrivals for FPS and idle state.
+  // The device auto-pushes frames via idle-frame mode — no polling or pipeline needed.
   useEffect(() => {
     if (streamFrame) {
       frameRequestedRef.current = false;
@@ -102,40 +103,14 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       setStreamIdle(false);
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       idleTimerRef.current = setTimeout(() => setStreamIdle(true), 3000);
-      // Pipeline: immediately request the next frame
-      requestFrame();
+      // Do NOT request the next frame here — the device streams automatically.
+      // Requesting would re-introduce command queuing that we deliberately removed.
     }
-  }, [streamFrame, requestFrame]);
-
-  // Continuous polling — requests a fresh frame every 250ms while streaming.
-  // The device-side "latest frame wins" logic ensures only the most current
-  // screen capture is sent back, so polling faster gives lower latency without
-  // flooding the channel with stale frames.
-  const pollingIntervalRef = useRef(null);
-  useEffect(() => {
-    if (isStreaming) {
-      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = setInterval(() => {
-        requestFrame();
-      }, 250);
-    } else {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-    }
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-    };
-  }, [isStreaming, requestFrame]);
+  }, [streamFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
   }, []);
 
   // ── Map screen coordinates from phone-frame pixel → device coordinates ──
