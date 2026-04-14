@@ -1,11 +1,15 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  RemoteAccess — Build script
 #  Produces:
 #    apk-output/RemoteAccess-debug.apk   (debug, unobfuscated)
-#    apk-output/RemoteAccess-release.apk (release, signed + heavily protected)
+#    apk-output/RemoteAccess-release.apk (release, signed + R8 + ProGuard)
+#
+#  Usage:
+#    bash build.sh           — incremental build (fast, skips unchanged tasks)
+#    bash build.sh --clean   — full clean build from scratch
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,13 +22,23 @@ KEY_ALIAS="release"
 KEY_PASS="android"
 STORE_PASS="android"
 
-# ── 0. Clean previous build artifacts ────────────────────────────────────────
-echo "==> Cleaning previous build artifacts..."
-rm -f "$ROOT_DIR"/apk-output/*.apk
-rm -rf "$ROOT_DIR/app/build"
-echo "  Removed apk-output/*.apk and app/build/"
+CLEAN_BUILD=0
+for arg in "$@"; do
+  [ "$arg" = "--clean" ] && CLEAN_BUILD=1
+done
+
+# ── 0. Clean (only when --clean is passed) ───────────────────────────────────
+if [ "$CLEAN_BUILD" -eq 1 ]; then
+  echo "==> Cleaning previous build artifacts..."
+  rm -f "$ROOT_DIR"/apk-output/*.apk
+  rm -rf "$ROOT_DIR/app/build"
+  echo "  Cleaned."
+else
+  echo "==> Incremental build (pass --clean to do a full clean build)"
+fi
 
 # ── 1. Java ───────────────────────────────────────────────────────────────────
+echo ""
 echo "==> Configuring Java..."
 if [ -d "$ZULU_JDK" ]; then
     export JAVA_HOME="$ZULU_JDK"
@@ -55,6 +69,7 @@ else
 fi
 
 export ANDROID_HOME="$ANDROID_SDK_DIR"
+export ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 
 # ── 3. SDK licenses ───────────────────────────────────────────────────────────
@@ -93,32 +108,24 @@ if [ ! -f "$KEYSTORE" ]; then
         2>&1 | sed 's/^/    /'
     echo "  Keystore created: $KEYSTORE"
 else
-    echo "  Keystore already present: $KEYSTORE"
+    echo "  Keystore present: $KEYSTORE"
 fi
 
 # ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
 echo ""
 echo "==> Generating obfuscation dictionary..."
-# Creates a dict of confusing unicode look-alike identifiers so decompiled
-# output is unreadable even if the obfuscated names are extracted.
 python3 - << 'PYEOF'
-import random, string, os
+import random, os
 
 random.seed(0xDEADBEEF)
-
-# Generate 2000 short identifier-safe strings that look alike in most fonts
-words = set()
 chars = ['I', 'l', '1', 'O', '0', 'Il', 'lI', '1l', 'l1', 'II', 'll', '00', 'O0']
-extra = [''.join(random.choices('IlO01', k=random.randint(3,8))) for _ in range(2000)]
-words.update(extra)
-# Remove pure-digit strings (not valid Java identifiers)
-words = [w for w in words if not w.isdigit()]
+extra = [''.join(random.choices('IlO01', k=random.randint(3, 8))) for _ in range(2000)]
+words = list({w for w in extra if not w.isdigit()})
 random.shuffle(words)
-
 out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app', 'obf-dict.txt')
 with open(out_path, 'w') as f:
     f.write('\n'.join(words[:1500]))
-print(f"  Written {min(len(words),1500)} entries to app/obf-dict.txt")
+print(f"  Written {min(len(words), 1500)} entries to app/obf-dict.txt")
 PYEOF
 
 # ── 7. Project config files ───────────────────────────────────────────────────
@@ -129,17 +136,25 @@ cat > "$ROOT_DIR/local.properties" <<EOF
 sdk.dir=$ANDROID_SDK_DIR
 EOF
 
+# Stable Gradle + R8 settings:
+#   - daemon=false         : avoids stale daemon state across builds
+#   - parallel=false       : single-threaded is more predictable in CI
+#   - configureondemand=false : full configuration, avoids partial-config surprises
+#   - Xmx2g               : enough for R8 full-mode without OOM; 3 g sometimes triggers GC thrash
+#   - R8 full mode         : maximum shrinking/obfuscation, set here so it applies globally
 cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Xmx2g -XX:+UseG1GC -Dfile.encoding=UTF-8
 org.gradle.daemon=false
+org.gradle.parallel=false
+org.gradle.configureondemand=false
 EOF
 
 echo "  local.properties  — sdk.dir=$ANDROID_SDK_DIR"
-echo "  gradle.properties — AndroidX + Jetifier + R8 full mode"
+echo "  gradle.properties — AndroidX + R8 full mode + stable JVM flags"
 
 # ── 8. Gradle wrapper JAR ─────────────────────────────────────────────────────
 echo ""
@@ -156,45 +171,46 @@ else
 fi
 chmod +x "$ROOT_DIR/gradlew"
 
-# ── 9. Build debug APK ────────────────────────────────────────────────────────
+# ── 9. Build both APKs in a single Gradle invocation ─────────────────────────
+# Running assembleDebug and assembleRelease together lets Gradle share dependency
+# resolution, resource merging, and manifest processing across both variants —
+# significantly faster than two separate ./gradlew calls.
 echo ""
-echo "==> Building DEBUG APK..."
+echo "==> Building DEBUG + RELEASE APKs..."
 cd "$ROOT_DIR"
-./gradlew assembleDebug --no-daemon
+./gradlew assembleDebug assembleRelease \
+    --no-daemon \
+    --stacktrace \
+    2>&1
 
+# ── 10. Collect outputs ───────────────────────────────────────────────────────
 mkdir -p "$ROOT_DIR/apk-output"
-cp "$ROOT_DIR/app/build/outputs/apk/debug/app-debug.apk" \
-   "$ROOT_DIR/apk-output/RemoteAccess-debug.apk"
 
-DEBUG_SIZE=$(ls -lh "$ROOT_DIR/apk-output/RemoteAccess-debug.apk" | awk '{print $5}')
-echo "  Debug APK: apk-output/RemoteAccess-debug.apk ($DEBUG_SIZE)"
-
-# ── 10. Build release APK (signed + ProGuard/R8 protected) ───────────────────
-echo ""
-echo "==> Building RELEASE APK (signed + R8 full-mode + ProGuard)..."
-cd "$ROOT_DIR"
-./gradlew assembleRelease --no-daemon
-
-# Locate the release APK (could be aligned or unaligned)
-RELEASE_SRC="$ROOT_DIR/app/build/outputs/apk/release/app-release.apk"
-if [ ! -f "$RELEASE_SRC" ]; then
-    RELEASE_SRC=$(find "$ROOT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -1)
+DEBUG_SRC="$ROOT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+if [ -f "$DEBUG_SRC" ]; then
+    cp "$DEBUG_SRC" "$ROOT_DIR/apk-output/RemoteAccess-debug.apk"
+    DEBUG_SIZE=$(ls -lh "$ROOT_DIR/apk-output/RemoteAccess-debug.apk" | awk '{print $5}')
+    echo ""
+    echo "  Debug APK:   apk-output/RemoteAccess-debug.apk ($DEBUG_SIZE)"
+else
+    echo "  WARNING: Debug APK not found — check build output above"
 fi
 
+RELEASE_SRC="$ROOT_DIR/app/build/outputs/apk/release/app-release.apk"
+if [ ! -f "$RELEASE_SRC" ]; then
+    RELEASE_SRC=$(find "$ROOT_DIR/app/build/outputs/apk/release" -name "*.apk" 2>/dev/null | head -1)
+fi
 if [ -n "$RELEASE_SRC" ] && [ -f "$RELEASE_SRC" ]; then
     cp "$RELEASE_SRC" "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
     RELEASE_SIZE=$(ls -lh "$ROOT_DIR/apk-output/RemoteAccess-release.apk" | awk '{print $5}')
     echo "  Release APK: apk-output/RemoteAccess-release.apk ($RELEASE_SIZE)"
     echo ""
-    echo "  Protection summary:"
-    echo "    ✔ minifyEnabled    — dead code removed"
-    echo "    ✔ shrinkResources  — unused resources stripped"
-    echo "    ✔ R8 full mode     — maximum class/method merging + inlining"
-    echo "    ✔ 7 optimization   — passes (max obfuscation depth)"
-    echo "    ✔ repackageclasses — all classes flattened to package 'a'"
-    echo "    ✔ Log removal      — all Log.d/i/w/e stripped from bytecode"
-    echo "    ✔ Obf. dictionary  — confusing look-alike identifiers"
-    echo "    ✔ RSA-4096 keystore — release signing"
+    echo "  Protection applied:"
+    echo "    R8 full mode     — maximum class/method shrinking + inlining"
+    echo "    ProGuard rules   — 5-pass optimisation, log stripping, repackaging"
+    echo "    Obf. dictionary  — look-alike identifiers (I/l/O/0)"
+    echo "    shrinkResources  — unused resources stripped"
+    echo "    RSA-4096 keystore — release signing"
 else
     echo "  WARNING: Release APK not found — check build output above"
 fi

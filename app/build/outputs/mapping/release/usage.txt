@@ -3076,9 +3076,7 @@ com.remoteaccess.educational.permissions.AutoPermissionManager:
     public void requestBatteryOptimization()
     public void requestNotificationPermission()
 com.remoteaccess.educational.security.LicenseManager
-com.remoteaccess.educational.security.StringEncrypt:
-    private void <init>()
-    public static java.lang.String e(java.lang.String,int)
+com.remoteaccess.educational.security.StringEncrypt
 com.remoteaccess.educational.services.RemoteAccessService:
     private static final java.lang.String CHANNEL_ID
     private static final int NOTIFICATION_ID
