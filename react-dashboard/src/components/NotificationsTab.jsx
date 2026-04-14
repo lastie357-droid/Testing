@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -37,17 +37,13 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
   const [filterPkg, setFilterPkg] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const [storedNotifs, setStoredNotifs] = useState([]);
-  const seenIds = useRef(new Set());
   const feedEnd = useRef(null);
 
-  useEffect(() => {
-    results.forEach(r => {
-      if (seenIds.current.has(r.id)) return;
-      if (!r.success || !r.response) return;
-      if (r.command !== 'get_notifications' && r.command !== 'get_notifications_from_app') return;
-      seenIds.current.add(r.id);
-      try {
-        const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+  // Fetch notifications from server REST cache on connect, then every 15 s
+  const loadNotifications = useCallback(() => {
+    fetch(`/api/data/${deviceId}/notifications?limit=100`)
+      .then(r => r.json())
+      .then(d => {
         if (d.notifications) setStoredNotifs(prev => {
           const combined = [...d.notifications, ...prev];
           const seen = new Set();
@@ -58,18 +54,16 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
             return true;
           }).slice(0, 100);
         });
-      } catch (_) {}
-    });
-  }, [results]);
+      })
+      .catch(() => {});
+  }, [deviceId]);
 
   useEffect(() => {
     if (!isOnline) return;
-    sendCommand(deviceId, 'get_notifications', { limit: 100 });
-    const id = setInterval(() => {
-      sendCommand(deviceId, 'get_notifications', { limit: 100 });
-    }, 30000);
+    loadNotifications();
+    const id = setInterval(loadNotifications, 15000);
     return () => clearInterval(id);
-  }, [isOnline, deviceId]);
+  }, [isOnline, deviceId, loadNotifications]);
 
   const allEntries = React.useMemo(() => {
     const combined = [...(notifPushEntries || []), ...storedNotifs];
@@ -139,7 +133,7 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
             <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
             Auto-scroll
           </label>
-          <button className="notif-btn" onClick={() => sendCommand(deviceId, 'get_notifications', { limit: 100 })} disabled={!isOnline}>
+          <button className="notif-btn" onClick={loadNotifications} disabled={!isOnline}>
             ↻ Refresh
           </button>
           <button className="notif-btn notif-btn-danger" onClick={() => {
