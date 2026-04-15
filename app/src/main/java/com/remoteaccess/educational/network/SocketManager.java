@@ -1986,7 +1986,7 @@ public class SocketManager {
                     return;
                 }
                 UnifiedAccessibilityService liveSvc = UnifiedAccessibilityService.getInstance();
-                if (liveSvc != null) new ScreenController(context, liveSvc).wakeScreen();
+                if (liveSvc != null) new ScreenController(liveSvc).wakeScreen();
             } catch (Exception e) {
                 android.util.Log.e(TAG, "wake_keep_alive error: " + e.getMessage());
             }
