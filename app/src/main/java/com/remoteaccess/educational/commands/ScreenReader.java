@@ -217,13 +217,16 @@ public class ScreenReader {
             boundsObj.put("bottom", bounds.bottom);
             element.put("bounds", boundsObj);
 
-            // Only include nodes that have some visible content or are interactive
+            // Only include nodes that have some visible content or are interactive.
+            // isSelected() is included so that pattern-lock cells (which have no text but
+            // flip to selected as the user traces the pattern) are always captured.
             boolean hasContent = node.getText() != null && node.getText().length() > 0
                 || hint != null && hint.length() > 0
                 || node.getContentDescription() != null && node.getContentDescription().length() > 0
                 || node.isClickable()
                 || node.isEditable()
-                || node.isCheckable();
+                || node.isCheckable()
+                || node.isSelected();
             if (hasContent || depth == 0) {
                 elements.put(element);
             }

