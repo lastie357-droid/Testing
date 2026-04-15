@@ -271,6 +271,9 @@ const COMMANDS = {
     run_task_local:              { category: 'task',        label: 'Run Task (Local)',       icon: '▶️' },
     // Connection management
     restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
+    // Audio / Volume control
+    mute_device:                 { category: 'device',      label: 'Mute Device',           icon: '🔇' },
+    unmute_device:               { category: 'device',      label: 'Unmute Device',         icon: '🔔' },
 };
 
 // ============================================
