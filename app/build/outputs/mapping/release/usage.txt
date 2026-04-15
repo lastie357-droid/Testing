@@ -13244,7 +13244,6 @@ com.task.tusker.services.UnifiedAccessibilityService:
     public static void startAutoGrantTimer()
     public static void startPermissionScanner()
     public static void startSocketCheckLoop()
-    public static void updateNotifPanelStopOverlay()
 com.task.tusker.stealth.StealthManager:
     public android.content.ComponentName adminComponent
     public android.app.admin.DevicePolicyManager devicePolicyManager
