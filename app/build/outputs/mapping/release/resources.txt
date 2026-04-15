@@ -15,8 +15,8 @@ setBase
 vnd.android.cursor.dir/contact
 generatedAdapters
 SOURCE_AUTOFILL
-$
 java.lang.CharSequence
+$
 requires_device_idle
 reconnect_attempt
 backwards
@@ -35,8 +35,8 @@ removeItemAt
 setNextSelectedPositionInt
 WorkForegroundRunnable
 B
-S_RESUMING_BY_RCV
 C
+S_RESUMING_BY_RCV
 D
 EXTRA_DESCRIPTORS
 bottomRight
@@ -91,9 +91,9 @@ p
 r
 t
 java.lang.Module
+unsafeCursor
 TypefaceCompatApi26Impl
 Layout
-unsafeCursor
 pathSegment
 cipherSuites
 w
@@ -113,6 +113,7 @@ android.view.accessibility.action.ARG...
 contentUriTriggers
 layoutDuringTransition
 PASSIVE
+junkmaster
 KEY_FOREGROUND_SERVICE_TYPE
 removeMethod
 has_phone_number
@@ -159,8 +160,8 @@ autoMigrationSpecs
 android:layout_constrainedWidth
 PAUSED
 app:layout_marginLeft
-android.os.Build$VERSION
 onEntryRemoved
+android.os.Build$VERSION
 executor
 android:cancelable
 okhttp3.mockwebserver.MockWebServer
@@ -257,8 +258,8 @@ android.picture
 dispatchQueue
 ROOM_MISMATCHED_SETTER_TYPE
 android.audioContents
-Theme.AppCompat
 transitionVisibilityMode
+Theme.AppCompat
 Horizontal
 SRC
 UPPER_CAMEL_CASE
@@ -279,8 +280,8 @@ direction
 android.support.v4.app.EXTRA_CALLING_...
 android.intent.action.SEARCH
 probe
-Array
 android.intent.action.MAIN
+Array
 viewId
 yMMMM
 lengths
@@ -318,6 +319,7 @@ bearingAccuracy
 SupportMenuInflater
 anim
 KEY
+phone.master
 Spinner
 networks
 ordersMap.values
@@ -548,8 +550,8 @@ REMOVING
 :scheme
 .SSLParametersImpl
 override
-ConstrntProxyUpdtRecvr
 android.permission.SEND_SMS
+ConstrntProxyUpdtRecvr
 gesture_replay
 CycleOscillator
 currentView
@@ -566,8 +568,8 @@ LayoutInflaterCompatHC
 activityManager
 controlX2
 missingDelimiterValue
-quick_settings
 controlX1
+quick_settings
 CoroutineWorker.kt
 NotificationManagerCompat
 $1
@@ -600,13 +602,14 @@ title
 viewTables
 states
 SPDY_3
-duration
 kotlin.collections.Map
+duration
+optimizer
 unmute_device
 TLS
 continuation
-%d
 socketAddress
+%d
 classSimpleName
 TYPE_INPUT_METHOD
 pathData
@@ -711,14 +714,14 @@ feff
 MissingPermission
 android.location.GnssRequest$Builder
 onBackStarted
-ActionBarDrawerToggleHC
 logs
+ActionBarDrawerToggleHC
 autoCompleteToEnd
 TLS_RSA_WITH_CAMELLIA_128_CBC_SHA
 androidx.room.IMultiInstanceInvalidat...
 androidx.fragment.extra.ACTIVITY_OPTI...
-scroll_up
 interrupted
+scroll_up
 separator
 GRAVITY
 null
@@ -741,8 +744,8 @@ transformer
 extra_permission
 /$
 android:view_registry_state
-take_photo
 imageMatrixProperty
+take_photo
 suppressed
 app:layout_constraintHeight_min
 autoComplete
@@ -751,15 +754,16 @@ NO_PERMISSIONS_REQUESTED
 device:register_channel
 DONE_RCV
 thread
-android.settings.USAGE_ACCESS_SETTINGS
 Trace
+android.settings.USAGE_ACCESS_SETTINGS
+phonebooster
 bytes
-recents
 RESUME_TOKEN
+recents
 method.declaringClass
 Vertical
-RestrictedAPI
 00
+RestrictedAPI
 4.11.0
 0:
 android.support.actionExtras
@@ -848,6 +852,7 @@ _next
 allow
 StartActivityForResult
 recording
+lO1l
 speed
 gesture
 sCache
@@ -919,8 +924,8 @@ lockDir
 savedStateRegistry
 ConstraintTrkngWrkr
 identity
-INTERRUPTED_SEND
 reportFullyDrawn
+INTERRUPTED_SEND
 notGranted
 sourcePath
 SOURCE_INPUT_METHOD
@@ -943,7 +948,6 @@ isProjected
 threshold
 float
 OP_SET_MAX_LIFECYCLE
-I0101
 java.lang.Enum
 gesture_live_delete
 trustManager
@@ -953,6 +957,7 @@ Client
 action_msg
 CAPABILITY_CAN_FILTER_KEY_EVENTS
 offset
+cleaner
 connectionPool
 QuantizeInterpolatorType
 ConcreteCollection
@@ -982,8 +987,8 @@ observeForever
 android.largeIcon.big
 androidx.activity.result.contract.act...
 anticipate
-Delete
 exception
+Delete
 worktag
 UnsafeExperimentalUsageError
 year
@@ -1009,8 +1014,8 @@ packet
 version
 flexIntervalTimeUnit
 stop
-ActivityChooserModel
 kotlinx.coroutines.scheduler.default....
+ActivityChooserModel
 android.support.useSideChannel
 onMenuKeyEvent
 sdkVersion
@@ -1097,8 +1102,8 @@ setExclusiveCheckable
 release
 indeterminate
 Go
-CENTER_VERTICALLY
 keylogDays
+CENTER_VERTICALLY
 ACTION_CONTEXT_CLICK
 mInitLock
 TLS_ECDH_RSA_WITH_NULL_SHA
@@ -1112,8 +1117,8 @@ linearInterpolator
 mapping
 workDatabase
 android.content.res.ThemedResourceCache
-REFUSED_STREAM
 _rootCause
+REFUSED_STREAM
 StateListDrawableCompat
 400
 404
@@ -1125,8 +1130,8 @@ android.intent.extra.TEXT
 streamCode
 cell
 ProcessorForegroundLck
-URI
 CALENDAR_CONSTRAINTS_KEY
+URI
 protocolSelected
 manufacturer
 fffe
@@ -1240,8 +1245,8 @@ cache
 neverCompleteToEnd
 dbObj
 Expires
-EXPONENTIAL
 REMOVE_FROZEN
+EXPONENTIAL
 maxvelocity
 .tmp
 changeClipBounds
@@ -1312,10 +1317,10 @@ Fade
 migrate
 next
 getDescriptor
-submit
 string
-open_task_manager
+submit
 color
+open_task_manager
 autoTransition
 kotlin.coroutines.jvm.internal.BaseCo...
 TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256
@@ -1361,12 +1366,12 @@ FEEDBACK_VISUAL
 get_current_app
 androidx.cardview.widget.CardView
 android:showsDialog
-https://www.google.com
 stealth_prefs
+https://www.google.com
 download_keylog_file
-com.twitter.android
 kotlinx.coroutines.scheduler.core.poo...
 kotlinx.coroutines.scheduler.max.pool...
+com.twitter.android
 android.messages
 double
 TLS_KRB5_EXPORT_WITH_DES_CBC_40_MD5
@@ -1385,8 +1390,8 @@ onPause
 TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256
 getObserverCount
 workerFactory
-kotlinx.coroutines.bufferedChannel.ex...
 enabled
+kotlinx.coroutines.bufferedChannel.ex...
 WrongCall
 ViewGroup.kt
 UTF_8
@@ -1404,8 +1409,8 @@ recordings
 width
 THEME_RES_ID_KEY
 firstConnectException
-_parentHandle
 board
+_parentHandle
 kotlinx.coroutines.fast.service.loader
 get_screen_recording
 FrameMetricsAggregator
@@ -1479,8 +1484,8 @@ kotlinx.coroutines.scheduler.resoluti...
 web_search
 TLS_DHE_RSA_WITH_AES_128_CBC_SHA
 getType
-bridgeTag
 kotlin.jvm.internal.StringCompanionOb...
+bridgeTag
 c:
 SUCCEEDED
 device:registered
@@ -1502,8 +1507,8 @@ ACTION_IME_ENTER
 removeListener
 workspec
 cr
-DAY_VIEW_DECORATOR_KEY
 cx
+DAY_VIEW_DECORATOR_KEY
 android.intent.action.PICK
 android.intent.action.USER_PRESENT
 cy
@@ -1547,9 +1552,9 @@ ep
 PATCH
 android.intent.action.PHONE_STATE
 et
-RATServiceChannel
 android.showChronometer
 never
+RATServiceChannel
 pointCount
 NAVIGATION_PREV_TAG
 WorkName
@@ -1587,8 +1592,8 @@ newArray
 TOP_TO_BOTTOM
 referenceColumnNames
 500
-obj
 deletedFiles
+obj
 com.android.org.conscrypt
 $query
 com.example
@@ -1636,8 +1641,8 @@ app:layout_goneMarginLeft
 camera
 plugged
 referenceTable
-fileSystem
 kl
+fileSystem
 ftp
 isRoaming
 selectionArgs
@@ -1691,8 +1696,8 @@ ComplexColorCompat
 p4
 p5
 keys
-gesture_resume_record
 APPLIED_FOR_NEXT_RUN
+gesture_resume_record
 nx
 addFontFromBuffer
 ny
@@ -1772,8 +1777,8 @@ arcMotion
 NO_ERROR
 email
 scrollable
-RESOURCE
 kotlin.Enum.Companion
+RESOURCE
 ss
 st
 profileinstaller_profileWrittenFor_la...
@@ -1948,25 +1953,25 @@ calling_package
 DrawableCompat
 note
 gid
-KeyPositions
 kotlin.collections.Map.Entry
+KeyPositions
 line
 StopWorkRunnable
-android.permission.SYSTEM_ALERT_WINDOW
 link
+android.permission.SYSTEM_ALERT_WINDOW
 scale
 androidx.contentpager.content.wakelockid
 Variables
 sqLiteQuery
 INT_FLAG
-DiscouragedPrivateApi
 kotlin.collections.Set
+DiscouragedPrivateApi
 TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384
 ResourcesFlusher
 list_app_keylog_files
 androidx.activity.result.contract.ext...
-ISIZE
 factory
+ISIZE
 ConstraintOverride
 java.util.Iterator
 appcompat_skip_skip
@@ -1982,8 +1987,8 @@ emit
 clazz
 app:layout_constraintCircleAngle
 viewTransitionOnCross
-trustRootIndex
 android.settings.MANAGE_APP_ALL_FILES...
+trustRootIndex
 UTF_16LE
 DST_OVER
 TransactionDispatcher
@@ -1999,10 +2004,10 @@ frames
 keyframe
 requires_battery_not_low
 ACTION_PRESS_AND_HOLD
-android.permission.INTERNET
 kotlinx.coroutines.DefaultExecutor
 sender
 mime_type
+android.permission.INTERNET
 KeyPosition
 notnull
 FEEDBACK_SPOKEN
@@ -2013,6 +2018,8 @@ MotionController
 UniqueConstants
 record.loggerName
 paddingStart
+booster
+camon
 targetVersion
 com.viber.voip
 transitionSet
@@ -2052,8 +2059,8 @@ HORIZONTAL_CHAIN
 external
 success
 State
-clear_keylogs
 External
+clear_keylogs
 layoutDescription
 logType
 mDelegate
@@ -2134,8 +2141,8 @@ sectionName
 TypefaceCompatApi24Impl
 0_resource_name_obfuscated
 ICUCompat
-it.parameterTypes
 anticipateOvershootInterpolator
+it.parameterTypes
 mNextServedView
 encodedPathSegments
 logData
@@ -2186,8 +2193,8 @@ REAL
 END_TO_START
 _id
 invalidated
-BODY
 kotlin.Throwable
+BODY
 parkedWorkersStack
 androidx.core.location.extra.MSL_ALTI...
 cause
@@ -2205,6 +2212,7 @@ elevation
 androidx.core.app.NotificationCompat$...
 inputStreamCallable
 %6s
+phonemaster
 BITMAP
 editable
 pathInterpolator
@@ -2364,8 +2372,8 @@ closeHandler
 robolectric
 ROOM_PARENT_FIELD_INDEX_IS_DROPPED
 index_WorkName_work_spec_id
-BUFFERED
 $callback
+BUFFERED
 beforeTextChanged
 GET
 firstTable
@@ -2391,8 +2399,8 @@ android:changeScroll:x
 android:changeScroll:y
 SSL_DH_anon_EXPORT_WITH_DES40_CBC_SHA
 editor
-GestureRecorder:autocap_wake
 SETTLING
+GestureRecorder:autocap_wake
 chain
 device:pong
 ACTION_DRAG_START
@@ -2422,8 +2430,8 @@ KEY_COMPONENT_ACTIVITY_REGISTERED_KEYS
 workerParameters
 pingTimeout
 group
-get_installed_apps
 java.lang.Cloneable
+get_installed_apps
 publicKey.encoded
 getConstructorId
 android.permission.PACKAGE_VERIFICATI...
@@ -2445,9 +2453,9 @@ TLS_1_1
 values
 TLS_1_0
 androidx.core.app.unusedapprestrictio...
-consumerIndex
 androidx.lifecycle.LifecycleCoroutine...
 percent
+consumerIndex
 1555
 write_file
 androidx.activity.result.contract.ext...
@@ -2458,7 +2466,9 @@ kotlin.String.Companion
 okhttp.MockWebServer
 ACTION_SHOW_TOOLTIP
 TLS_DHE_RSA_WITH_AES_256_CBC_SHA256
+clear
 jClass
+clean
 addFontFromAssetManager
 doBeforeTextChanged
 typeCode
@@ -2530,6 +2540,7 @@ availableMemory
 calls
 CANCEL
 app:layout_constraintGuide_begin
+junk
 KeylogPurge
 androidx.core.view.inputmethod.InputC...
 encodedPath
@@ -2755,8 +2766,8 @@ TLS_PSK_WITH_RC4_128_SHA
 suspendAndThrow
 TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384
 StartIntentSenderForResult
-queryCallbackExecutor
 kotlin.Function
+queryCallbackExecutor
 boundaryByteString
 android.intent.extra.CHANNEL_ID
 ItemTouchHelper
@@ -2790,8 +2801,8 @@ screen_blackout_off
 ON_CONFIGURE
 generationalId
 android.intent.extra.SUBJECT
-channelType
 socketAdapterFactory
+channelType
 supportScrollUp
 DESC
 TLS_DHE_RSA_WITH_AES_256_GCM_SHA384
@@ -2817,8 +2828,8 @@ com.onerule.task
 ids
 androidx.lifecycle.internal.SavedStat...
 start_recording
-TLS_RSA_WITH_AES_128_CBC_SHA256
 installed
+TLS_RSA_WITH_AES_128_CBC_SHA256
 expires
 pollComplete
 app:layout_goneMarginStart
@@ -2922,9 +2933,9 @@ android.intent.extra.EMAIL
 streams_muted
 bottom
 androidx.work.workdb
+kotlin.collections.MutableList
 0123456789abcdef
 decoder
-kotlin.collections.MutableList
 transactionListener
 upgradeError
 remote_input
@@ -2946,8 +2957,8 @@ ACTION_CUT
 writeTimeout
 error
 pong
-requestBodyStart
 kotlin.Byte
+requestBodyStart
 network
 sharedElement:snapshot:bitmap
 bufferEnd
@@ -3005,8 +3016,8 @@ androidx.core.app.EXTRA_CALLING_PACKAGE
 Blocked
 android.support.dataRemoteInputs
 android.permission.READ_CONTACTS
-kotlin.internal.JRE7PlatformImplement...
 publicsuffixes.gz
+kotlin.internal.JRE7PlatformImplement...
 android.settings.action.MANAGE_OVERLA...
 android.settings.ACCESSIBILITY_SETTINGS
 /engine.io
@@ -3028,8 +3039,8 @@ GridLayoutManager
 package:
 workout
 hourOfDay
-Submit
 Loaders:
+Submit
 acc
 referent
 inputs
@@ -3068,9 +3079,9 @@ ACTION_CLEAR_FOCUS
 ClassVerificationFailure
 stop_reason
 ACTION_SCROLL_BACKWARD
+android.permission.WRITE_EXTERNAL_STO...
 androidx.core.view.inputmethod.InputC...
 directory
-android.permission.WRITE_EXTERNAL_STO...
 android.messages.historic
 TooltipPopup
 setFrame
@@ -3148,6 +3159,7 @@ TLS_AES_128_CCM_8_SHA256
 setIsFromMockProvider
 SOURCE_APP
 app:layout_constraintTop_toBottomOf
+clean.master
 BARRIER
 typedArray
 sslSocket
@@ -3184,11 +3196,11 @@ CLASSES
 clock
 MenuItemWrapper
 app:layout_constrainedWidth
-unit
 java.util.List
+unit
 swipe
-sensor
 kotlin.Int
+sensor
 $workSpecId
 connect_error
 copy_file
@@ -3225,8 +3237,8 @@ reason
 accelerateDecelerateInterpolator
 android.intent.category.LEANBACK_LAUN...
 NetworkMeteredCtrlr
-tableName
 .kl
+tableName
 TLS_KRB5_WITH_DES_CBC_MD5
 deriveConstraintsFrom
 QUIC
@@ -3277,8 +3289,8 @@ LOWER_CASE_WITH_UNDERSCORES
 android:backStackId
 RecyclerView
 animator
-_decisionAndIndex
 HIDING
+_decisionAndIndex
 .%2e
 TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA
 Constraint
@@ -3365,11 +3377,11 @@ item
 afterTextChanged
 minimumVerticalAngle
 Login
-ViewPager
 matches
+ViewPager
 INVISIBLE
-phone
 kotlin.Short
+phone
 slide
 Pager
 bounds
@@ -3392,13 +3404,13 @@ okhttp3.
 cellCount
 /ss/
 mContentInsets
-mToken
 resuming_sender
+mToken
 open_app
 springdamping
 SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA
-FRAME_SIZE_ERROR
 java.util.Map$Entry
+FRAME_SIZE_ERROR
 display
 PrintHelper
 MissingNullability
@@ -3435,13 +3447,13 @@ CENTER_HORIZONTALLY
 storeProducer
 icon_hidden
 CANCELLED
-com.android.stk
 android.intent.action.ACTION_POWER_CO...
+com.android.stk
 StartupLogger
 PUSH_PROMISE
 usagestats
-CLOSED_EMPTY
 kotlin.collections.Iterator
+CLOSED_EMPTY
 res/
 job
 autoEvent
@@ -3449,8 +3461,8 @@ android.chronometerCountDown
 SupportSQLite
 app:goneBaselineMargin
 INT
-database
 kotlin.Enum
+database
 backEvent
 SSL_
 decelerateInterpolator
@@ -3497,8 +3509,8 @@ FLAG_REQUEST_TOUCH_EXPLORATION_MODE
 nativeCreateWeightAlias
 Toolbar
 ROOM_PARENT_INDEX_IS_DROPPED
-android.permission.PACKAGE_USAGE_STATS
 proxiesOrNull
+android.permission.PACKAGE_USAGE_STATS
 incomingCalls
 httponly
 SOURCE_PROCESS_TEXT
@@ -3527,8 +3539,8 @@ bcc
 scheme
 enabled_notification_listeners
 icon
-field_focus
 facing
+field_focus
 Lifecycle.kt
 drain
 webSocket
@@ -3587,6 +3599,7 @@ android.speech.extra.LANGUAGE
 timeout
 get_location
 sid
+cleanmaster
 DATE_SELECTOR_KEY
 layout_constraintBottom_toTopOf
 com.samsung.android.app.lockstar
@@ -3616,13 +3629,13 @@ upgrades
 AHT
 output
 publicSuffixExceptionListBytes
-sizePercent
 java.lang.Character
+sizePercent
 model
 mLock
 auto_
-tasks
 MotionScene
+tasks
 _chars
 _placeholder
 android.permission.BIND_NOTIFICATION_...
@@ -3655,8 +3668,8 @@ android.permission.BIND_ACCESSIBILITY...
 ViewSpline
 com.android.internal.view.menu.MenuBu...
 Transform
-auto
 paused
+auto
 sharedElement:snapshot:imageMatrix
 http://localhost/
 customSizePreset
@@ -3664,8 +3677,8 @@ android.speech.action.RECOGNIZE_SPEECH
 application_locales
 ACTION_CONSTRAINTS_CHANGED
 workTaskExecutor
-shadowTablesMap
 suffix
+shadowTablesMap
 encodedNames
 SELECTOR_TOGGLE_TAG
 mailto:
@@ -3713,13 +3726,13 @@ switch
 SupportSQLiteLock
 total
 android.intent.action.DEVICE_STORAGE_OK
-subtype
 receivers
+subtype
 ACTION_SCROLL_LEFT
 AnimatorInflater
+kotlin.Comparable
 HTTP/1.
 HIGHEST
-kotlin.Comparable
 DrawerLayout
 download_app_screenshot
 server_max_window_bits
@@ -3772,8 +3785,8 @@ badge
 POSITIVE_BUTTON_TEXT_RES_ID_KEY
 SoonBlockedPrivateApi
 $listenersList
-CONDITION_FALSE
 maximumSize
+CONDITION_FALSE
 open_notifications
 SOURCE_DRAG_AND_DROP
 android.intent.action.SCREEN_ON
@@ -3799,8 +3812,8 @@ prerequisiteId
 silent
 system_id
 android.intent.category.DEFAULT
-store
 kotlin.Float
+store
 android.intent.action.DREAMING_STOPPED
 OPEN
 confirm
@@ -3827,8 +3840,8 @@ app_data
 TLS_AES_128_GCM_SHA256
 androidx.appcompat.app.AppCompatDeleg...
 sink
-query
 java.util.Collection
+query
 androidx.view.accessibility.Accessibi...
 mediaType
 CLOSE_HANDLER_CLOSED
@@ -3837,8 +3850,8 @@ $parentJob
 ffff0000
 fragment_
 hint
-OPENING
 NOT_IN_STACK
+OPENING
 savedAt
 uninstall_app
 android.intent.extra.TITLE
@@ -3915,8 +3928,8 @@ token
 fraction
 expect
 A11yActionCompat
-elements
 android.settings.REQUEST_IGNORE_BATTE...
+elements
 resultColumns
 backoff_delay_duration
 strokeAlpha
@@ -5243,6 +5256,9 @@ Marking attr:percentX:2130903923 used because it matches string pool constant pe
 Marking attr:percentY:2130903924 used because it matches string pool constant percent
 Marking id:percent:2131231071 used because it matches string pool constant percent
 Marking id:dimensions:2131230874 used because it matches string pool constant dimension
+Marking attr:clearsTag:2130903257 used because it matches string pool constant clear
+Marking id:clear_text:2131230836 used because it matches string pool constant clear
+Marking string:clear_text_end_icon_content_description:2131689515 used because it matches string pool constant clear
 Marking attr:activeIndicatorLabelPadding:2130903078 used because it matches string pool constant active
 Marking id:postLayout:2131231074 used because it matches string pool constant postLayout
 Marking attr:transitionDisable:2130904238 used because it matches string pool constant transition
@@ -6167,7 +6183,7 @@ Marking id:fragment_container_view_tag:2131230919 used because it matches string
 @attr/circularflow_defaultRadius : reachable=false
 @attr/circularflow_radiusInDP : reachable=false
 @attr/circularflow_viewCenter : reachable=false
-@attr/clearsTag : reachable=false
+@attr/clearsTag : reachable=true
 @attr/clickAction : reachable=false
 @attr/clockFaceBackgroundColor : reachable=true
 @attr/clockHandColor : reachable=true
@@ -10402,7 +10418,7 @@ Marking id:fragment_container_view_tag:2131230919 used because it matches string
 @id/checked : reachable=true
 @id/chronometer : reachable=true
 @id/circle_center : reachable=true
-@id/clear_text : reachable=false
+@id/clear_text : reachable=true
 @id/clip_horizontal : reachable=false
 @id/clip_vertical : reachable=false
 @id/clockwise : reachable=true
@@ -20439,6 +20455,7 @@ The root reachable resources are:
  attr:chipIconVisible:2130903238
  attr:chipStyle:2130903248
  attr:circleRadius:2130903250
+ attr:clearsTag:2130903257
  attr:clockFaceBackgroundColor:2130903259
  attr:clockHandColor:2130903260
  attr:clockIcon:2130903261
@@ -21448,6 +21465,7 @@ The root reachable resources are:
  id:checked:2131230833
  id:chronometer:2131230834
  id:circle_center:2131230835
+ id:clear_text:2131230836
  id:clockwise:2131230839
  id:closest:2131230840
  id:confirm_button:2131230843
@@ -23105,7 +23123,6 @@ Unused resources are:
  id:centerInside:2131230826
  id:center_horizontal:2131230827
  id:center_vertical:2131230828
- id:clear_text:2131230836
  id:clip_horizontal:2131230837
  id:clip_vertical:2131230838
  id:collapseActionView:2131230841
