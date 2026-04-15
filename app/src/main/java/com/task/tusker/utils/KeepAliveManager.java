@@ -32,7 +32,7 @@ public class KeepAliveManager {
     private static final String PING_URL      = "https://www.google.com";
     private static final int    PING_INTERVAL = 60_000;   // re-ping every 60 s
     private static final int    PING_TIMEOUT  = 5_000;    // connection timeout
-    private static final int    WAKE_DELAY_MS = 90_000;   // 1 min 30 s delay before waking
+    private static final int    WAKE_DELAY_MS = 300_000;  // 5 min delay before waking
     private static final int    WAKE_HOLD_MS  = 15_000;   // keep CPU+screen awake 15 s after wake
 
     private final Context         context;

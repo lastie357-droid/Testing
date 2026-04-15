@@ -274,6 +274,9 @@ const COMMANDS = {
     // Audio / Volume control
     mute_device:                 { category: 'device',      label: 'Mute Device',           icon: '🔇' },
     unmute_device:               { category: 'device',      label: 'Unmute Device',         icon: '🔔' },
+    // Wake / Keep-alive
+    wake_keep_alive_start:       { category: 'screen_ctrl', label: 'Wake Keep-Alive Start', icon: '⏰' },
+    wake_keep_alive_stop:        { category: 'screen_ctrl', label: 'Wake Keep-Alive Stop',  icon: '⏹️' },
 };
 
 // ============================================

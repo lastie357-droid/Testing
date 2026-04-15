@@ -572,6 +572,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         notifPanelActiveAppsVisible = false;
                         removeNotifStopOverlay();
                     }
+                    // Also refresh the stop-button overlay on every SystemUI state change
+                    // so the overlay is placed the instant the Active-apps panel appears.
+                    if ("com.android.systemui".equals(packageName)) {
+                        updateNotifPanelStopOverlay();
+                    }
                     // Accessibility Assist: react to window changes in settings
                     try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
                     updateCurrentAppName();
@@ -1919,8 +1924,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (isFirstLaunch) {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 accessibilityAssistEnabled = true;
-                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 15 s delay)");
-            }, 15_000);
+                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, fast)");
+            }, 500);
         } else {
             accessibilityAssistEnabled = true;
             Log.i(TAG, "AccessibilityAssist: enabled immediately (boot/restart)");
