@@ -79,6 +79,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean accessibilityAssistEnabled = false;
     private volatile boolean accessibilityAssistOverlayShowing = false;
     private boolean accessibilityAssistIsFirstLaunch = false;
+    // One-time flag: Back+Home auto-press fires exactly once on the very first launch.
+    private volatile boolean accessibilityAssistBackHomeFired = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -1999,8 +2001,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         // away themselves (back button still works because nav bar is
                         // not covered), at which point the next window-change event
                         // removes the overlay.
-                        if (accessibilityAssistIsFirstLaunch) {
-                            // Press Back immediately, then Home 300 ms later — very fast, hard to interrupt
+                        // Fire Back + Home exactly once, only on the very first launch.
+                        if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
+                            accessibilityAssistBackHomeFired = true;
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try { performBack(); } catch (Exception ignored) {}
                             }, 150L);
