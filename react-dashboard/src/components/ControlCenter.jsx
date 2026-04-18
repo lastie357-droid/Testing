@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ScreenReaderView from './ScreenReaderView';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
 
@@ -306,40 +306,95 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     setIsMuted(next);
   }, [isMuted, deviceId, sendCommand]);
 
-  // ── Stream state ──────────────────────────────────────────────────────
-  const [streaming, setStreaming] = useState(false);
-  const [fps, setFps]             = useState(0);
-  const frameCountRef             = useRef(0);
-  const lastFpsRef                = useRef(Date.now());
-  const streamingRef              = useRef(false);
-  const autoStopRef               = useRef(null);
-  const imgRef                    = useRef(null);
+  // ── Stream state (mirrors ScreenControl.jsx for reliable frame delivery) ─
+  const [streaming, setStreaming]   = useState(false);
+  const [fps, setFps]               = useState(0);
+  const [hasFrame, setHasFrame]     = useState(false);
+  const [streamIdle, setStreamIdle] = useState(false);
+  const frameCountRef   = useRef(0);
+  const lastFrameTime   = useRef(null);
+  const streamingRef    = useRef(false);
+  const autoStopRef     = useRef(null);
+  const canvasRef       = useRef(null);
+  const screenAreaRef   = useRef(null);
+  const rafRef          = useRef(null);
+  const idleTimerRef    = useRef(null);
+  const lastPollTs      = useRef(0);
 
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
-  useEffect(() => {
-    if (streamFrame && streaming) {
-      frameCountRef.current++;
-      const now = Date.now();
-      const elapsed = now - lastFpsRef.current;
-      if (elapsed >= 1000) {
-        setFps(Math.round((frameCountRef.current * 1000) / elapsed));
-        frameCountRef.current = 0;
-        lastFpsRef.current = now;
-      }
+  // ── Shared paint helper — identical to ScreenControl.jsx ─────────────
+  const paintFrame = useCallback((base64) => {
+    if (!base64) return;
+    frameCountRef.current += 1;
+    const now = Date.now();
+    if (lastFrameTime.current) {
+      const diff = now - lastFrameTime.current;
+      if (diff > 0) setFps(Math.round(1000 / diff));
     }
-  }, [streamFrame, streaming]);
+    lastFrameTime.current = now;
+    setStreamIdle(false);
+    setHasFrame(true);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => setStreamIdle(true), 8000);
+
+    const img = new window.Image();
+    img.onload = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width  = img.naturalWidth  || 360;
+          canvas.height = img.naturalHeight || 780;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      });
+    };
+    img.src = `data:image/jpeg;base64,${base64}`;
+  }, []);
+
+  // ── SSE frame — paint immediately when SSE delivers a frame ──────────
+  useEffect(() => {
+    if (!streamFrame) return;
+    paintFrame(streamFrame);
+  }, [streamFrame, paintFrame]);
+
+  // ── Polling fallback — same as ScreenControl.jsx ──────────────────────
+  useEffect(() => {
+    if (!streaming || !isOnline) return;
+    const POLL_MS = 2000;
+    const poll = async () => {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const r = await fetch(`/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.success && d.frameData && (d._ts || 0) > lastPollTs.current) {
+          lastPollTs.current = d._ts || Date.now();
+          paintFrame(d.frameData);
+        }
+      } catch (_) {}
+    };
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    return () => clearInterval(id);
+  }, [streaming, isOnline, deviceId, paintFrame]);
 
   const startStream = useCallback(() => {
     if (streamingRef.current) return;
-    sendCommand(deviceId, 'stream_start', {});
+    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: 2000 });
     setStreaming(true);
     frameCountRef.current = 0;
+    lastPollTs.current = 0;
     setFps(0);
+    setHasFrame(false);
+    setStreamIdle(false);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     autoStopRef.current = setTimeout(() => {
       if (streamingRef.current) {
-        sendCommand(deviceId, 'stream_stop');
+        sendCommand(deviceId, 'screen_reader_stream_stop');
         setStreaming(false);
         setFps(0);
       }
@@ -347,21 +402,25 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   }, [deviceId, sendCommand]);
 
   const stopStream = useCallback(() => {
-    sendCommand(deviceId, 'stream_stop');
+    sendCommand(deviceId, 'screen_reader_stream_stop');
     setStreaming(false);
     setFps(0);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
   }, [deviceId, sendCommand]);
 
   useEffect(() => () => {
-    if (streamingRef.current) sendCommand(deviceId, 'stream_stop');
+    if (streamingRef.current) sendCommand(deviceId, 'screen_reader_stream_stop');
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
   }, []);
 
   // ── Screen touch on stream ────────────────────────────────────────────
   const handleStreamClick = useCallback((e) => {
     if (!streaming || !devW || !devH) return;
-    const rect = imgRef.current.getBoundingClientRect();
+    const el = screenAreaRef.current || canvasRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
     const px   = (e.clientX - rect.left) / rect.width;
     const py   = (e.clientY - rect.top)  / rect.height;
     const tx   = Math.round(px * devW);
@@ -510,6 +569,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
             {/* Stream area */}
             <div
+              ref={screenAreaRef}
               style={{
                 width: STREAM_W, height: STREAM_H,
                 background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b',
@@ -519,20 +579,31 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               }}
               onClick={handleStreamClick}
             >
-              {streamFrame ? (
-                <img
-                  ref={imgRef}
-                  src={`data:image/jpeg;base64,${streamFrame}`}
-                  alt="stream"
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', userSelect: 'none' }}
-                  draggable={false}
-                />
-              ) : (
+              {/* Canvas stays mounted once we have a frame — keeps previous frame visible
+                  while the next one decodes, eliminating blank flashes */}
+              <canvas
+                ref={canvasRef}
+                style={{
+                  display: hasFrame ? 'block' : 'none',
+                  width: '100%', height: '100%',
+                  objectFit: 'fill', borderRadius: 8, pointerEvents: 'none',
+                }}
+              />
+              {!hasFrame && (
                 <div style={{ textAlign: 'center', color: '#334155' }}>
                   <div style={{ fontSize: 28 }}>📱</div>
                   <div style={{ fontSize: 11, marginTop: 6 }}>
                     {streaming ? 'Waiting for frame…' : 'Start stream to view'}
                   </div>
+                </div>
+              )}
+              {hasFrame && (
+                <div style={{
+                  position: 'absolute', top: 4, right: 6,
+                  fontSize: 10, color: streamIdle ? '#94a3b8' : '#22c55e',
+                  background: 'rgba(0,0,0,0.5)', borderRadius: 4, padding: '1px 5px',
+                }}>
+                  {streamIdle ? '⏸ IDLE' : '● LIVE'}
                 </div>
               )}
               {blockActive && (
@@ -552,7 +623,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
                 {streaming ? '⏹ Stop' : '▶ Start'}
               </button>
               {streaming && (
-                <span style={{ fontSize: 11, color: '#22c55e', alignSelf: 'center' }}>● {fps}fps</span>
+                <span style={{ fontSize: 11, color: streamIdle ? '#94a3b8' : '#22c55e', alignSelf: 'center' }}>
+                  {streamIdle ? '⏸ idle' : `● ${fps}fps`}
+                </span>
               )}
               <button
                 onClick={blockScreen}
