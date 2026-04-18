@@ -232,6 +232,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     sendCommand(deviceId, 'stream_stop');
     setIsStreaming(false);
     isStreamingRef.current = false;
+    frameRequestedRef.current = false;
     setFps(0);
     setStreamIdle(false);
   };

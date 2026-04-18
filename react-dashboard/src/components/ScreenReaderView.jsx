@@ -16,8 +16,9 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
-  const screenRef     = useRef(null);
-  const touchStartRef = useRef(null);
+  const screenRef      = useRef(null);
+  const touchStartRef  = useRef(null);
+  const streamingRef   = useRef(false);
 
   const devW   = info.screenWidth  || 1080;
   const devH   = info.screenHeight || 2340;
@@ -63,12 +64,18 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     setStreaming(false);
   }, [deviceId, sendCommand]);
 
-  // Pause stream push on unmount — does NOT stop the device-side loop
+  // Keep ref in sync so the unmount cleanup can read the latest value without
+  // being listed as a dep (which would cause a spurious extra stop on every toggle).
+  useEffect(() => { streamingRef.current = streaming; }, [streaming]);
+
+  // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
+  // Using a ref instead of `streaming` in deps prevents this from firing a stop command
+  // every time the user clicks the Stop button (which already sends its own stop).
   useEffect(() => {
     return () => {
-      if (streaming) sendCommand(deviceId, 'screen_reader_stream_stop', {});
+      if (streamingRef.current) sendCommand(deviceId, 'screen_reader_stream_stop', {});
     };
-  }, [streaming, deviceId, sendCommand]);
+  }, [deviceId, sendCommand]);
 
   // If interval changes while streaming, re-start the stream (loop stays alive)
   useEffect(() => {

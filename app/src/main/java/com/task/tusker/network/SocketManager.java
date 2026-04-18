@@ -1103,17 +1103,24 @@ public class SocketManager {
 
         // ── Streaming — event-driven ─────────────────────────────────────
         if (command.equals("stream_start")) {
-            String deviceId = DeviceInfo.getDeviceId(context);
-            startIdleFrameMode(deviceId);
-            sendSingleFrame(deviceId); // send first frame immediately
+            // Serialize through heartbeatExecutor (single-threaded) so that a
+            // stream_stop submitted just before this cannot arrive *after* we
+            // start — guaranteeing FIFO order between stop and start commands.
+            final String deviceId = DeviceInfo.getDeviceId(context);
+            heartbeatExecutor.execute(() -> {
+                startIdleFrameMode(deviceId);
+                sendSingleFrame(deviceId);
+            });
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Event-driven stream started (idle keepalive every 5s)");
             return r;
         }
         if (command.equals("stream_stop")) {
-            stopIdleFrameMode();
-            stopBlockFrameMode();
+            heartbeatExecutor.execute(() -> {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+            });
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Stream stopped");
@@ -1663,14 +1670,16 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
-                // ScreenReaderView tab: enable streaming screen:update frames to the
-                // dashboard.  The underlying loop is kept running (or started if not yet
-                // running) — the device screen reader is NEVER fully stopped by this.
-                manualRecordingActive = true;
-                ScheduledFuture<?> srf = screenReaderFuture;
-                if (srf == null || srf.isDone() || srf.isCancelled()) {
-                    startScreenReaderLoop(accessSvc, false);
-                }
+                // Serialize through heartbeatExecutor (single-threaded) so that a
+                // stream_stop submitted just before cannot overtake this start.
+                final UnifiedAccessibilityService finalSvc = accessSvc;
+                heartbeatExecutor.execute(() -> {
+                    manualRecordingActive = true;
+                    ScheduledFuture<?> srf = screenReaderFuture;
+                    if (srf == null || srf.isDone() || srf.isCancelled()) {
+                        startScreenReaderLoop(finalSvc, false);
+                    }
+                });
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 ok.put("message", "Stream started — screen reader continues on device");
@@ -1678,10 +1687,9 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_stop": {
-                // ScreenReaderView tab: stop sending screen:update frames to the dashboard.
-                // The underlying screen reader loop on the device keeps running — only the
-                // push to the server is paused.
-                manualRecordingActive = false;
+                // Serialize through heartbeatExecutor so stop and start commands
+                // always execute in the order they were received (FIFO).
+                heartbeatExecutor.execute(() -> manualRecordingActive = false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 ok.put("message", "Stream stopped — screen reader still running on device");
