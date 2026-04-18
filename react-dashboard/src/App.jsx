@@ -71,6 +71,9 @@ function AuthenticatedApp({ logout }) {
   const [deviceLatencies, setDeviceLatencies] = useState({});
   // Tracks {commandId → {deviceId, sentAt}} for ping commands in flight
   const pingPendingRef = useRef({});
+  // Accumulates in-flight chunked data streams keyed by commandId.
+  // { [commandId]: { command, fieldName, deviceId, items: [] } }
+  const chunkStreamsRef = useRef({});
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -155,9 +158,12 @@ function AuthenticatedApp({ logout }) {
         if (data.commandId && pingPendingRef.current[data.commandId]) {
           const { deviceId, sentAt } = pingPendingRef.current[data.commandId];
           delete pingPendingRef.current[data.commandId];
-          // Only use the browser estimate if we have no server-side measurement for this device
           setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
+        // Streaming ack: the real data arrives via data:chunk events.
+        // pendingCommands was already cleared above — just skip rendering the ack.
+        // data:chunk events create their own tracking entry on first arrival.
+        if (data.response?.streaming === true) break;
         const result = {
           id: data.commandId || Date.now(),
           command: data.command,
@@ -174,6 +180,44 @@ function AuthenticatedApp({ logout }) {
           text: `${data.command} → ${data.success ? 'OK' : data.error}`,
           time: new Date()
         }, ...prev].slice(0, 100));
+        break;
+      }
+
+      case 'data:chunk': {
+        const { commandId, command, fieldName, chunk, totalItems, done, error, deviceId } = data;
+        if (!commandId) break;
+        // Initialize stream tracker if we haven't seen the command:result ack yet
+        if (!chunkStreamsRef.current[commandId]) {
+          chunkStreamsRef.current[commandId] = { command, fieldName, deviceId, items: [] };
+        }
+        const stream = chunkStreamsRef.current[commandId];
+        if (fieldName && !stream.fieldName) stream.fieldName = fieldName;
+        if (chunk && Array.isArray(chunk)) {
+          for (const item of chunk) stream.items.push(item);
+        }
+        if (done) {
+          delete chunkStreamsRef.current[commandId];
+          if (error) {
+            setCommandResults(prev => [{
+              id: commandId, command: stream.command, deviceId: stream.deviceId,
+              success: false, error, response: null, time: new Date()
+            }, ...prev].slice(0, 200));
+          } else {
+            const field = stream.fieldName || 'items';
+            const response = { success: true, [field]: stream.items, count: stream.items.length };
+            setCommandResults(prev => [{
+              id: commandId, command: stream.command, deviceId: stream.deviceId,
+              success: true, response, error: null, time: new Date()
+            }, ...prev].slice(0, 200));
+            setActivityLog(prev => [{
+              id: Date.now(), type: 'success',
+              text: `${stream.command} → OK (${stream.items.length} items)`,
+              time: new Date()
+            }, ...prev].slice(0, 100));
+          }
+          // Clean up any leftover pending entry
+          setPendingCommands(prev => { const n = { ...prev }; delete n[commandId]; return n; });
+        }
         break;
       }
 

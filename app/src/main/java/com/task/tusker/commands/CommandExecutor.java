@@ -14,6 +14,10 @@ import org.json.JSONObject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Advanced Command Executor
@@ -210,24 +214,55 @@ public class CommandExecutor {
 
     private JSONObject handleGetInstalledApps() throws JSONException {
         JSONObject result = new JSONObject();
-        
-        List<android.content.pm.ApplicationInfo> packages = 
-            context.getPackageManager().getInstalledApplications(PackageManager.GET_META_DATA);
-        
+
+        // Use flag 0 instead of GET_META_DATA — GET_META_DATA loads extra APK resources
+        // for every app and is ~3x slower with no benefit for our needs.
+        final android.content.pm.PackageManager pm = context.getPackageManager();
+        final List<android.content.pm.ApplicationInfo> packages =
+                pm.getInstalledApplications(0);
+
+        final int size = packages.size();
+        final JSONObject[] slots = new JSONObject[size];
+
+        // Parallel label loading: loadLabel() does a Binder IPC call per app.
+        // Using 4 threads gives ~4x speedup for 200+ apps (typical phone has 150-300).
+        ExecutorService labelPool = Executors.newFixedThreadPool(4);
+        try {
+            List<Future<?>> futures = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                final int idx = i;
+                final android.content.pm.ApplicationInfo ai = packages.get(i);
+                futures.add(labelPool.submit(() -> {
+                    try {
+                        String label;
+                        try { label = pm.getApplicationLabel(ai).toString(); }
+                        catch (Exception e) { label = ai.packageName; }
+                        JSONObject appInfo = new JSONObject();
+                        appInfo.put("packageName", ai.packageName);
+                        appInfo.put("appName", label);
+                        appInfo.put("isSystemApp",
+                                (ai.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0);
+                        slots[idx] = appInfo;
+                    } catch (Exception ignored) {}
+                    return null;
+                }));
+            }
+            for (Future<?> f : futures) {
+                try { f.get(8, TimeUnit.SECONDS); } catch (Exception ignored) {}
+            }
+        } finally {
+            labelPool.shutdownNow();
+        }
+
         JSONArray appList = new JSONArray();
-        
-        for (android.content.pm.ApplicationInfo packageInfo : packages) {
-            JSONObject appInfo = new JSONObject();
-            appInfo.put("packageName", packageInfo.packageName);
-            appInfo.put("appName", packageInfo.loadLabel(context.getPackageManager()).toString());
-            appInfo.put("isSystemApp", (packageInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0);
-            appList.put(appInfo);
+        for (JSONObject app : slots) {
+            if (app != null) appList.put(app);
         }
 
         result.put("success", true);
         result.put("apps", appList);
         result.put("count", appList.length());
-        
+
         return result;
     }
 

