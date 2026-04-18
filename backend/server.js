@@ -346,6 +346,8 @@ const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relay
 const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS to SSE clients
 /** @type {Map<string, Object>} Latest screen reader frame per device — polled by dashboard */
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
+/** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
+const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
 
 // ============================================
 // LOGGING HELPERS
@@ -677,6 +679,10 @@ async function processMessage(clientId, clientType, event, data) {
         const frameMsg = { deviceId, frameData, timestamp: now };
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
+
+        // Cache the latest JPEG frame so the dashboard can poll it even if SSE is unreliable.
+        latestStreamFrame.set(deviceId, { ...frameMsg, _ts: now });
+
         broadcastDash('stream:frame', frameMsg);
         return;
     }
@@ -992,6 +998,20 @@ app.get('/api/screen-reader/latest/:deviceId', (req, res) => {
     const data = latestScreenReaderData.get(deviceId);
     if (!data) return res.json({ success: false, hasData: false });
     res.json(data);
+});
+
+// ── Stream frame polling — dashboard polls this when SSE is unreliable ────────
+// Returns the latest JPEG stream frame cached from the Android device.
+app.get('/api/stream/latest/:deviceId', (req, res) => {
+    const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
+    if (!token || !global._adminTokens) return res.status(401).json({ success: false });
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false });
+
+    const { deviceId } = req.params;
+    const data = latestStreamFrame.get(deviceId);
+    if (!data) return res.json({ success: false, hasData: false });
+    res.json({ success: true, ...data });
 });
 
 // Recordings are stored ONLY on the Android device — no server-side recording endpoints.

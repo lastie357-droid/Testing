@@ -30,6 +30,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
+  const lastPollTs       = useRef(0);
 
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
@@ -86,26 +87,22 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
-  // Track frame arrivals and paint to canvas for flicker-free rendering.
-  // Drawing to canvas keeps the previous frame visible while the new one decodes —
-  // no blank flash, no layout reflow. Works well on 3G/4G where decode is slower.
-  useEffect(() => {
-    if (!streamFrame) return;
+  // ── Shared paint helper — paints a base64 JPEG onto the canvas ──
+  const paintFrame = useCallback((base64) => {
+    if (!base64) return;
     frameCountRef.current += 1;
     setFrameCount(frameCountRef.current);
     const now = Date.now();
     if (lastFrameTime.current) {
       const diff = now - lastFrameTime.current;
-      setFps(Math.round(1000 / diff));
+      if (diff > 0) setFps(Math.round(1000 / diff));
     }
     lastFrameTime.current = now;
     setStreamIdle(false);
     setHasFrame(true);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    // 8000ms idle timeout — tolerates 3G/4G where frames may take 3-6s to arrive
     idleTimerRef.current = setTimeout(() => setStreamIdle(true), 8000);
 
-    // Decode into an off-screen Image then paint to canvas in rAF — zero flicker
     const img = new window.Image();
     img.onload = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -113,7 +110,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        // Only resize canvas if dimensions changed (avoids clear flash)
         if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
           canvas.width  = img.naturalWidth  || 360;
           canvas.height = img.naturalHeight || 780;
@@ -121,9 +117,42 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       });
     };
-    img.src = `data:image/jpeg;base64,${streamFrame}`;
-    // Do NOT request the next frame here — the device streams automatically.
-  }, [streamFrame]);
+    img.src = `data:image/jpeg;base64,${base64}`;
+  }, []);
+
+  // ── SSE frame — paint immediately when a push frame arrives via SSE ──
+  useEffect(() => {
+    if (!streamFrame) return;
+    paintFrame(streamFrame);
+  }, [streamFrame, paintFrame]);
+
+  // ── Polling fallback — fetch latest frame from server at ~2s interval ──
+  // SSE can be unreliable through proxies; polling guarantees continuous updates
+  // even when SSE drops or the dashboard is restarted (mirrors how Screen Reader works).
+  useEffect(() => {
+    if (!isStreaming || !isOnline) return;
+    const POLL_MS = 2000;
+    const poll = async () => {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const r = await fetch(
+          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`
+        );
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.success && d.frameData) {
+          // Only paint if this is a newer frame than the last one we painted
+          if ((d._ts || 0) > lastPollTs.current) {
+            lastPollTs.current = d._ts || Date.now();
+            paintFrame(d.frameData);
+          }
+        }
+      } catch (_) {}
+    };
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    return () => clearInterval(id);
+  }, [isStreaming, isOnline, deviceId, paintFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
