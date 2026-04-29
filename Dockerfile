@@ -18,6 +18,6 @@ RUN mkdir -p /etc/frp
 COPY frps/frps.toml /etc/frp/frps.toml
 COPY frpc/frpc.toml /etc/frp/frpc.toml
 
-EXPOSE 7000 8080
+EXPOSE 8080
 
 CMD ["node", "/app/backend/server.js"]
