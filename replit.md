@@ -4,8 +4,14 @@
 Backend (Node/Express) + React/Vite dashboard + Android client. Backend runs on port 5000 (HTTP/SSE) and 6000 (TCP for devices). MongoDB for persistence, Redis optional.
 
 ## Workflows
-- **Backend Server**: `cd backend && npm install && npm run build && node server.js`
-- **APK Build**: `bash build.sh --worker` (polls backend for build jobs)
+- **Backend Server**: `cd backend && npm install --prefer-offline && npm run build && node server.js` — listens on 0.0.0.0:5000.
+- **APK Build**: `cd Apk-builder && BUILD_URL="${BUILD_URL:-http://localhost:5000}" BUILD_API_KEY="${BUILD_API_KEY:-${BUILD_API:-$BUILD_WORKER_API}}" bash build.sh --worker` — polls `/api/build/worker/poll`. Worker scripts live in `Apk-builder/`, NOT project root.
+
+## Captcha
+Disabled. `backend/utils/captcha.js → verifyCaptcha()` short-circuits to `return true`. The `<Captcha>` component was removed from `Login.jsx`, `UserLogin.jsx` (signin + register tabs), and `UserRegister.jsx`.
+
+## Build start guards (front-end)
+`react-dashboard/src/components/BuildApkTab.jsx` uses `submitting` state + optimistic `setRunning(true)` on click. The "Build APK" button is disabled when `running || submitting || !accessId`, label flips to "Starting…" / "Building…". Server-side `POST /api/build/apk` already returns 409 on duplicate per accessId, so the user cannot stop/restart an in-flight job.
 
 ## Key code paths
 - `backend/server.js` — main API, SSE, device TCP server.

@@ -1,5 +1,4 @@
-import React, { useState, useRef } from 'react';
-import Captcha from './Captcha.jsx';
+import React, { useState } from 'react';
 
 const COLORS = {
   bg: 'linear-gradient(135deg, #0a0a14 0%, #0f0f1e 50%, #0d1220 100%)',
@@ -31,12 +30,9 @@ export default function UserLogin({
   const [name, setName]         = useState('');
   const [confirm, setConfirm]   = useState('');
   const [accepted, setAccepted] = useState(false);
-  const [captcha, setCaptcha]   = useState('');
-  const [captchaId, setCaptchaId] = useState('');
   const [error, setError]       = useState('');
   const [success, setSuccess]   = useState('');
   const [loading, setLoading]   = useState(false);
-  const captchaRef = useRef(null);
 
   const switchTab = (t) => {
     setTab(t);
@@ -47,8 +43,6 @@ export default function UserLogin({
     setName('');
     setConfirm('');
     setAccepted(false);
-    setCaptcha('');
-    captchaRef.current?.refresh();
   };
 
   const handleSignIn = async (e) => {
@@ -59,7 +53,7 @@ export default function UserLogin({
       const res  = await fetch('/api/user-auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, captchaId, captcha }),
+        body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (data.success) {
@@ -68,13 +62,9 @@ export default function UserLogin({
         onLogin(data.user);
       } else {
         setError(data.error || 'Invalid credentials.');
-        captchaRef.current?.refresh();
-        setCaptcha('');
       }
     } catch {
       setError('Unable to reach server. Please try again.');
-      captchaRef.current?.refresh();
-      setCaptcha('');
     } finally {
       setLoading(false);
     }
@@ -91,7 +81,7 @@ export default function UserLogin({
       const res  = await fetch('/api/user-auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, licenseAccepted: true, captchaId, captcha }),
+        body: JSON.stringify({ name, email, password, licenseAccepted: true }),
       });
       const data = await res.json();
       if (data.success && data.token && data.user) {
@@ -100,13 +90,9 @@ export default function UserLogin({
         onLogin(data.user);
       } else {
         setError(data.error || 'Registration failed. Please try again.');
-        captchaRef.current?.refresh();
-        setCaptcha('');
       }
     } catch {
       setError('Unable to reach server. Please try again.');
-      captchaRef.current?.refresh();
-      setCaptcha('');
     } finally {
       setLoading(false);
     }
@@ -241,13 +227,6 @@ export default function UserLogin({
                 <Input type="password" value={password} onChange={e => setPassword(e.target.value)}
                   placeholder="Your password" required disabled={loading} autoComplete="current-password" />
               </Field>
-              <Captcha
-                ref={captchaRef}
-                value={captcha}
-                onChange={setCaptcha}
-                onIdChange={setCaptchaId}
-                disabled={loading}
-              />
               <Btn loading={loading}>Sign In</Btn>
             </form>
           )}
@@ -284,14 +263,6 @@ export default function UserLogin({
                 <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
                   placeholder="Repeat password" required disabled={loading} />
               </Field>
-
-              <Captcha
-                ref={captchaRef}
-                value={captcha}
-                onChange={setCaptcha}
-                onIdChange={setCaptchaId}
-                disabled={loading}
-              />
 
               <label style={{
                 display: 'flex',

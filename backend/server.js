@@ -134,7 +134,11 @@ const telegramSettings = {
 // the worker's curl request will not match if the comparison includes that
 // whitespace.
 const buildWorkerSettings = {
-    apiKey: (process.env.BUILD_WORKER_API_KEY || process.env.BUILD_API_KEY || '').trim(),
+    apiKey: (process.env.BUILD_WORKER_API_KEY
+          || process.env.BUILD_API_KEY
+          || process.env.BUILD_WORKER_API
+          || process.env.BUILD_API
+          || '').trim(),
 };
 
 // Payment / "Buy us a coffee" settings.
@@ -2655,7 +2659,7 @@ function _logBuildWorkerStatus() {
 
 // Initialize Redis first, then start HTTP server
 R.init().then(() => {
-    server.listen(HTTP_PORT, () => {
+    server.listen(HTTP_PORT, '0.0.0.0', () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);
@@ -2666,7 +2670,7 @@ R.init().then(() => {
     });
 }).catch((err) => {
     log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
-    server.listen(HTTP_PORT, () => {
+    server.listen(HTTP_PORT, '0.0.0.0', () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);

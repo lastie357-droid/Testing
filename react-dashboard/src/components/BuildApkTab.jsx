@@ -178,6 +178,7 @@ export default function BuildApkTab({ user }) {
 
   const [errors, setErrors]       = useState({});
   const [running, setRunning]     = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [logs, setLogs]           = useState([]);
   const [lastResult, setLastResult] = useState(null);
   const [accessId, setAccessId]   = useState(user?.accessId || '');
@@ -263,7 +264,15 @@ export default function BuildApkTab({ user }) {
   };
 
   const startBuild = async () => {
-    if (!validate() || running) return;
+    // Triple guard: reject if validation fails, if a build is already running,
+    // or if we're already in the middle of POSTing /api/build/apk. The button
+    // is also disabled in the JSX when any of these are true, but React state
+    // updates are async so a fast double-click could otherwise slip through.
+    if (!validate() || running || submitting) return;
+    setSubmitting(true);
+    // Optimistically lock the UI immediately — `running` won't flip until the
+    // POST returns, and the next status poll could be ~1.5s away.
+    setRunning(true);
     setLogs([]);
     setLastResult(null);
     setDownloads({ module: false, installer: false });
@@ -282,19 +291,23 @@ export default function BuildApkTab({ user }) {
       });
       const d = await r.json();
       if (!r.ok || !d.success) {
+        // Roll the optimistic lock back so the user can fix and retry.
+        setRunning(false);
         setLastResult({ success: false, error: d.error || 'Build request failed' });
         return;
       }
       if (d.accessId) setAccessId(d.accessId);
       setWorkerOnline(!!d.workerOnline);
-      setRunning(true);
       setLogs([
         d.workerOnline
           ? '▶ Build queued — waiting for worker to pick it up…'
           : '⚠ Build queued, but no build worker is currently online. It will start as soon as one connects.',
       ]);
     } catch (err) {
+      setRunning(false);
       setLastResult({ success: false, error: err.message });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -426,11 +439,12 @@ export default function BuildApkTab({ user }) {
 
         <div style={styles.btnRow}>
           <button
-            style={{ ...styles.buildBtn, ...(running || !accessId ? styles.buildBtnDisabled : {}) }}
+            style={{ ...styles.buildBtn, ...(running || submitting || !accessId ? styles.buildBtnDisabled : {}) }}
             onClick={startBuild}
-            disabled={running || !accessId}
+            disabled={running || submitting || !accessId}
+            title={running ? 'A build is already in progress — please wait for it to finish.' : ''}
           >
-            {running ? '⏳ Building…' : '🔨 Start Build'}
+            {submitting ? '⏳ Starting…' : (running ? '⏳ Building…' : '🔨 Start Build')}
           </button>
 
           {running   && <span style={styles.badge('#fbbf24')}>BUILDING</span>}

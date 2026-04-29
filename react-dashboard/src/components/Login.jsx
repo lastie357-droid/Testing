@@ -1,14 +1,10 @@
-import React, { useState, useRef } from 'react';
-import Captcha from './Captcha.jsx';
+import React, { useState } from 'react';
 
 export default function Login({ onLogin, onSwitchToUser }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [captcha, setCaptcha]   = useState('');
-  const [captchaId, setCaptchaId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const captchaRef = useRef(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -18,7 +14,7 @@ export default function Login({ onLogin, onSwitchToUser }) {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, captchaId, captcha }),
+        body: JSON.stringify({ username, password }),
       });
       const data = await res.json();
       if (data.success) {
@@ -26,11 +22,9 @@ export default function Login({ onLogin, onSwitchToUser }) {
         onLogin();
       } else {
         setError(data.error || 'Invalid credentials.');
-        captchaRef.current?.refresh();
       }
     } catch (err) {
       setError('Unable to reach server. Please try again.');
-      captchaRef.current?.refresh();
     } finally {
       setLoading(false);
     }
@@ -71,13 +65,6 @@ export default function Login({ onLogin, onSwitchToUser }) {
               placeholder="Enter password"
             />
           </div>
-          <Captcha
-            ref={captchaRef}
-            value={captcha}
-            onChange={setCaptcha}
-            onIdChange={setCaptchaId}
-            disabled={loading}
-          />
           {error && <div style={styles.error}>{error}</div>}
           <button type="submit" style={loading ? { ...styles.button, ...styles.buttonDisabled } : styles.button} disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}

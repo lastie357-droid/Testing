@@ -9,6 +9,7 @@ packages = ["netcat-gnu"]
 
 [[ports]]
 localPort = 5000
+externalPort = 80
 
 [[ports]]
 localPort = 6000
@@ -67,4 +68,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "BUILD_URL=${BUILD_URL:-http://localhost:5000} bash build.sh --worker"
+args = "cd Apk-builder && BUILD_URL=\"${BUILD_URL:-http://localhost:5000}\" BUILD_API_KEY=\"${BUILD_API_KEY:-${BUILD_API:-$BUILD_WORKER_API}}\" bash build.sh --worker"
