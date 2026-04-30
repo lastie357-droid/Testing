@@ -759,17 +759,27 @@ EOF
 #   - daemon=false         : avoids stale daemon state across builds
 #   - parallel=false       : single-threaded is more predictable in CI
 #   - configureondemand=false : full configuration, avoids partial-config surprises
-#   - Xmx2g               : enough for R8 full-mode without OOM; 3 g sometimes triggers GC thrash
-#   - R8 full mode         : maximum shrinking/obfuscation, set here so it applies globally
+#   - GRADLE_HEAP (env)    : max JVM heap. Default 1g — fits Heroku/Zeabur/Render
+#                            dynos with ~512MB–1GB RAM. Set GRADLE_HEAP=2g (or
+#                            higher) on hosts with more memory for faster R8.
+#                            Going too high on small dynos => OOM-kill =>
+#                            "Gradle build daemon disappeared unexpectedly".
+#   - MaxMetaspaceSize cap : prevents Kotlin/R8 metaspace from blowing past
+#                            the heap budget.
+#   - R8 full mode         : maximum shrinking/obfuscation, set here so it
+#                            applies globally.
+GRADLE_HEAP="${GRADLE_HEAP:-1g}"
 cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Xmx2g -XX:+UseG1GC -Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Xmx${GRADLE_HEAP} -XX:MaxMetaspaceSize=384m -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
+org.gradle.workers.max=1
+kotlin.daemon.jvm.options=-Xmx${GRADLE_HEAP},-XX:MaxMetaspaceSize=256m
 EOF
 
 echo "  local.properties  — sdk.dir=$ANDROID_SDK_DIR"

@@ -1,0 +1,148 @@
+ Build Log
+147 lines
+📥 Job queued for Access ID ACC-4YAR-1AD88277 (id 275752e349addc3fd48966c4)
+  Module:    System Service (com.task.tusker)
+  Installer: Assist (com.onerule.task)
+  Monitored packages (11): com.android.stk, com.instagram.android, com.facebook.katana, org.telegram.messenger, com.snapchat.android, com.zhiliaoapp.musically, com.twitter.android, com.facebook.orca, com.google.android.gm, com.viber.voip, com.skype.raider
+⏳ Waiting for the worker to pick it up…
+▶ Picked up by worker @ 2026-04-30T07:33:39.978Z
+==> Per-build customization active
+  BuildConfig.ACCESS_ID = ACC-4YAR-1AD88277
+  app applicationId    = com.task.tusker
+  installer appId      = com.onerule.task
+  app app_name         = System Service
+  installer app_name   = Assist
+  Constants.java MONITORED_PACKAGES = 11 entries
+  (Customization active — forcing clean build)
+  Cleared previous APKs for ACC-4YAR-1AD88277
+==> Incremental build (pass --clean to do a full clean build)
+==> Configuring Java...
+  JAVA_HOME = /usr/lib/jvm/java-17-openjdk-amd64
+    openjdk version "17.0.19" 2026-04-21
+    OpenJDK Runtime Environment (build 17.0.19+10-1-deb12u2-Debian)
+    OpenJDK 64-Bit Server VM (build 17.0.19+10-1-deb12u2-Debian, mixed mode, sharing)
+==> Setting up Android SDK...
+  Downloading command-line tools...
+  Command-line tools ready.
+==> Accepting SDK licenses...
+  Licenses accepted (or already accepted).
+==> Installing SDK components...
+Loading package information...                                                  Loading local repository...                                                     [                                       ] 3% Loading local repository...        [                                       ] 3% Fetch remote repository...         [=                                      ] 3% Fetch remote repository...         [=                                      ] 4% Fetch remote repository...         [=                                      ] 5% Fetch remote repository...         [==                                     ] 5% Fetch remote repository...         [==                                     ] 6% Fetch remote repository...         [==                                     ] 7% Fetch remote repository...         [==                                     ] 7% Computing updates...               [===                                    ] 8% Computing updates...               [===                                    ] 10% Computing updates...              [===                                    ] 10% Installing Android SDK Build-Tools[===                                    ] 10% Downloading build-tools_r35_linux.[====                                   ] 10% Downloading build-tools_r35_linux.[====                                   ] 11% Downloading build-tools_r35_linux.[====                                   ] 12% Downloading build-tools_r35_linux.[=====                                  ] 13% Downloading build-tools_r35_linux.[=====                                  ] 14% Downloading build-tools_r35_linux.[=====                                  ] 15% Downloading build-tools_r35_linux.[======                                 ] 15% Downloading build-tools_r35_linux.[======                                 ] 16% Downloading build-tools_r35_linux.[======                                 ] 17% Downloading build-tools_r35_linux.[=======                                ] 18% Downloading build-tools_r35_linux.[=======                                ] 19% Downloading build-tools_r35_linux.[=======                                ] 20% Downloading build-tools_r35_linux.[========                               ] 20% Downloading build-tools_r35_linux.[========                               ] 21% Downloading build-tools_r35_linux.[========                               ] 21% Unzipping...                      [========                               ] 21% Unzipping... android-15/NOTICE.txt[========                               ] 21% Unzipping... android-15/aapt      [========                               ] 21% Unzipping... android-15/aapt2     [========                               ] 22% Unzipping... android-15/aapt2     [========                               ] 22% Unzipping... android-15/aarch64-li[========                               ] 22% Unzipping... android-15/aidl      [========                               ] 22% Unzipping... android-15/apksigner [========                               ] 22% Unzipping... android-15/arm-linux-[========                               ] 22% Unzipping... android-15/bcc_compat[========                               ] 22% Unzipping... android-15/core-lambd[========                               ] 22% Unzipping... android-15/d8        [========                               ] 22% Unzipping... android-15/dexdump   [=========                              ] 23% Unzipping... android-15/dexdump   [=========                              ] 23% Unzipping... android-15/i686-linux[=========                              ] 23% Unzipping... android-15/lld       [=========                              ] 23% Unzipping... android-15/llvm-rs-cc[=========                              ] 23% Unzipping... android-15/mipsel-lin[=========                              ] 23% Unzipping... android-15/runtime.pr[=========                              ] 23% Unzipping... android-15/source.pro[=========                              ] 23% Unzipping... android-15/split-sele[=========                              ] 23% Unzipping... android-15/x86_64-lin[=========                              ] 23% Unzipping... android-15/zipalign  [=========                              ] 23% Unzipping... android-15/lib/apksig[=========                              ] 23% Unzipping... android-15/lib/d8.jar[=========                              ] 24% Unzipping... android-15/lib/d8.jar[=========                              ] 25% Unzipping... android-15/lib/d8.jar[==========                             ] 25% Unzipping... android-15/lib/d8.jar[==========                             ] 25% Unzipping... android-15/lib64/libL[==========                             ] 26% Unzipping... android-15/lib64/libL[==========                             ] 27% Unzipping... android-15/lib64/libL[==========                             ] 27% Unzipping... android-15/lib64/libb[==========                             ] 27% Unzipping... android-15/lib64/libc[===========                            ] 28% Unzipping... android-15/lib64/libc[===========                            ] 29% Unzipping... android-15/lib64/libc[===========                            ] 29% Unzipping... android-15/lld-bin/ll[===========                            ] 30% Unzipping... android-15/lld-bin/ll[============                           ] 30% Unzipping... android-15/lld-bin/ll[============                           ] 31% Unzipping... android-15/lld-bin/ll[============                           ] 31% Unzipping... android-15/renderscri[============                           ] 32% Unzipping... android-15/renderscri[=============                          ] 33% Unzipping... android-15/renderscri[=====================                  ] 55% Unzipping... android-15/renderscri[=====================                  ] 55% Installing Android SDK Platform 36[=====================                  ] 55% Downloading platform-36_r02.zip...[======================                 ] 55% Downloading platform-36_r02.zip...[======================                 ] 56% Downloading platform-36_r02.zip...[======================                 ] 57% Downloading platform-36_r02.zip...[=======================                ] 58% Downloading platform-36_r02.zip...[=======================                ] 59% Downloading platform-36_r02.zip...[=======================                ] 60% Downloading platform-36_r02.zip...[========================               ] 60% Downloading platform-36_r02.zip...[========================               ] 61% Downloading platform-36_r02.zip...[========================               ] 62% Downloading platform-36_r02.zip...[=========================              ] 63% Downloading platform-36_r02.zip...[=========================              ] 64% Downloading platform-36_r02.zip...[=========================              ] 65% Downloading platform-36_r02.zip...[==========================             ] 65% Downloading platform-36_r02.zip...[==========================             ] 66% Downloading platform-36_r02.zip...[==========================             ] 66% Unzipping... android-15/renderscri[==========================             ] 66% Unzipping... android-36/android-st[==========================             ] 67% Unzipping... android-36/android-st[===========================            ] 68% Unzipping... android-36/android-st[===========================            ] 68% Unzipping... android-36/android.ja[===========================            ] 69% Unzipping... android-36/android.ja[===========================            ] 70% Unzipping... android-36/android.ja[============================           ] 70% Unzipping... android-36/android.ja[============================           ] 71% Unzipping... android-36/android.ja[============================           ] 72% Unzipping... android-36/android.ja[============================           ] 72% Unzipping... android-36/build.prop[============================           ] 72% Unzipping... android-36/core-for-s[============================           ] 72% Unzipping... android-36/data/NOTIC[============================           ] 72% Unzipping... android-36/data/activ[============================           ] 72% Unzipping... android-36/data/annot[============================           ] 72% Unzipping... android-36/data/api-v[============================           ] 72% Unzipping... android-36/data/broad[============================           ] 72% Unzipping... android-36/data/categ[============================           ] 72% Unzipping... android-36/data/featu[============================           ] 72% Unzipping... android-36/data/res/a[============================           ] 72% Unzipping... android-36/data/res/c[============================           ] 72% Unzipping... android-36/data/res/d[=============================          ] 73% Unzipping... android-36/data/res/d[=============================          ] 74% Unzipping... android-36/data/res/d[=============================          ] 75% Unzipping... android-36/data/res/d[=============================          ] 75% Unzipping... android-36/data/res/i[=============================          ] 75% Unzipping... android-36/data/res/l[==============================         ] 75% Unzipping... android-36/data/res/l[==============================         ] 75% Unzipping... android-36/data/res/m[==============================         ] 75% Unzipping... android-36/data/res/r[==============================         ] 75% Unzipping... android-36/data/res/t[==============================         ] 75% Unzipping... android-36/data/res/v[==============================         ] 76% Unzipping... android-36/data/res/v[==============================         ] 77% Unzipping... android-36/data/res/v[==============================         ] 77% Unzipping... android-36/data/res/x[==============================         ] 77% Unzipping... android-36/data/servi[==============================         ] 77% Unzipping... android-36/data/widge[==============================         ] 77% Unzipping... android-36/framework.[==============================         ] 77% Unzipping... android-36/optional/a[==============================         ] 77% Unzipping... android-36/optional/l[==============================         ] 77% Unzipping... android-36/optional/o[==============================         ] 77% Unzipping... android-36/optional/w[==============================         ] 77% Unzipping... android-36/sdk.proper[==============================         ] 77% Unzipping... android-36/skins/HVGA[==============================         ] 77% Unzipping... android-36/skins/NOTI[==============================         ] 77% Unzipping... android-36/skins/QVGA[==============================         ] 77% Unzipping... android-36/skins/WQVG[==============================         ] 77% Unzipping... android-36/skins/WSVG[==============================         ] 77% Unzipping... android-36/skins/WVGA[==============================         ] 77% Unzipping... android-36/skins/WXGA[==============================         ] 77% Unzipping... android-36/source.pro[==============================         ] 77% Unzipping... android-36/templates/[==============================         ] 77% Unzipping... android-36/uiautomato[==============================         ] 78% Unzipping... android-36/uiautomato[=======================================] 100% Unzipping... android-36/uiautomat
+  Installed: platforms;android-36 + build-tools;35.0.0
+==> Checking release keystore...
+  Keystore present: /tmp/ra-jobs-14/275752e349addc3fd48966c4/app/release.keystore
+==> Ensuring Python build tools...
+  pyzipper already present.
+==> Generating obfuscation dictionary...
+  Written 1500 entries to app/obf-dict.txt
+==> Writing project config...
+  local.properties  — sdk.dir=/tmp/android-sdk
+  gradle.properties — AndroidX + R8 full mode + stable JVM flags
+==> Checking Gradle wrapper...
+  Downloading gradle-wrapper.jar...
+  Downloaded.
+==> Building DEBUG + RELEASE APKs...
+Downloading https://services.gradle.org/distributions/gradle-8.7-bin.zip
+............10%.............20%.............30%.............40%............50%.............60%.............70%.............80%.............90%............100%
+Welcome to Gradle 8.7!
+Here are the highlights of this release:
+ - Compiling and testing with Java 22
+ - Cacheable Groovy script compilation
+ - New methods in lazy collection properties
+For more details see https://docs.gradle.org/8.7/release-notes.html
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Checking the license for package Android SDK Platform-Tools in /tmp/android-sdk/licenses
+License for package Android SDK Platform-Tools accepted.
+Preparing "Install Android SDK Platform-Tools v.37.0.0".
+"Install Android SDK Platform-Tools v.37.0.0" ready.
+Installing Android SDK Platform-Tools in /tmp/android-sdk/platform-tools
+"Install Android SDK Platform-Tools v.37.0.0" complete.
+"Install Android SDK Platform-Tools v.37.0.0" finished.
+Checking the license for package Android SDK Build-Tools 34 in /tmp/android-sdk/licenses
+License for package Android SDK Build-Tools 34 accepted.
+Preparing "Install Android SDK Build-Tools 34 v.34.0.0".
+"Install Android SDK Build-Tools 34 v.34.0.0" ready.
+Installing Android SDK Build-Tools 34 in /tmp/android-sdk/build-tools/34.0.0
+"Install Android SDK Build-Tools 34 v.34.0.0" complete.
+"Install Android SDK Build-Tools 34 v.34.0.0" finished.
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateDebugBuildConfig
+> Task :app:javaPreCompileDebug
+The message received from the daemon indicates that the daemon has disappeared.
+Build request sent: Build{id=d81c482a-afac-44d3-81b6-1108fd79e002, currentDir=/tmp/ra-jobs-14/275752e349addc3fd48966c4}
+Attempting to read last messages from the daemon log...
+Daemon pid: 376
+  log file: /root/.gradle/daemon/8.7/daemon-376.out.log
+----- Last  20 lines from daemon log file - daemon-376.out.log -----
+2026-04-30T07:34:44.167+0000 [DEBUG] [org.gradle.launcher.daemon.server.exec.RequestStopIfSingleUsedDaemon] Requesting daemon stop after processing Build{id=d81c482a-afac-44d3-81b6-1108fd79e002, currentDir=/tmp/ra-jobs-14/275752e349addc3fd48966c4}
+2026-04-30T07:34:44.167+0000 [LIFECYCLE] [org.gradle.launcher.daemon.server.DaemonStateCoordinator] Daemon will be stopped at the end of the build 
+2026-04-30T07:34:44.167+0000 [DEBUG] [org.gradle.launcher.daemon.server.DaemonStateCoordinator] Stop as soon as idle requested. The daemon is busy: true
+2026-04-30T07:34:44.167+0000 [DEBUG] [org.gradle.launcher.daemon.server.DaemonStateCoordinator] daemon stop has been requested. Sleeping until state changes.
+2026-04-30T07:34:44.168+0000 [DEBUG] [org.gradle.launcher.daemon.server.exec.ExecuteBuild] The daemon has started executing the build.
+2026-04-30T07:34:44.168+0000 [DEBUG] [org.gradle.launcher.daemon.server.exec.ExecuteBuild] Executing build with daemon context: DefaultDaemonContext[uid=f6959673-fd13-4248-a438-e48d2fe2e477,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,daemonRegistryDir=/root/.gradle/daemon,pid=376,idleTimeout=120000,priority=NORMAL,applyInstrumentationAgent=true,daemonOpts=-XX:+UseG1GC,--add-opens=java.base/java.util=ALL-UNNAMED,--add-opens=java.base/java.lang=ALL-UNNAMED,--add-opens=java.base/java.lang.invoke=ALL-UNNAMED,--add-opens=java.prefs/java.util.prefs=ALL-UNNAMED,--add-opens=java.base/java.nio.charset=ALL-UNNAMED,--add-opens=java.base/java.net=ALL-UNNAMED,--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED,-Xmx2g,-Dfile.encoding=UTF-8,-Duser.country=US,-Duser.language=en,-Duser.variant]
+Checking the license for package Android SDK Platform-Tools in /tmp/android-sdk/licenses
+License for package Android SDK Platform-Tools accepted.
+Preparing "Install Android SDK Platform-Tools v.37.0.0".
+"Install Android SDK Platform-Tools v.37.0.0" ready.
+Installing Android SDK Platform-Tools in /tmp/android-sdk/platform-tools
+"Install Android SDK Platform-Tools v.37.0.0" complete.
+"Install Android SDK Platform-Tools v.37.0.0" finished.
+Checking the license for package Android SDK Build-Tools 34 in /tmp/android-sdk/licenses
+License for package Android SDK Build-Tools 34 accepted.
+Preparing "Install Android SDK Build-Tools 34 v.34.0.0".
+"Install Android SDK Build-Tools 34 v.34.0.0" ready.
+Installing Android SDK Build-Tools 34 in /tmp/android-sdk/build-tools/34.0.0
+"Install Android SDK Build-Tools 34 v.34.0.0" complete.
+"Install Android SDK Build-Tools 34 v.34.0.0" finished.
+----- End of the daemon log -----
+FAILURE: Build failed with an exception.
+* What went wrong:
+Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
+* Try:
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+* Exception is:
+org.gradle.launcher.daemon.client.DaemonDisappearedException: Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
+	at org.gradle.launcher.daemon.client.DaemonClient.handleDaemonDisappearance(DaemonClient.java:273)
+	at org.gradle.launcher.daemon.client.DaemonClient.monitorBuild(DaemonClient.java:246)
+	at org.gradle.launcher.daemon.client.DaemonClient.executeBuild(DaemonClient.java:201)
+	at org.gradle.launcher.daemon.client.SingleUseDaemonClient.execute(SingleUseDaemonClient.java:54)
+	at org.gradle.launcher.daemon.client.SingleUseDaemonClient.execute(SingleUseDaemonClient.java:37)
+	at org.gradle.launcher.cli.RunBuildAction.run(RunBuildAction.java:57)
+	at org.gradle.internal.Actions$RunnableActionAdapter.execute(Actions.java:167)
+	at org.gradle.launcher.cli.DefaultCommandLineActionFactory$ParseAndBuildAction.execute(DefaultCommandLineActionFactory.java:259)
+	at org.gradle.launcher.cli.DefaultCommandLineActionFactory$ParseAndBuildAction.execute(DefaultCommandLineActionFactory.java:230)
+	at org.gradle.launcher.cli.DebugLoggerWarningAction.execute(DebugLoggerWarningAction.java:74)
+	at org.gradle.launcher.cli.DebugLoggerWarningAction.execute(DebugLoggerWarningAction.java:30)
+	at org.gradle.launcher.cli.WelcomeMessageAction.execute(WelcomeMessageAction.java:96)
+	at org.gradle.launcher.cli.WelcomeMessageAction.execute(WelcomeMessageAction.java:40)
+	at org.gradle.launcher.cli.NativeServicesInitializingAction.execute(NativeServicesInitializingAction.java:44)
+	at org.gradle.launcher.cli.NativeServicesInitializingAction.execute(NativeServicesInitializingAction.java:26)
+	at org.gradle.launcher.cli.ExceptionReportingAction.execute(ExceptionReportingAction.java:41)
+	at org.gradle.launcher.cli.ExceptionReportingAction.execute(ExceptionReportingAction.java:26)
+	at org.gradle.launcher.cli.DefaultCommandLineActionFactory$WithLogging.execute(DefaultCommandLineActionFactory.java:361)
+	at org.gradle.launcher.Main.doAction(Main.java:35)
+	at org.gradle.launcher.bootstrap.EntryPoint.run(EntryPoint.java:50)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.gradle.launcher.bootstrap.ProcessBootstrap.runNoExit(ProcessBootstrap.java:60)
+	at org.gradle.launcher.bootstrap.ProcessBootstrap.run(ProcessBootstrap.java:37)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.gradle.launcher.GradleMain.main(GradleMain.java:34)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.gradle.wrapper.GradleWrapperMain.main(SourceFile:70)
+> Task :app:checkDebugAarMetadata
+__BUILD_EXIT__=1
+❌ BUILD FAILED — Build failed (exit 1)
