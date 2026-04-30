@@ -38,22 +38,31 @@ if [[ ! -d "$SRC_DIR" ]]; then
     exit 1
 fi
 
-# Authenticate via Authorization header rather than URL-embedded basic auth —
-# works for all GitHub token types (classic PAT, fine-grained PAT, GitHub App)
-# and avoids the "Password authentication is not supported" failure mode.
+# Authenticate via Authorization header, but fall back to URL-embedded token.
+# The Authorization header method (Bearer token) may fail with some repo permissions;
+# the URL method (token@) is more reliable for pushing to repos.
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 GIT_AUTH=(-c "http.extraHeader=${AUTH_HEADER}")
+AUTH_REMOTE="https://${TOKEN}@github.com/lastie357-droid/Apk-builder.git"
 
 WORK="$(mktemp -d -t apkpush.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "→ Cloning $REMOTE  (branch: $BRANCH)"
 GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" clone --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
-    # Branch may not exist yet on a fresh repo — fall back to default clone + create
-    echo "  branch '$BRANCH' missing or empty — falling back to default clone"
-    GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" clone "$REMOTE" "$WORK/repo"
-    ( cd "$WORK/repo" && git checkout -B "$BRANCH" )
+    # Try falling back to URL-embedded token auth if Bearer auth fails
+    echo "  Bearer auth failed — falling back to URL-embedded token"
+    GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$BRANCH" "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
 }
+
+# If clone still fails (e.g., branch doesn't exist), clone default and create branch.
+if [[ ! -d "$WORK/repo/.git" ]]; then
+    echo "  branch '$BRANCH' missing or empty — falling back to default clone"
+    GIT_TERMINAL_PROMPT=0 git clone "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
+        GIT_TERMINAL_PROMPT=0 git clone "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
+    }
+    ( cd "$WORK/repo" && git checkout -B "$BRANCH" )
+fi
 
 echo "→ Syncing $SRC_DIR/  →  repo/"
 # Wipe everything except .git, then copy the source tree on top.
@@ -91,7 +100,12 @@ echo "→ Committing ($CHANGES files changed)…"
 git commit -m "$COMMIT_MSG" >/dev/null
 
 echo "→ Pushing to $REMOTE  (branch: $BRANCH)"
-GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" push origin "$BRANCH"
+# Try Bearer auth first; fall back to URL-embedded token on failure.
+GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" push origin "$BRANCH" >/dev/null 2>&1 || {
+    echo "  Bearer auth push failed — retrying with URL-embedded token"
+    GIT_TERMINAL_PROMPT=0 git remote set-url origin "$AUTH_REMOTE"
+    GIT_TERMINAL_PROMPT=0 git push origin "$BRANCH"
+}
 
 NEW_SHA="$(git rev-parse HEAD)"
 echo
