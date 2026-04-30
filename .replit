@@ -68,4 +68,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd Apk-builder && BUILD_URL=\"${BUILD_URL:-http://localhost:5000}\" BUILD_API_KEY=\"${BUILD_API_KEY:-${BUILD_API:-$BUILD_WORKER_API}}\" bash build.sh --worker"
+args = "cd Apk-builder && BUILD_URL=\"http://localhost:5000\" BUILD_API_KEY=\"${BUILD_API_KEY:-${BUILD_API:-$BUILD_WORKER_API}}\" bash build.sh --worker"
