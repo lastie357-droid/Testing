@@ -1,0 +1,38 @@
+**/node_modules
+**/.git
+**/.cache
+**/.local
+**/.config
+**/.pythonlibs
+**/.venv
+**/.gradle
+**/build
+**/.idea
+**/.vscode
+
+# heavy/irrelevant for the dashboard image
+Apk-builder/
+apk-output/
+attached_assets/
+.agents/
+.github/
+
+# replit metadata
+.replit
+replit.nix
+replit.md
+
+# build artifact left from prior local builds
+backend/public/
+
+# misc
+*.log
+*.apk
+*.tar.gz
+gradlew
+gradlew.bat
+local.properties
+main.py
+pyproject.toml
+uv.lock
+bun.lock
