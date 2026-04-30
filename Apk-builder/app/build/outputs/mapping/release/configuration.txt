@@ -1,4 +1,4 @@
-# The proguard configuration file for the following section is /home/runner/workspace/app/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/app/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
 # This is a configuration file for ProGuard.
 # http://proguard.sourceforge.net/index.html#manual/usage.html
 #
@@ -89,8 +89,8 @@
 # These classes are duplicated between android.jar and core-lambda-stubs.jar.
 -dontnote java.lang.invoke.**
 
-# End of content from /home/runner/workspace/app/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
-# The proguard configuration file for the following section is /home/runner/workspace/app/proguard-rules.pro
+# End of content from /home/runner/workspace/Apk-builder/app/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/app/proguard-rules.pro
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Heavy ProGuard / R8 protection rules
 #  Obfuscates, shrinks, and optimises the release APK.
@@ -234,7 +234,7 @@
 -dontskipnonpubliclibraryclasses
 -dontskipnonpubliclibraryclassmembers
 
-# End of content from /home/runner/workspace/app/proguard-rules.pro
+# End of content from /home/runner/workspace/Apk-builder/app/proguard-rules.pro
 # The proguard configuration file for the following section is /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/proguard.txt
 # Preserve all Dexter classes and method names
 
@@ -692,7 +692,7 @@
 -dontwarn org.codehaus.mojo.animal_sniffer.*
 
 # End of content from /home/runner/.gradle/caches/transforms-4/38d2406d8378c0ddc98983199f101d65/transformed/rules/lib/META-INF/proguard/okio.pro
-# The proguard configuration file for the following section is /home/runner/workspace/app/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/app/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 -keep class androidx.core.app.CoreComponentFactory { <init>(); }
 -keep class androidx.profileinstaller.ProfileInstallReceiver { <init>(); }
 -keep class androidx.room.MultiInstanceInvalidationService { <init>(); }
@@ -807,7 +807,7 @@
 -keep class com.google.android.material.timepicker.TimePickerView { <init>(android.content.Context, android.util.AttributeSet); }
 
 
-# End of content from /home/runner/workspace/app/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
+# End of content from /home/runner/workspace/Apk-builder/app/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 # The proguard configuration file for the following section is <unknown>
 
 # End of content from <unknown>

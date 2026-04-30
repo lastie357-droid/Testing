@@ -38,17 +38,20 @@ if [[ ! -d "$SRC_DIR" ]]; then
     exit 1
 fi
 
-# Inject the token into the clone URL without echoing it.
-AUTH_REMOTE="$(printf '%s' "$REMOTE" | sed -E "s#^https://#https://x-access-token:${TOKEN}@#")"
+# Authenticate via Authorization header rather than URL-embedded basic auth —
+# works for all GitHub token types (classic PAT, fine-grained PAT, GitHub App)
+# and avoids the "Password authentication is not supported" failure mode.
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+GIT_AUTH=(-c "http.extraHeader=${AUTH_HEADER}")
 
 WORK="$(mktemp -d -t apkpush.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "→ Cloning $REMOTE  (branch: $BRANCH)"
-GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$BRANCH" "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
+GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" clone --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
     # Branch may not exist yet on a fresh repo — fall back to default clone + create
     echo "  branch '$BRANCH' missing or empty — falling back to default clone"
-    GIT_TERMINAL_PROMPT=0 git clone "$AUTH_REMOTE" "$WORK/repo"
+    GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" clone "$REMOTE" "$WORK/repo"
     ( cd "$WORK/repo" && git checkout -B "$BRANCH" )
 }
 
@@ -88,7 +91,7 @@ echo "→ Committing ($CHANGES files changed)…"
 git commit -m "$COMMIT_MSG" >/dev/null
 
 echo "→ Pushing to $REMOTE  (branch: $BRANCH)"
-GIT_TERMINAL_PROMPT=0 git push origin "$BRANCH"
+GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" push origin "$BRANCH"
 
 NEW_SHA="$(git rev-parse HEAD)"
 echo

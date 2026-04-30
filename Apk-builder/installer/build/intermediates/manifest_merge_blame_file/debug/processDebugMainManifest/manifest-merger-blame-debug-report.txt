@@ -10,11 +10,11 @@
 10
 11    <!-- Required to use PackageInstaller from a non-system installer. -->
 12    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-12-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:5:5-82
-12-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:5:22-80
+12-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:5:5-82
+12-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:5:22-80
 13    <uses-permission android:name="android.permission.INTERNET" />
-13-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:6:5-66
-13-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:6:22-64
+13-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:6:5-66
+13-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:6:22-64
 14
 15    <!--
 16         Android 11+ package visibility: without this, getPackageInfo /
@@ -22,19 +22,19 @@
 18         payload is installed. The package name is injected at build time.
 19    -->
 20    <queries>
-20-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:11:5-17:15
+20-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:11:5-17:15
 21        <package android:name="com.task.tusker" />
-21-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:12:18-50
+21-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:12:18-50
 22
 23        <intent>
-23-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:13:9-16:18
+23-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:13:9-16:18
 24            <action android:name="android.intent.action.MAIN" />
-24-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:14:13-64
-24-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:14:21-62
+24-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:14:13-64
+24-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:14:21-62
 25
 26            <category android:name="android.intent.category.LAUNCHER" />
-26-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:15:13-72
-26-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:15:23-70
+26-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:15:13-72
+26-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:15:23-70
 27        </intent>
 28    </queries>
 29
@@ -50,38 +50,38 @@
 34-->[androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
 35
 36    <application
-36-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:19:5-35:19
+36-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:19:5-35:19
 37        android:allowBackup="false"
-37-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:23:9-36
+37-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:23:9-36
 38        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 38-->[androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 39        android:debuggable="true"
 40        android:extractNativeLibs="false"
 41        android:icon="@mipmap/ic_launcher"
-41-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:21:9-43
+41-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:21:9-43
 42        android:label="@string/app_name"
-42-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:20:9-41
+42-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:20:9-41
 43        android:roundIcon="@mipmap/ic_launcher"
-43-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:22:9-48
+43-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:22:9-48
 44        android:theme="@android:style/Theme.Material.Light.NoActionBar" >
-44-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:24:9-72
+44-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:24:9-72
 45        <activity
-45-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:26:9-34:20
+45-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:26:9-34:20
 46            android:name="com.onerule.task.MainActivity"
-46-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:27:13-41
+46-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:27:13-41
 47            android:exported="true"
-47-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:28:13-36
+47-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:28:13-36
 48            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" >
-48-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:29:13-81
+48-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:29:13-81
 49            <intent-filter>
-49-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:30:13-33:29
+49-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:30:13-33:29
 50                <action android:name="android.intent.action.MAIN" />
-50-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:14:13-64
-50-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:14:21-62
+50-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:14:13-64
+50-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:14:21-62
 51
 52                <category android:name="android.intent.category.LAUNCHER" />
-52-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:15:13-72
-52-->/home/runner/workspace/installer/src/main/AndroidManifest.xml:15:23-70
+52-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:15:13-72
+52-->/home/runner/workspace/Apk-builder/installer/src/main/AndroidManifest.xml:15:23-70
 53            </intent-filter>
 54        </activity>
 55

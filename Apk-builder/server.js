@@ -59,7 +59,7 @@ function deriveBuildUrl() {
 
 const BUILD_URL = deriveBuildUrl();
 const BUILD_API_KEY = process.env.BUILD_API_KEY || "";
-const MAX_PARALLEL = parseInt(process.env.BUILD_MAX_PARALLEL || "5", 10) || 5;
+const MAX_PARALLEL = parseInt(process.env.BUILD_MAX_PARALLEL || "1", 10) || 1;
 
 const state = {
   workerPid: null,

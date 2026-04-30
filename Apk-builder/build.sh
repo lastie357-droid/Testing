@@ -31,6 +31,68 @@ for arg in "$@"; do
 done
 [ "${BUILD_WORKER_MODE:-0}" = "1" ] && WORKER_MODE=1
 
+# ── Bootstrap: install base OS packages on first run ─────────────────────────
+# The Dockerfile intentionally ships *only* a Node.js base image — every other
+# tool we need (JDK, python+pip, curl, unzip/zip, git, ca-certs) is installed
+# here on first cold start and then cached in the container's filesystem for
+# every subsequent job. This keeps the image build trivial and lets the worker
+# self-heal if something is missing (e.g. the host is a bare Debian VPS).
+#
+# The function is idempotent: each `command -v` check short-circuits the install
+# on warm starts, so the cost is a few millisecond `command -v` lookups, not an
+# apt round-trip.
+bootstrap_base_tools() {
+    local need=()
+    command -v curl     >/dev/null 2>&1 || need+=(curl ca-certificates)
+    command -v unzip    >/dev/null 2>&1 || need+=(unzip)
+    command -v zip      >/dev/null 2>&1 || need+=(zip)
+    command -v git      >/dev/null 2>&1 || need+=(git)
+    command -v python3  >/dev/null 2>&1 || need+=(python3 python3-pip)
+    command -v pip3     >/dev/null 2>&1 || need+=(python3-pip)
+    command -v find     >/dev/null 2>&1 || need+=(findutils)
+    # Java: any JDK ≥17 with `javac` (not just a JRE) on PATH or in
+    # /usr/lib/jvm/* is fine. The detailed resolver in section 1 below will
+    # pick the right JAVA_HOME from those candidates.
+    if ! command -v javac >/dev/null 2>&1 && \
+       ! ls /usr/lib/jvm/java-17-openjdk*/bin/javac >/dev/null 2>&1 && \
+       [ -z "${JAVA_HOME:-}" ]; then
+        need+=(openjdk-17-jdk-headless)
+    fi
+    [ "${#need[@]}" -eq 0 ] && return 0
+
+    # Only run apt on a real Debian/Ubuntu container. Replit's NixOS has a
+    # stub `apt-get` that prints a help message and exits non-zero — running
+    # it would kill the whole script.
+    if [ ! -f /etc/debian_version ] || [ -n "${REPL_ID:-}${REPLIT_DEV_DOMAIN:-}${REPLIT_DOMAINS:-}" ]; then
+        echo "  Bootstrap: not on a Debian container (or running on Replit/Nix) — skipping apt install of: ${need[*]}" >&2
+        return 0
+    fi
+    if ! command -v apt-get >/dev/null 2>&1; then
+        echo "  WARN: missing tools (${need[*]}) and no apt-get available — skipping bootstrap" >&2
+        return 0
+    fi
+    if [ "$(id -u 2>/dev/null || echo 0)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
+        echo "  WARN: not root and no sudo — cannot install ${need[*]}" >&2
+        return 0
+    fi
+    local SUDO=""
+    [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+
+    echo "==> Bootstrap: installing base tools: ${need[*]}"
+    export DEBIAN_FRONTEND=noninteractive
+    if ! $SUDO apt-get update -qq 2>&1; then
+        echo "  WARN: apt-get update failed — continuing without bootstrap" >&2
+        return 0
+    fi
+    if ! $SUDO apt-get install -y --no-install-recommends "${need[@]}" 2>&1; then
+        echo "  WARN: apt-get install failed for: ${need[*]}" >&2
+        return 0
+    fi
+    $SUDO rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+    echo "  Bootstrap done."
+}
+bootstrap_base_tools
+
 if [ "$WORKER_MODE" -eq 1 ]; then
     set +e   # don't let pipeline failures kill the long-running loop
 
@@ -75,9 +137,9 @@ if [ "$WORKER_MODE" -eq 1 ]; then
     # /tmp/ra-job-<JOB_ID>, so jobs cannot clobber each other's strings.xml,
     # Constants.java, build/ outputs, or apk-output/. Up to MAX_PARALLEL
     # builds run simultaneously.
-    MAX_PARALLEL="${BUILD_MAX_PARALLEL:-5}"
+    MAX_PARALLEL="${BUILD_MAX_PARALLEL:-1}"
     case "$MAX_PARALLEL" in
-        ''|*[!0-9]*) MAX_PARALLEL=5 ;;
+        ''|*[!0-9]*) MAX_PARALLEL=1 ;;
     esac
     [ "$MAX_PARALLEL" -lt 1 ] && MAX_PARALLEL=1
 
@@ -411,7 +473,7 @@ fi
 
 # ─── Single-build mode (used directly OR via the worker loop above) ─────────
 
-ANDROID_SDK_DIR="/tmp/android-sdk"
+ANDROID_SDK_DIR="${ANDROID_SDK_DIR:-${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/tmp/android-sdk}}}"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
 ZULU_JDK="/nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1"
@@ -759,27 +821,19 @@ EOF
 #   - daemon=false         : avoids stale daemon state across builds
 #   - parallel=false       : single-threaded is more predictable in CI
 #   - configureondemand=false : full configuration, avoids partial-config surprises
-#   - GRADLE_HEAP (env)    : max JVM heap. Default 1g — fits Heroku/Zeabur/Render
-#                            dynos with ~512MB–1GB RAM. Set GRADLE_HEAP=2g (or
-#                            higher) on hosts with more memory for faster R8.
-#                            Going too high on small dynos => OOM-kill =>
-#                            "Gradle build daemon disappeared unexpectedly".
-#   - MaxMetaspaceSize cap : prevents Kotlin/R8 metaspace from blowing past
-#                            the heap budget.
-#   - R8 full mode         : maximum shrinking/obfuscation, set here so it
-#                            applies globally.
-GRADLE_HEAP="${GRADLE_HEAP:-1g}"
+#   - Xmx2g               : enough for R8 full-mode without OOM; 3 g sometimes triggers GC thrash
+#   - R8 full mode         : maximum shrinking/obfuscation, set here so it applies globally
 cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Xmx${GRADLE_HEAP} -XX:MaxMetaspaceSize=384m -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Xmx640m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -Dfile.encoding=UTF-8
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
 org.gradle.workers.max=1
-kotlin.daemon.jvm.options=-Xmx${GRADLE_HEAP},-XX:MaxMetaspaceSize=256m
+kotlin.daemon.jvmargs=-Xmx512m
 EOF
 
 echo "  local.properties  — sdk.dir=$ANDROID_SDK_DIR"

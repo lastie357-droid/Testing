@@ -1,4 +1,4 @@
-# The proguard configuration file for the following section is /home/runner/workspace/installer/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/installer/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
 # This is a configuration file for ProGuard.
 # http://proguard.sourceforge.net/index.html#manual/usage.html
 #
@@ -89,8 +89,8 @@
 # These classes are duplicated between android.jar and core-lambda-stubs.jar.
 -dontnote java.lang.invoke.**
 
-# End of content from /home/runner/workspace/installer/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
-# The proguard configuration file for the following section is /home/runner/workspace/installer/proguard-rules.pro
+# End of content from /home/runner/workspace/Apk-builder/installer/build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.5.2
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/installer/proguard-rules.pro
 -optimizationpasses 5
 -allowaccessmodification
 -repackageclasses ''
@@ -113,7 +113,7 @@
 -keep class net.lingala.zip4j.** { *; }
 -dontwarn net.lingala.zip4j.**
 
-# End of content from /home/runner/workspace/installer/proguard-rules.pro
+# End of content from /home/runner/workspace/Apk-builder/installer/proguard-rules.pro
 # The proguard configuration file for the following section is /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/proguard.txt
 # Never inline methods, but allow shrinking and obfuscation.
 -keepclassmembernames,allowobfuscation,allowshrinking class androidx.core.view.ViewCompat$Api* {
@@ -255,13 +255,13 @@
 # An annotation used for build tooling, won't be directly accessed.
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
 # End of content from /home/runner/.gradle/caches/transforms-4/008d376f9329195e77e373b9ca06feeb/transformed/rules/lib/META-INF/com.android.tools/r8/coroutines.pro
-# The proguard configuration file for the following section is /home/runner/workspace/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
+# The proguard configuration file for the following section is /home/runner/workspace/Apk-builder/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 -keep class androidx.core.app.CoreComponentFactory { <init>(); }
 -keep class androidx.profileinstaller.ProfileInstallReceiver { <init>(); }
 -keep class androidx.startup.InitializationProvider { <init>(); }
 -keep class com.onerule.task.MainActivity { <init>(); }
 
-# End of content from /home/runner/workspace/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
+# End of content from /home/runner/workspace/Apk-builder/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 # The proguard configuration file for the following section is <unknown>
 
 # End of content from <unknown>

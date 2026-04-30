@@ -1,6 +1,6 @@
 <lint-module
     format="1"
-    dir="/home/runner/workspace/installer"
+    dir="/home/runner/workspace/Apk-builder/installer"
     name=":installer"
     type="APP"
     maven="RemoteAccess:installer:unspecified"
