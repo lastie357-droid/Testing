@@ -1528,6 +1528,17 @@ const BUILD_OUTPUT_ROOT = path.join(__dirname, '..', 'apk-output');
 const BUILD_JOBS_MAX_LINES = 4000;
 const BUILD_JOBS_RECENT_KEEP = 50;
 const BUILD_WORKER_OFFLINE_MS = 30000;
+// Watchdog: if an active job goes this long without ANY activity from the
+// worker (no log line, no upload, no complete) AND the worker has not been
+// seen polling either, mark the job failed and free the slot so the
+// dashboard's "Build APK" button unlocks instead of staying spun forever.
+const BUILD_JOB_STALL_MS = 120000;          // 2 minutes
+// Watchdog tick interval — checked frequently enough that a stalled job is
+// surfaced to the user well under a minute after the 2-min threshold trips.
+const BUILD_JOB_WATCHDOG_TICK_MS = 15000;
+// If a job sits in `pending` (no worker has picked it up) longer than this
+// AND no worker is online, fast-fail it instead of locking the dashboard.
+const BUILD_JOB_PENDING_NO_WORKER_MS = 60000; // 1 minute
 
 const buildJobs = [];          // pending  (FIFO)
 let   activeBuildJob = null;   // currently running on a worker
@@ -1576,6 +1587,7 @@ function dispatchNextJobToWorker(res) {
     const job = buildJobs.shift();
     job.status = 'running';
     job.startedAt = Date.now();
+    job.lastActivityAt = Date.now();
     activeBuildJob = job;
     pushJobLine(job, `▶ Picked up by worker @ ${new Date().toISOString()}`);
     res.json({
@@ -1592,6 +1604,72 @@ function dispatchNextJobToWorker(res) {
         },
     });
 }
+
+// ── Watchdog ─────────────────────────────────────────────────────────────
+// Two failure modes the watchdog covers:
+//
+//   1. The worker accepted a job and then died / lost connectivity. The job
+//      sits "running" forever; the dashboard's Build APK button stays locked;
+//      the user can't queue another build. Fix: if `lastActivityAt` is older
+//      than BUILD_JOB_STALL_MS, mark the job failed and free the slot.
+//
+//   2. The user pressed Build APK while no worker was online (or the worker
+//      went away after the queue notification). Job sits in `pending`
+//      indefinitely. Fix: if a pending job is older than
+//      BUILD_JOB_PENDING_NO_WORKER_MS and the worker is still offline,
+//      fail it so the UI unlocks instead of pretending we're "queued".
+function _failJob(job, errorMsg) {
+    if (!job) return;
+    job.status     = 'failed';
+    job.success    = false;
+    job.error      = errorMsg;
+    job.finishedAt = Date.now();
+    pushJobLine(job, '');
+    pushJobLine(job, `❌ BUILD FAILED — ${errorMsg}`);
+    if (job.sseId) sseSend(job.sseId, 'build:done', {
+        jobId: job.id, success: false, accessId: job.accessId,
+        durationMs: job.finishedAt - (job.startedAt || job.createdAt), error: errorMsg,
+    });
+    if (activeBuildJob && activeBuildJob.id === job.id) activeBuildJob = null;
+    recentBuildJobs.unshift(job);
+    if (recentBuildJobs.length > BUILD_JOBS_RECENT_KEEP) recentBuildJobs.pop();
+}
+
+function _runBuildWatchdog() {
+    try {
+        // (1) stalled active job
+        if (activeBuildJob) {
+            const stallMs = Date.now() - (activeBuildJob.lastActivityAt || activeBuildJob.startedAt || activeBuildJob.createdAt);
+            if (stallMs > BUILD_JOB_STALL_MS) {
+                const stalledJob = activeBuildJob;
+                log('BUILD', `Watchdog: active job ${stalledJob.id} (accessId=${stalledJob.accessId}) had no worker activity for ${Math.round(stallMs / 1000)}s — failing and freeing the slot`, 'warn');
+                _failJob(stalledJob, `Build worker stopped responding (no updates for ${Math.round(stallMs / 1000)}s). Your build was dropped — please try again.`);
+                // Hand the next pending job (if any) to a waiting worker.
+                notifyWorkerLongPollers();
+            }
+        }
+        // (2) pending jobs with no worker online
+        if (!workerOnline() && buildJobs.length > 0) {
+            const stillPending = [];
+            for (const job of buildJobs) {
+                const ageMs = Date.now() - job.createdAt;
+                if (ageMs > BUILD_JOB_PENDING_NO_WORKER_MS) {
+                    log('BUILD', `Watchdog: pending job ${job.id} (accessId=${job.accessId}) waited ${Math.round(ageMs / 1000)}s with no worker online — failing it`, 'warn');
+                    _failJob(job, `No build worker came online within ${Math.round(BUILD_JOB_PENDING_NO_WORKER_MS / 1000)}s. Your build was dropped — please try again.`);
+                } else {
+                    stillPending.push(job);
+                }
+            }
+            if (stillPending.length !== buildJobs.length) {
+                buildJobs.length = 0;
+                buildJobs.push(...stillPending);
+            }
+        }
+    } catch (err) {
+        log('BUILD', `Watchdog tick error: ${err && err.message || err}`, 'error');
+    }
+}
+setInterval(_runBuildWatchdog, BUILD_JOB_WATCHDOG_TICK_MS).unref?.();
 
 function isValidPackage(s) {
     return typeof s === 'string' && /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(s);
@@ -1672,6 +1750,10 @@ function requireBuildWorker(req, res, next) {
         return res.status(401).json({ success: false, error: 'Invalid build worker key' });
     }
     buildWorkerLastSeen = Date.now();
+    // Any authenticated worker request — poll, log, upload, complete — counts
+    // as a heartbeat for the currently running job. This keeps the watchdog
+    // happy even during long Gradle tasks that emit no log lines for a while.
+    if (activeBuildJob) activeBuildJob.lastActivityAt = Date.now();
     next();
 }
 
@@ -1711,6 +1793,12 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         createdAt:  Date.now(),
         startedAt:  0,
         finishedAt: 0,
+        // Watchdog timestamp — refreshed every time the worker sends a log
+        // line, uploads an APK, completes the job, or even just polls. If
+        // this stops moving for longer than BUILD_JOB_STALL_MS while the
+        // job is `running`, the watchdog declares the worker dead and
+        // fails the job so the dashboard unlocks.
+        lastActivityAt: Date.now(),
         success: null,
         error: null,
     };
