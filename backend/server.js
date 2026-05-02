@@ -1932,7 +1932,11 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         if (!fs.existsSync(apkPath)) {
             return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
         }
-        return res.download(apkPath, filename);
+        // Named with accessId so each user's file is distinct
+        const dlName = type === 'module'
+            ? `Module-${entry.accessId}.apk`
+            : `Installer-${entry.accessId}.apk`;
+        return res.download(apkPath, dlName);
     }
 
     // Fall through to normal auth (used for HEAD availability probes)
@@ -1945,7 +1949,10 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         if (!fs.existsSync(apkPath)) {
             return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
         }
-        res.download(apkPath, filename);
+        const dlName = type === 'module'
+            ? `Module-${accessId}.apk`
+            : `Installer-${accessId}.apk`;
+        res.download(apkPath, dlName);
     });
 });
 
@@ -2095,11 +2102,11 @@ app.post('/api/build/worker/heartbeat/:jobId', requireBuildWorker, (req, res) =>
 
 // Upload a built APK from the worker. type = module | installer.
 // Body is the raw APK bytes (Content-Type: application/octet-stream).
+// Falls back to ?accessId= query param when the backend has restarted and
+// the in-memory job entry no longer exists — APKs are always saved to disk.
 app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
     express.raw({ type: '*/*', limit: '300mb' }),
     (req, res) => {
-        const job = findJobByIdAnywhere(req.params.jobId);
-        if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
         const { type } = req.params;
         if (type !== 'module' && type !== 'installer') {
             return res.status(400).json({ success: false, error: 'type must be module or installer' });
@@ -2107,27 +2114,51 @@ app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
         const buf = req.body;
         if (!buf || !buf.length) return res.status(400).json({ success: false, error: 'Empty upload' });
 
-        const dir = path.join(BUILD_OUTPUT_ROOT, job.accessId);
+        // Try to find the job by ID first; fall back to accessId query param.
+        let job = findJobByIdAnywhere(req.params.jobId);
+        const fallbackAccessId = (req.query.accessId || '').toString().trim();
+
+        const accessId = job ? job.accessId : fallbackAccessId;
+        if (!accessId) return res.status(404).json({ success: false, error: 'Unknown job and no accessId provided' });
+
+        // Always save APK to disk — this succeeds even if the backend restarted.
+        const dir = path.join(BUILD_OUTPUT_ROOT, accessId);
         try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
         const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
         const dest = path.join(dir, filename);
         fs.writeFileSync(dest, buf);
-        pushJobLine(job, `⬆ Uploaded ${filename} (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
+        const sizeMb = (buf.length / 1024 / 1024).toFixed(2);
+        log('BUILD', `Saved ${filename} for ${accessId} (${sizeMb} MB) from job ${req.params.jobId}`);
+        if (job) pushJobLine(job, `⬆ Uploaded ${filename} (${sizeMb} MB)`);
         res.json({ success: true });
     }
 );
 
 // Mark the job complete. Body: { success: bool, error?: string }
+// Falls back to ?accessId= when the job ID is stale (backend restarted mid-build).
 app.post('/api/build/worker/complete/:jobId', requireBuildWorker, express.json(), (req, res) => {
-    const job = findJobByIdAnywhere(req.params.jobId);
-    if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+    let job = findJobByIdAnywhere(req.params.jobId);
+
+    // Fallback: find any running job for this user by accessId
+    if (!job) {
+        const fbAccessId = (req.query.accessId || '').toString().trim();
+        if (fbAccessId) job = findJobForUser(fbAccessId, false); // active only
+        if (!job && fbAccessId) {
+            // Backend restarted — no in-memory job. Log and respond OK so the
+            // workflow step doesn't fail; APKs are already saved to disk.
+            log('BUILD', `complete callback: no job found for ${req.params.jobId} / accessId=${fbAccessId} (backend may have restarted) — APKs already on disk`);
+            return res.json({ success: true, note: 'job_not_found_apks_on_disk' });
+        }
+        if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+    }
+
     const ok = !!req.body?.success;
     job.status     = ok ? 'success' : 'failed';
     job.success    = ok;
     job.error      = ok ? null : (req.body?.error || 'Build failed');
     job.finishedAt = Date.now();
     pushJobLine(job, '');
-    pushJobLine(job, ok ? '✅ BUILD SUCCESS' : `❌ BUILD FAILED — ${job.error}`);
+    pushJobLine(job, ok ? '✅ BUILD SUCCESS — APKs ready to download' : `❌ BUILD FAILED — ${job.error}`);
     if (job.sseId) sseSend(job.sseId, 'build:done', {
         jobId: job.id, success: ok, accessId: job.accessId,
         durationMs: job.finishedAt - job.startedAt, error: job.error,

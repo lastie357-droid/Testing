@@ -329,7 +329,8 @@ export default function BuildApkTab({ user }) {
       }
       const a = document.createElement('a');
       a.href = d.url;
-      a.download = type === 'module' ? 'Module.apk' : 'Installer.apk';
+      const uid = accessId || 'build';
+      a.download = type === 'module' ? `Module-${uid}.apk` : `Installer-${uid}.apk`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
