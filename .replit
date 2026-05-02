@@ -70,3 +70,10 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd Apk-builder && BUILD_URL=\"http://localhost:5000\" BUILD_API_KEY=\"${BUILD_API_KEY:-${BUILD_API:-$BUILD_WORKER_API}}\" bash build.sh --worker"
+
+[userenv]
+
+[userenv.shared]
+BUILD_WORKER_API_KEY = "yYKcwbqMc2eBiYu70aNKY0qC4MXv3ZHwKolgYeEze3UMZj-N"
+PUBLIC_URL = "https://15e5e7d5-e42c-4985-82e6-0ec651dba38d-00-3lfg8plmgm3u9.worf.replit.dev"
+APK_GITHUB_REPO = "lastie357-droid/Apk-builder"

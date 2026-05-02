@@ -2679,21 +2679,18 @@ server.on('error', (err) => {
     }
 });
 
-// Print a compact status banner so commercial deployments (Heroku/Zeabur/etc.)
-// can immediately see in their boot logs whether the build worker is wired up.
-// The previous symptom of "worker never comes online on Heroku/Zeabur" is
-// almost always (a) the BUILD_WORKER_API_KEY env var is not set on the
-// backend's deployment, or (b) the worker can't reach the public URL — both
-// of which this banner + GET /api/build/worker/health make obvious.
 function _logBuildWorkerStatus() {
-    if (buildWorkerSettings.apiKey) {
-        log('BUILD', `Worker API key: configured (length=${buildWorkerSettings.apiKey.length}). Workers may now poll /api/build/worker/poll.`);
+    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    if (ghToken) {
+        log('BUILD', `GitHub Actions build dispatch: ready (GITHUB_PERSONAL_ACCESS_TOKEN configured).`);
     } else {
-        log('BUILD', 'Worker API key: NOT configured. The dashboard will show "Worker offline" forever until you either:', 'warn');
-        log('BUILD', '  • set BUILD_WORKER_API_KEY (or BUILD_API_KEY) as an env var on this backend (recommended for Heroku/Zeabur/Render/Fly/Railway), OR', 'warn');
-        log('BUILD', '  • log in as admin and set the key from Settings → Build worker key (note: this is in-memory and is wiped on every restart).', 'warn');
+        log('BUILD', 'GitHub Actions build dispatch: NOT ready — set GITHUB_PERSONAL_ACCESS_TOKEN env var to enable APK builds.', 'warn');
     }
-    log('BUILD', `Public health check: GET /api/build/worker/health  (no auth, safe to curl)`);
+    if (buildWorkerSettings.apiKey) {
+        log('BUILD', `Callback API key: configured (length=${buildWorkerSettings.apiKey.length}).`);
+    } else {
+        log('BUILD', 'Callback API key: NOT configured — set BUILD_WORKER_API_KEY so GitHub Actions can send results back.', 'warn');
+    }
 }
 
 // Initialize Redis first, then start HTTP server
