@@ -2864,6 +2864,17 @@ function _logBuildWorkerStatus() {
     }
 }
 
+// Secondary server on port 7500 so GitHub Actions callbacks reach Express
+// via the Replit externalPort=80 mapping (which routes to localPort=7500).
+const CALLBACK_PORT = 7500;
+const callbackServer = require('http').createServer(app);
+callbackServer.listen(CALLBACK_PORT, '0.0.0.0', () => {
+    log('HTTP', `Callback mirror listening on port ${CALLBACK_PORT} (GHA callbacks via externalPort=80)`);
+});
+callbackServer.on('error', (err) => {
+    log('HTTP', `Callback mirror port ${CALLBACK_PORT} error: ${err.message}`, 'warn');
+});
+
 // Initialize Redis first, then start HTTP server
 R.init().then(() => {
     server.listen(HTTP_PORT, '0.0.0.0', () => {
