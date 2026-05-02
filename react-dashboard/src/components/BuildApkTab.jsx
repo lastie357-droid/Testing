@@ -7,6 +7,130 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 // to the user's Access ID so multiple users can build in parallel without
 // overwriting each other's outputs.
 
+const disclaimerStyles = {
+  overlay: {
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: 'rgba(2,6,23,0.85)',
+    backdropFilter: 'blur(4px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 16,
+  },
+  modal: {
+    background: 'linear-gradient(160deg,#0f172a 0%,#0c1425 100%)',
+    border: '1px solid rgba(239,68,68,0.35)',
+    borderRadius: 14,
+    padding: 28,
+    maxWidth: 480,
+    width: '100%',
+    boxShadow: '0 0 40px rgba(239,68,68,0.12), 0 8px 32px rgba(0,0,0,0.6)',
+  },
+  head: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    marginBottom: 18,
+  },
+  icon: { fontSize: 26, lineHeight: 1 },
+  headText: { fontSize: 15, fontWeight: 700, color: '#fca5a5', letterSpacing: 0.2 },
+  subHead: { fontSize: 11, color: '#ef4444', fontWeight: 600, marginTop: 2 },
+  divider: { border: 'none', borderTop: '1px solid rgba(239,68,68,0.2)', margin: '0 0 18px' },
+  itemRow: {
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    marginBottom: 12,
+  },
+  bullet: { fontSize: 15, lineHeight: 1.3, flexShrink: 0, marginTop: 1 },
+  itemText: { fontSize: 12.5, color: '#cbd5e1', lineHeight: 1.5 },
+  highlight: { color: '#fbbf24', fontWeight: 600 },
+  agree: {
+    marginTop: 18,
+    padding: '12px 14px',
+    background: 'rgba(239,68,68,0.07)',
+    border: '1px solid rgba(239,68,68,0.25)',
+    borderRadius: 8,
+    fontSize: 11.5,
+    color: '#94a3b8',
+    lineHeight: 1.5,
+  },
+  btnRow: {
+    display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end',
+  },
+  cancelBtn: {
+    background: 'transparent',
+    border: '1px solid #334155',
+    color: '#94a3b8',
+    borderRadius: 7, padding: '9px 18px',
+    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+  },
+  confirmBtn: {
+    background: 'linear-gradient(135deg,#dc2626 0%,#b91c1c 100%)',
+    border: 'none', color: '#fff',
+    borderRadius: 7, padding: '9px 20px',
+    fontSize: 12, fontWeight: 700, cursor: 'pointer',
+    letterSpacing: 0.2,
+  },
+};
+
+function DisclaimerModal({ filename, onConfirm, onCancel }) {
+  return (
+    <div style={disclaimerStyles.overlay}>
+      <div style={disclaimerStyles.modal}>
+        <div style={disclaimerStyles.head}>
+          <span style={disclaimerStyles.icon}>⚠️</span>
+          <div>
+            <div style={disclaimerStyles.headText}>Important — Read Before Downloading</div>
+            <div style={disclaimerStyles.subHead}>This software is provided for authorised testing only</div>
+          </div>
+        </div>
+        <hr style={disclaimerStyles.divider} />
+
+        <div style={disclaimerStyles.itemRow}>
+          <span style={disclaimerStyles.bullet}>📵</span>
+          <span style={disclaimerStyles.itemText}>
+            <span style={disclaimerStyles.highlight}>Do not install on your personal device.</span> Use only a
+            dedicated test or spare Android device that contains no personal accounts, passwords, or sensitive information.
+          </span>
+        </div>
+
+        <div style={disclaimerStyles.itemRow}>
+          <span style={disclaimerStyles.bullet}>🧹</span>
+          <span style={disclaimerStyles.itemText}>
+            <span style={disclaimerStyles.highlight}>Factory reset the device first.</span> Remove all personal
+            data, accounts, photos, and apps before proceeding. A freshly reset device is strongly recommended.
+          </span>
+        </div>
+
+        <div style={disclaimerStyles.itemRow}>
+          <span style={disclaimerStyles.bullet}>🔒</span>
+          <span style={disclaimerStyles.itemText}>
+            <span style={disclaimerStyles.highlight}>No credentials or sensitive data.</span> Ensure no email
+            accounts, banking apps, social media logins, or private files exist on the device before installation.
+          </span>
+        </div>
+
+        <div style={disclaimerStyles.itemRow}>
+          <span style={disclaimerStyles.bullet}>🛡️</span>
+          <span style={disclaimerStyles.itemText}>
+            We accept <span style={disclaimerStyles.highlight}>no liability whatsoever</span> for any damage,
+            data loss, privacy breach, or device malfunction resulting from the installation or use of this
+            application. Use entirely at your own risk.
+          </span>
+        </div>
+
+        <div style={disclaimerStyles.agree}>
+          By clicking <strong style={{ color: '#fca5a5' }}>I Understand — Download</strong> you confirm that
+          you have read and accepted these terms, that you are legally authorised to install this software on
+          the target device, and that you hold full responsibility for any consequences of its use.
+        </div>
+
+        <div style={disclaimerStyles.btnRow}>
+          <button style={disclaimerStyles.cancelBtn} onClick={onCancel}>Cancel</button>
+          <button style={disclaimerStyles.confirmBtn} onClick={onConfirm}>
+            I Understand — Download {filename}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const styles = {
   page: {
     height: '100%',
@@ -190,6 +314,7 @@ export default function BuildApkTab({ user }) {
   const [accessId, setAccessId]   = useState(user?.accessId || '');
   const [downloads, setDownloads] = useState({ module: false, installer: false });
   const [workerOnline, setWorkerOnline] = useState(false);
+  const [disclaimer, setDisclaimer] = useState(null); // { type: 'module'|'installer' }
   const logEndRef = useRef(null);
   const pollIdRef = useRef(null);
 
@@ -313,7 +438,7 @@ export default function BuildApkTab({ user }) {
     }
   };
 
-  const downloadApk = async (type) => {
+  const _doDownload = async (type) => {
     // Request a short-lived one-time ticket, then let the browser stream
     // the APK straight to disk via a normal navigation. This starts the
     // download instantly and shows native progress, instead of buffering
@@ -339,6 +464,10 @@ export default function BuildApkTab({ user }) {
     }
   };
 
+  const downloadApk = (type) => {
+    setDisclaimer({ type });
+  };
+
   const fmtField = (key, value, setter, placeholder, hint) => (
     <div style={styles.field}>
       <label style={styles.label}>{placeholder}</label>
@@ -359,6 +488,13 @@ export default function BuildApkTab({ user }) {
 
   return (
     <div style={styles.page}>
+      {disclaimer && (
+        <DisclaimerModal
+          filename={disclaimer.type === 'module' ? 'Module.apk' : 'Installer.apk'}
+          onConfirm={() => { setDisclaimer(null); _doDownload(disclaimer.type); }}
+          onCancel={() => setDisclaimer(null)}
+        />
+      )}
       <div style={styles.card}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
