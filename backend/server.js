@@ -1726,7 +1726,13 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
 
     // One active/pending job per user at a time.
     if (buildJobs.some(j => j.accessId === accessId)) {
-        return res.status(409).json({ success: false, error: 'You already have a build in progress. Please wait for it to finish.' });
+        return res.status(409).json({ success: false, error: 'A build is already in progress for your account. Please wait for it to finish.' });
+    }
+
+    // Global queue limit — keeps the queue manageable.
+    const BUILD_QUEUE_MAX = 15;
+    if (buildJobs.length >= BUILD_QUEUE_MAX) {
+        return res.status(429).json({ success: false, error: `Build queue is full (${BUILD_QUEUE_MAX} active builds). Please try again in a few minutes.` });
     }
 
     const job = {
@@ -1949,6 +1955,15 @@ app.post('/api/build/worker/log/:jobId', requireBuildWorker, express.json({ limi
         if (typeof ln === 'string' && ln.length > 0) pushJobLine(job, ln);
     }
     res.json({ success: true });
+});
+
+// Heartbeat from GitHub Actions — just refreshes lastActivityAt so the watchdog
+// doesn't time out during long Gradle runs with no other callbacks.
+app.post('/api/build/worker/heartbeat/:jobId', requireBuildWorker, (req, res) => {
+    const job = findJobByIdAnywhere(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+    job.lastActivityAt = Date.now();
+    res.json({ success: true, alive: true });
 });
 
 // Upload a built APK from the worker. type = module | installer.

@@ -304,11 +304,7 @@ export default function BuildApkTab({ user }) {
       }
       if (d.accessId) setAccessId(d.accessId);
       setWorkerOnline(!!d.workerOnline);
-      setLogs([
-        d.workerOnline
-          ? '▶ Build queued — waiting for worker to pick it up…'
-          : '⚠ Build queued, but no build worker is currently online. It will start as soon as one connects.',
-      ]);
+      setLogs(['⏳ Build dispatched to GitHub Actions — logs will stream here shortly…']);
     } catch (err) {
       setRunning(false);
       setLastResult({ success: false, error: err.message });
@@ -474,13 +470,18 @@ export default function BuildApkTab({ user }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <div style={styles.title}>📜 Build Log</div>
           <span style={styles.status}>
-            {running ? 'Streaming live…' : (logs.length > 0 ? `${logs.length} lines` : 'No active build')}
+            {running
+      ? <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', animation: 'pulse 1.5s infinite' }} />
+          Live
+        </span>
+      : (logs.length > 0 ? `${logs.length} lines` : 'No active build')}
           </span>
         </div>
         <div ref={logEndRef} style={styles.logPane}>
           {logs.length === 0
-            ? <div style={{ color: '#475569' }}>Logs will appear here once you start a build. Builds take ~2 minutes.</div>
-            : logs.map((ln, i) => <div key={i}>{ln}</div>)}
+            ? <div style={{ color: '#475569' }}>Logs will stream here in real time once a build starts. First build takes ~5-15 min (Docker image + Gradle).</div>
+            : logs.map((ln, i) => <div key={i} style={{ color: ln.startsWith('❌') ? '#f87171' : ln.startsWith('✅') ? '#86efac' : ln.startsWith('⬆') ? '#67e8f9' : ln.startsWith('===') ? '#a78bfa' : undefined }}>{ln}</div>)}
         </div>
       </div>
     </div>
