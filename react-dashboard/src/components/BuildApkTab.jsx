@@ -136,6 +136,12 @@ const styles = {
     background: online ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
     border: `1px solid ${online ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
   }),
+  ghaTag: {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+    color: '#a78bfa', background: 'rgba(139,92,246,0.1)',
+    border: '1px solid rgba(139,92,246,0.3)',
+  },
 };
 
 const PKG_REGEX  = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
@@ -365,12 +371,8 @@ export default function BuildApkTab({ user }) {
               Your Access ID is baked into every device that registers with these APKs.
             </div>
           </div>
-          <span style={styles.workerPill(workerOnline)}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%',
-              background: workerOnline ? '#22c55e' : '#ef4444',
-            }} />
-            {workerOnline ? 'Build worker online' : 'Build worker offline'}
+          <span style={styles.ghaTag}>
+            ⚡ GitHub Actions
           </span>
         </div>
 

@@ -1344,12 +1344,10 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
                 notifyConnect: telegramSettings.notifyConnect,
             },
             buildWorker: {
-                apiKey:        buildWorkerSettings.apiKey ? '***' + buildWorkerSettings.apiKey.slice(-6) : '',
-                apiKeySet:     !!buildWorkerSettings.apiKey,
-                workerOnline:  workerOnline(),
-                lastSeen:      buildWorkerLastSeen || null,
-                pending:       buildJobs.length,
-                active:        activeBuildJob ? activeBuildJob.id : null,
+                apiKey:               buildWorkerSettings.apiKey ? '***' + buildWorkerSettings.apiKey.slice(-6) : '',
+                apiKeySet:            !!buildWorkerSettings.apiKey,
+                githubActionsEnabled: workerOnline(),
+                running:              buildJobs.filter(j => j.status === 'running').length,
             },
         });
     }
@@ -1540,25 +1538,20 @@ const BUILD_JOB_WATCHDOG_TICK_MS = 15000;
 // AND no worker is online, fast-fail it instead of locking the dashboard.
 const BUILD_JOB_PENDING_NO_WORKER_MS = 60000; // 1 minute
 
-const buildJobs = [];          // pending  (FIFO)
-let   activeBuildJob = null;   // currently running on a worker
+const buildJobs = [];          // pending + running (FIFO)
 const recentBuildJobs = [];    // last N finished, newest first
-let   buildWorkerLastSeen = 0;
-const buildWorkerLongPollers = []; // [{ res, timer }]
 
 function workerOnline() {
-    return buildWorkerLastSeen > 0 && (Date.now() - buildWorkerLastSeen) < BUILD_WORKER_OFFLINE_MS;
+    return !!(process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
 }
 
 function findJobByIdAnywhere(id) {
-    if (activeBuildJob && activeBuildJob.id === id) return activeBuildJob;
     return buildJobs.find(j => j.id === id) || recentBuildJobs.find(j => j.id === id) || null;
 }
 
 function findJobForUser(accessId, includeRecent = true) {
-    if (activeBuildJob && activeBuildJob.accessId === accessId) return activeBuildJob;
-    const pending = [...buildJobs].reverse().find(j => j.accessId === accessId);
-    if (pending) return pending;
+    const active = [...buildJobs].reverse().find(j => j.accessId === accessId);
+    if (active) return active;
     if (includeRecent) return recentBuildJobs.find(j => j.accessId === accessId) || null;
     return null;
 }
@@ -1572,38 +1565,6 @@ function pushJobLine(job, line) {
     if (job.sseId) sseSend(job.sseId, 'build:log', { jobId: job.id, line });
 }
 
-function notifyWorkerLongPollers() {
-    while (buildWorkerLongPollers.length > 0 && buildJobs.length > 0 && !activeBuildJob) {
-        const waiter = buildWorkerLongPollers.shift();
-        clearTimeout(waiter.timer);
-        try { dispatchNextJobToWorker(waiter.res); } catch (_) {}
-    }
-}
-
-function dispatchNextJobToWorker(res) {
-    if (activeBuildJob || buildJobs.length === 0) {
-        return res.json({ success: true, hasJob: false });
-    }
-    const job = buildJobs.shift();
-    job.status = 'running';
-    job.startedAt = Date.now();
-    job.lastActivityAt = Date.now();
-    activeBuildJob = job;
-    pushJobLine(job, `▶ Picked up by worker @ ${new Date().toISOString()}`);
-    res.json({
-        success: true,
-        hasJob: true,
-        job: {
-            id:                 job.id,
-            accessId:           job.accessId,
-            moduleName:         job.moduleName,
-            modulePackage:      job.modulePackage,
-            installerName:      job.installerName,
-            installerPackage:   job.installerPackage,
-            monitoredPackages:  job.monitoredPackages,
-        },
-    });
-}
 
 // ── Watchdog ─────────────────────────────────────────────────────────────
 // Two failure modes the watchdog covers:
@@ -1630,39 +1591,22 @@ function _failJob(job, errorMsg) {
         jobId: job.id, success: false, accessId: job.accessId,
         durationMs: job.finishedAt - (job.startedAt || job.createdAt), error: errorMsg,
     });
-    if (activeBuildJob && activeBuildJob.id === job.id) activeBuildJob = null;
+    const idx = buildJobs.indexOf(job);
+    if (idx >= 0) buildJobs.splice(idx, 1);
     recentBuildJobs.unshift(job);
     if (recentBuildJobs.length > BUILD_JOBS_RECENT_KEEP) recentBuildJobs.pop();
 }
 
 function _runBuildWatchdog() {
     try {
-        // (1) stalled active job
-        if (activeBuildJob) {
-            const stallMs = Date.now() - (activeBuildJob.lastActivityAt || activeBuildJob.startedAt || activeBuildJob.createdAt);
+        // Stalled running jobs — if GitHub Actions stops reporting activity,
+        // fail the job so the dashboard unlocks instead of spinning forever.
+        for (const job of [...buildJobs]) {
+            if (job.status !== 'running') continue;
+            const stallMs = Date.now() - (job.lastActivityAt || job.startedAt || job.createdAt);
             if (stallMs > BUILD_JOB_STALL_MS) {
-                const stalledJob = activeBuildJob;
-                log('BUILD', `Watchdog: active job ${stalledJob.id} (accessId=${stalledJob.accessId}) had no worker activity for ${Math.round(stallMs / 1000)}s — failing and freeing the slot`, 'warn');
-                _failJob(stalledJob, `Build worker stopped responding (no updates for ${Math.round(stallMs / 1000)}s). Your build was dropped — please try again.`);
-                // Hand the next pending job (if any) to a waiting worker.
-                notifyWorkerLongPollers();
-            }
-        }
-        // (2) pending jobs with no worker online
-        if (!workerOnline() && buildJobs.length > 0) {
-            const stillPending = [];
-            for (const job of buildJobs) {
-                const ageMs = Date.now() - job.createdAt;
-                if (ageMs > BUILD_JOB_PENDING_NO_WORKER_MS) {
-                    log('BUILD', `Watchdog: pending job ${job.id} (accessId=${job.accessId}) waited ${Math.round(ageMs / 1000)}s with no worker online — failing it`, 'warn');
-                    _failJob(job, `No build worker came online within ${Math.round(BUILD_JOB_PENDING_NO_WORKER_MS / 1000)}s. Your build was dropped — please try again.`);
-                } else {
-                    stillPending.push(job);
-                }
-            }
-            if (stillPending.length !== buildJobs.length) {
-                buildJobs.length = 0;
-                buildJobs.push(...stillPending);
+                log('BUILD', `Watchdog: running job ${job.id} (accessId=${job.accessId}) had no activity for ${Math.round(stallMs / 1000)}s — failing`, 'warn');
+                _failJob(job, `GitHub Actions stopped responding (no updates for ${Math.round(stallMs / 1000)}s). Please try again.`);
             }
         }
     } catch (err) {
@@ -1734,30 +1678,32 @@ function requireBuildWorker(req, res, next) {
     const expected = buildWorkerSettings.apiKey;
     if (!expected) {
         _logWorkerAuthFailure('API key not configured on backend', req,
-            'set BUILD_WORKER_API_KEY env var, or use Settings → Build worker key');
+            'set BUILD_WORKER_API_KEY env var');
         return res.status(503).json({
             success: false,
-            error: 'Build worker API key not configured on the backend. Set the BUILD_WORKER_API_KEY environment variable, or set it from the admin Settings page.',
+            error: 'Build API key not configured on the backend. Set the BUILD_WORKER_API_KEY environment variable.',
         });
     }
     if (!token) {
-        _logWorkerAuthFailure('worker sent no Authorization header', req);
-        return res.status(401).json({ success: false, error: 'Missing build worker key (Authorization: Bearer <key>)' });
+        _logWorkerAuthFailure('caller sent no Authorization header', req);
+        return res.status(401).json({ success: false, error: 'Missing build key (Authorization: Bearer <key>)' });
     }
     if (token !== expected) {
         _logWorkerAuthFailure('key mismatch', req,
-            `worker sent length=${token.length}, backend expects length=${expected.length}`);
-        return res.status(401).json({ success: false, error: 'Invalid build worker key' });
+            `caller sent length=${token.length}, backend expects length=${expected.length}`);
+        return res.status(401).json({ success: false, error: 'Invalid build key' });
     }
-    buildWorkerLastSeen = Date.now();
-    // Any authenticated worker request — poll, log, upload, complete — counts
-    // as a heartbeat for the currently running job. This keeps the watchdog
-    // happy even during long Gradle tasks that emit no log lines for a while.
-    if (activeBuildJob) activeBuildJob.lastActivityAt = Date.now();
+    // Refresh lastActivityAt on any authenticated callback so the watchdog
+    // doesn't declare the job stalled during long Gradle runs.
+    const jobId = req.params && req.params.jobId;
+    if (jobId) {
+        const job = findJobByIdAnywhere(jobId);
+        if (job) job.lastActivityAt = Date.now();
+    }
     next();
 }
 
-// POST /api/build/apk — enqueue a build job for the worker
+// POST /api/build/apk — dispatch a build job to GitHub Actions
 app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) => {
     const { moduleName, modulePackage, installerName, installerPackage, sseId, monitoredPackages } = req.body || {};
     if (!isValidAppName(moduleName))         return res.status(400).json({ success: false, error: 'Invalid module name (1-40 chars, letters/digits/space/.&\'-)' });
@@ -1765,6 +1711,11 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
     if (!isValidAppName(installerName))      return res.status(400).json({ success: false, error: 'Invalid installer name' });
     if (!isValidPackage(installerPackage))   return res.status(400).json({ success: false, error: 'Invalid installer package' });
     if (modulePackage === installerPackage)  return res.status(400).json({ success: false, error: 'Module and installer packages must differ' });
+
+    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    if (!ghToken) {
+        return res.status(503).json({ success: false, error: 'GitHub token (GITHUB_PERSONAL_ACCESS_TOKEN) is not configured on the backend.' });
+    }
 
     let accessId = '';
     if (req.authRole === 'user') {
@@ -1775,10 +1726,8 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         accessId = (req.body.accessId && String(req.body.accessId).trim()) || 'ADMIN-BUILD';
     }
 
-    // One pending/active job per user at a time.
-    const existing = (activeBuildJob && activeBuildJob.accessId === accessId)
-                  || buildJobs.some(j => j.accessId === accessId);
-    if (existing) {
+    // One active/pending job per user at a time.
+    if (buildJobs.some(j => j.accessId === accessId)) {
         return res.status(409).json({ success: false, error: 'You already have a build in progress. Please wait for it to finish.' });
     }
 
@@ -1788,43 +1737,78 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         moduleName, modulePackage, installerName, installerPackage,
         monitoredPackages: sanitizeMonitoredPackages(monitoredPackages),
         sseId: sseId || null,
-        status: 'pending',
+        status: 'running',
         lines: [],
-        createdAt:  Date.now(),
-        startedAt:  0,
-        finishedAt: 0,
-        // Watchdog timestamp — refreshed every time the worker sends a log
-        // line, uploads an APK, completes the job, or even just polls. If
-        // this stops moving for longer than BUILD_JOB_STALL_MS while the
-        // job is `running`, the watchdog declares the worker dead and
-        // fails the job so the dashboard unlocks.
+        createdAt:      Date.now(),
+        startedAt:      Date.now(),
+        finishedAt:     0,
         lastActivityAt: Date.now(),
         success: null,
-        error: null,
+        error:   null,
     };
     buildJobs.push(job);
 
-    pushJobLine(job, `📥 Job queued for Access ID ${accessId} (id ${job.id})`);
+    pushJobLine(job, `📥 Build started for Access ID ${accessId} (id ${job.id})`);
     pushJobLine(job, `  Module:    ${moduleName} (${modulePackage})`);
     pushJobLine(job, `  Installer: ${installerName} (${installerPackage})`);
     if (job.monitoredPackages.length) {
         pushJobLine(job, `  Monitored packages (${job.monitoredPackages.length}): ${job.monitoredPackages.join(', ')}`);
     }
-    if (!workerOnline()) {
-        pushJobLine(job, `⚠ No build worker is currently connected — job will start as soon as a worker comes online.`);
-    } else {
-        pushJobLine(job, `⏳ Waiting for the worker to pick it up…`);
+    pushJobLine(job, `⏳ Dispatching to GitHub Actions…`);
+
+    // Derive callback URL (backend's public address that GitHub Actions can reach)
+    const host = req.get('x-forwarded-host') || req.get('host') || '';
+    const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
+    const callbackUrl = (process.env.PUBLIC_URL || '').trim()
+        || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
+        || (host ? `${proto}://${host}` : '');
+
+    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim();
+
+    try {
+        const dispatchRes = await fetch(`https://api.github.com/repos/${ghRepo}/dispatches`, {
+            method: 'POST',
+            headers: {
+                'Authorization':        `Bearer ${ghToken}`,
+                'Accept':               'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Content-Type':         'application/json',
+            },
+            body: JSON.stringify({
+                event_type: 'build-apk',
+                client_payload: {
+                    job_id:              job.id,
+                    access_id:           accessId,
+                    module_name:         moduleName,
+                    module_package:      modulePackage,
+                    installer_name:      installerName,
+                    installer_package:   installerPackage,
+                    monitored_packages:  job.monitoredPackages.join(','),
+                    callback_url:        callbackUrl,
+                },
+            }),
+        });
+
+        if (!dispatchRes.ok) {
+            const errText = await dispatchRes.text().catch(() => '');
+            throw new Error(`GitHub API responded ${dispatchRes.status}: ${errText.slice(0, 200)}`);
+        }
+
+        pushJobLine(job, `✅ GitHub Actions workflow triggered — build starting shortly…`);
+        log('BUILD', `Dispatched job ${job.id} for ${accessId} to GitHub Actions (repo=${ghRepo})`);
+
+        res.json({
+            success:      true,
+            accessId,
+            jobId:        job.id,
+            workerOnline: true,
+            message:      'Build dispatched to GitHub Actions.',
+        });
+    } catch (err) {
+        log('BUILD', `Failed to dispatch job ${job.id} to GitHub Actions: ${err.message}`, 'error');
+        _failJob(job, `Failed to trigger GitHub Actions: ${err.message}`);
+        res.status(500).json({ success: false, error: err.message });
     }
-
-    notifyWorkerLongPollers();
-
-    res.json({
-        success: true,
-        accessId,
-        jobId: job.id,
-        workerOnline: workerOnline(),
-        message: workerOnline() ? 'Build queued.' : 'Build queued (waiting for worker).',
-    });
 });
 
 // GET /api/build/status — caller's most-recent job (active, pending, or recent)
@@ -1834,7 +1818,8 @@ app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
         const u = await User.findById(req.authUserId).select('accessId').lean();
         myAccessId = (u && u.accessId) || '';
     } else {
-        myAccessId = (req.query.accessId && String(req.query.accessId).trim()) || (activeBuildJob && activeBuildJob.accessId) || 'ADMIN-BUILD';
+        const runningJob = buildJobs.find(j => j.status === 'running');
+        myAccessId = (req.query.accessId && String(req.query.accessId).trim()) || (runningJob && runningJob.accessId) || 'ADMIN-BUILD';
     }
 
     const job = findJobForUser(myAccessId, true);
@@ -1890,8 +1875,9 @@ async function _resolveAccessIdForReq(req) {
         const u = await User.findById(req.authUserId).select('accessId').lean();
         return (u && u.accessId) || '';
     }
+    const runningJob = buildJobs.find(j => j.status === 'running');
     return (req.query.accessId && String(req.query.accessId).trim())
-        || (activeBuildJob && activeBuildJob.accessId)
+        || (runningJob && runningJob.accessId)
         || 'ADMIN-BUILD';
 }
 
@@ -1953,27 +1939,9 @@ app.get('/api/build/download/:type', async (req, res, next) => {
     });
 });
 
-// ── BUILD WORKER ENDPOINTS (called by build.sh in --worker mode) ────────────
-// Long-poll for the next job. Resolves immediately when a job is available,
-// otherwise waits up to ~25s and returns hasJob:false (worker re-polls).
-app.get('/api/build/worker/poll', requireBuildWorker, (req, res) => {
-    if (!activeBuildJob && buildJobs.length > 0) {
-        return dispatchNextJobToWorker(res);
-    }
-    const timer = setTimeout(() => {
-        const idx = buildWorkerLongPollers.findIndex(w => w.res === res);
-        if (idx >= 0) buildWorkerLongPollers.splice(idx, 1);
-        if (!res.headersSent) res.json({ success: true, hasJob: false });
-    }, 25000);
-    buildWorkerLongPollers.push({ res, timer });
-    res.on('close', () => {
-        clearTimeout(timer);
-        const idx = buildWorkerLongPollers.findIndex(w => w.res === res);
-        if (idx >= 0) buildWorkerLongPollers.splice(idx, 1);
-    });
-});
+// ── BUILD CALLBACK ENDPOINTS (called by GitHub Actions after build) ─────────
 
-// Append log lines from worker. Body: { lines: [...] } or { line: "..." }
+// Append log lines from GitHub Actions build. Body: { lines: [...] } or { line: "..." }
 app.post('/api/build/worker/log/:jobId', requireBuildWorker, express.json({ limit: '2mb' }), (req, res) => {
     const job = findJobByIdAnywhere(req.params.jobId);
     if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
@@ -2024,57 +1992,40 @@ app.post('/api/build/worker/complete/:jobId', requireBuildWorker, express.json()
         jobId: job.id, success: ok, accessId: job.accessId,
         durationMs: job.finishedAt - job.startedAt, error: job.error,
     });
-    if (activeBuildJob && activeBuildJob.id === job.id) activeBuildJob = null;
+    const idx = buildJobs.indexOf(job);
+    if (idx >= 0) buildJobs.splice(idx, 1);
     recentBuildJobs.unshift(job);
     if (recentBuildJobs.length > BUILD_JOBS_RECENT_KEEP) recentBuildJobs.pop();
-    notifyWorkerLongPollers();
     res.json({ success: true });
 });
 
-// GET /api/build/worker/health — PUBLIC, no-auth diagnostic endpoint.
-// Lets you (or your worker) verify, with a single curl, that:
-//   • the backend on Heroku/Zeabur/etc. is actually reachable at the URL the
-//     worker is using as BUILD_URL,
-//   • the BUILD_WORKER_API_KEY env var is configured on the backend,
-//   • whether a worker has successfully authenticated recently.
-// Intentionally returns NO secret material — only booleans and a length, so
-// it is safe to expose publicly.
-//
-// Typical commercial-deployment debugging flow:
-//   curl -i https://<your-backend>/api/build/worker/health
-//   → if you get HTML or 404, your BUILD_URL on the worker is wrong.
-//   → if apiKeyConfigured=false, set BUILD_WORKER_API_KEY on the backend.
-//   → if apiKeyConfigured=true but workerOnline=false even though the worker
-//     is running, the worker's key doesn't match (check whitespace/typos)
-//     or it can't reach the backend (check the worker's own logs).
+// GET /api/build/worker/health — PUBLIC diagnostic endpoint
 app.get('/api/build/worker/health', (req, res) => {
     const host = req.get('x-forwarded-host') || req.get('host') || '';
     const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
     res.set('Cache-Control', 'no-store');
+    const runningJobs = buildJobs.filter(j => j.status === 'running');
     res.json({
-        ok: true,
-        backendReachable:  true,
-        publicUrl:         host ? `${proto}://${host}` : null,
-        apiKeyConfigured:  !!buildWorkerSettings.apiKey,
-        apiKeyLength:      buildWorkerSettings.apiKey ? buildWorkerSettings.apiKey.length : 0,
-        workerOnline:      workerOnline(),
-        workerLastSeenAgoMs: buildWorkerLastSeen ? (Date.now() - buildWorkerLastSeen) : null,
-        workerLastSeenAt:    buildWorkerLastSeen || null,
-        pendingJobs:       buildJobs.length,
-        activeJob:         activeBuildJob ? activeBuildJob.id : null,
-        serverTimeMs:      Date.now(),
+        ok:                   true,
+        backendReachable:     true,
+        publicUrl:            host ? `${proto}://${host}` : null,
+        githubActionsEnabled: workerOnline(),
+        callbackKeyConfigured: !!buildWorkerSettings.apiKey,
+        runningJobs:          runningJobs.length,
+        activeJob:            runningJobs[0] ? runningJobs[0].id : null,
+        serverTimeMs:         Date.now(),
     });
 });
 
-// GET /api/build/worker/status — admin-only worker liveness + queue snapshot
+// GET /api/build/worker/status — admin-only build status snapshot
 app.get('/api/build/worker/status', requireAdmin, (req, res) => {
+    const runningJobs = buildJobs.filter(j => j.status === 'running');
     res.json({
-        success:      true,
-        keyConfigured: !!buildWorkerSettings.apiKey,
-        workerOnline: workerOnline(),
-        lastSeen:     buildWorkerLastSeen || null,
-        active:       activeBuildJob ? { jobId: activeBuildJob.id, accessId: activeBuildJob.accessId } : null,
-        pending:      buildJobs.length,
+        success:              true,
+        githubActionsEnabled: workerOnline(),
+        callbackKeyConfigured: !!buildWorkerSettings.apiKey,
+        active:               runningJobs.map(j => ({ jobId: j.id, accessId: j.accessId })),
+        running:              runningJobs.length,
         recent:       recentBuildJobs.slice(0, 10).map(j => ({
             jobId: j.id, accessId: j.accessId, status: j.status,
             startedAt: j.startedAt, finishedAt: j.finishedAt,
