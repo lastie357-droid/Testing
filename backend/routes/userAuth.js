@@ -87,11 +87,7 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
-    const { email, password, captchaId, captcha } = req.body || {};
-
-    if (!verifyCaptcha(captchaId, captcha)) {
-      return res.status(400).json({ success: false, error: 'Captcha is incorrect or expired. Please try again.', captchaFailed: true });
-    }
+    const { email, password } = req.body || {};
 
     if (!email || !password) {
       return res.status(400).json({ success: false, error: 'Email and password are required.' });
