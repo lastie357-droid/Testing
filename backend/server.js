@@ -1749,6 +1749,8 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         lastActivityAt: Date.now(),
         success: null,
         error:   null,
+        ghRepo:  null,   // set after dispatch
+        ghRunId: null,   // found by poller
     };
     buildJobs.push(job);
 
@@ -1798,8 +1800,12 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
             throw new Error(`GitHub API responded ${dispatchRes.status}: ${errText.slice(0, 200)}`);
         }
 
-        pushJobLine(job, `✅ GitHub Actions workflow triggered — build starting shortly…`);
+        job.ghRepo = ghRepo;
+        pushJobLine(job, `✅ GitHub Actions workflow triggered — fetching live logs…`);
         log('BUILD', `Dispatched job ${job.id} for ${accessId} to GitHub Actions (repo=${ghRepo})`);
+
+        // Start background log poller — pulls GHA job logs every 8s and streams to user
+        _startGHAPoller(job, ghRepo).catch(() => {});
 
         res.json({
             success:      true,
@@ -1942,6 +1948,127 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         res.download(apkPath, filename);
     });
 });
+
+// ── GitHub Actions log poller ────────────────────────────────────────────────
+// Polls the GitHub API every 8s to fetch live job logs and push them into the
+// job's line buffer so the dashboard sees real-time output without needing any
+// log-streaming logic inside the workflow itself.
+async function _startGHAPoller(job, ghRepo) {
+    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    if (!ghToken) return;
+
+    const GH = {
+        'Authorization':        `Bearer ${ghToken}`,
+        'Accept':               'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent':           'remoteaccess-backend',
+    };
+    const ghGet = (url) => fetch(url, { headers: GH });
+
+    let ghRunId  = null;
+    let ghJobId  = null;
+    let sentLines = 0;
+    let stopped  = false;
+
+    // Find the Actions run that was created for this dispatch
+    const findRun = async () => {
+        const r = await ghGet(
+            `https://api.github.com/repos/${ghRepo}/actions/runs?event=repository_dispatch&per_page=10`
+        );
+        if (!r.ok) return null;
+        const { workflow_runs = [] } = await r.json();
+        const cutoff = job.createdAt - 15000; // 15s before dispatch
+        const run = workflow_runs
+            .filter(w => new Date(w.created_at).getTime() >= cutoff)
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+        return run ? run.id : null;
+    };
+
+    // Get the first job ID within the run
+    const findGhJobId = async () => {
+        const r = await ghGet(
+            `https://api.github.com/repos/${ghRepo}/actions/runs/${ghRunId}/jobs`
+        );
+        if (!r.ok) return null;
+        const { jobs = [] } = await r.json();
+        return jobs[0]?.id || null;
+    };
+
+    // Fetch all log text for the job so far and push any new lines.
+    // GitHub returns 302 → Azure Blob URL; we must NOT forward GH auth headers
+    // to the blob URL, so we handle the redirect manually.
+    const fetchAndPushLogs = async () => {
+        const r1 = await fetch(
+            `https://api.github.com/repos/${ghRepo}/actions/jobs/${ghJobId}/logs`,
+            { headers: GH, redirect: 'manual' }
+        );
+        let text = '';
+        if (r1.status === 302) {
+            const loc = r1.headers.get('location');
+            if (!loc) return;
+            const r2 = await fetch(loc); // plain GET, no auth headers
+            if (!r2.ok) return;
+            text = await r2.text();
+        } else if (r1.ok) {
+            text = await r1.text();
+        } else { return; }
+        if (!text) return;
+
+        const lines = text.split('\n').map(l =>
+            l.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s?/, '') // strip GHA timestamp
+             .replace(/##\[group\]/g,    '▶ ')
+             .replace(/##\[endgroup\]/g, '')
+             .replace(/##\[error\]/g,    '❌ ')
+             .replace(/##\[warning\]/g,  '⚠ ')
+             .replace(/##\[command\]/g,  '$ ')
+             .trimEnd()
+        ).filter(l => l.length > 0);
+
+        const newLines = lines.slice(sentLines);
+        if (newLines.length > 0) {
+            for (const line of newLines) {
+                if (job.status === 'running') pushJobLine(job, line);
+            }
+            sentLines = lines.length;
+            job.lastActivityAt = Date.now();
+        }
+    };
+
+    const tick = async () => {
+        if (stopped || job.status !== 'running') { stopped = true; return; }
+        try {
+            if (!ghRunId) {
+                ghRunId = await findRun();
+                if (ghRunId) {
+                    job.ghRunId = ghRunId;
+                    pushJobLine(job, `🔗 Run #${ghRunId} — streaming logs from GitHub Actions…`);
+                }
+                return;
+            }
+            if (!ghJobId) {
+                ghJobId = await findGhJobId();
+                return;
+            }
+            await fetchAndPushLogs();
+        } catch (err) {
+            log('BUILD', `GHA poller error for job ${job.id}: ${err.message}`, 'warn');
+        }
+    };
+
+    const iv = setInterval(async () => {
+        if (stopped || job.status !== 'running') {
+            clearInterval(iv);
+            stopped = true;
+            // One final fetch after job completes to capture last lines
+            if (ghJobId) setTimeout(async () => { try { await fetchAndPushLogs(); } catch (_) {} }, 4000);
+            return;
+        }
+        await tick();
+    }, 8000);
+
+    // First tick 8s after dispatch (give GitHub time to queue the run)
+    setTimeout(tick, 8000);
+}
 
 // ── BUILD CALLBACK ENDPOINTS (called by GitHub Actions after build) ─────────
 
