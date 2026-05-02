@@ -1530,12 +1530,10 @@ const BUILD_WORKER_OFFLINE_MS = 30000;
 // worker (no log line, no upload, no complete) AND the worker has not been
 // seen polling either, mark the job failed and free the slot so the
 // dashboard's "Build APK" button unlocks instead of staying spun forever.
-const BUILD_JOB_STALL_MS = 120000;          // 2 minutes
-// Watchdog tick interval — checked frequently enough that a stalled job is
-// surfaced to the user well under a minute after the 2-min threshold trips.
-const BUILD_JOB_WATCHDOG_TICK_MS = 15000;
-// If a job sits in `pending` (no worker has picked it up) longer than this
-// AND no worker is online, fast-fail it instead of locking the dashboard.
+const BUILD_JOB_STALL_MS = 47 * 60 * 1000;  // 47 min (matches 45-min workflow + buffer)
+// Watchdog tick interval
+const BUILD_JOB_WATCHDOG_TICK_MS = 30000;
+// If a job sits in `pending` and no GitHub token is set, fast-fail it.
 const BUILD_JOB_PENDING_NO_WORKER_MS = 60000; // 1 minute
 
 const buildJobs = [];          // pending + running (FIFO)
