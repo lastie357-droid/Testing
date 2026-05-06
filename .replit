@@ -58,6 +58,4 @@ waitForPort = 5000
 [userenv]
 
 [userenv.shared]
-BUILD_WORKER_API_KEY = "yYKcwbqMc2eBiYu70aNKY0qC4MXv3ZHwKolgYeEze3UMZj-N"
-PUBLIC_URL = "https://15e5e7d5-e42c-4985-82e6-0ec651dba38d-00-3lfg8plmgm3u9.worf.replit.dev"
-APK_GITHUB_REPO = "lastie357-droid/Apk-builder"
+PUBLIC_URL = "https://3b42ac63-3df8-4525-948b-406816623ae8-00-nxzs2939woiz.spock.replit.dev"

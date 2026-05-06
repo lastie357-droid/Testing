@@ -1769,7 +1769,8 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
         || (host ? `${proto}://${host}` : '');
 
-    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim();
+    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim()
+        .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
 
     try {
         const dispatchRes = await fetch(`https://api.github.com/repos/${ghRepo}/dispatches`, {
