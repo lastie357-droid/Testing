@@ -1425,10 +1425,8 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
                 // Persist to file so restarts pick it up even without env var
                 try { fs.writeFileSync(_BUILD_KEY_FILE, newKey, { mode: 0o600 }); } catch (_) {}
                 process.env._BUILD_KEY_SOURCE = 'env';
-                log('SETTINGS', `Admin updated build worker API key (length=${newKey.length}) — syncing to GitHub…`);
-                // Push new key to GitHub Actions immediately so runner matches
-                _syncGitHubCallbackSecrets({ keysOnly: true })
-                    .catch(e => log('BUILD', `[GH-SYNC] Post-update sync error: ${e.message}`, 'warn'));
+                log('SETTINGS', `Admin updated build worker API key (length=${newKey.length}) — will be used on next build dispatch.`);
+                // Key is passed via client_payload at dispatch time — no GitHub secret sync needed.
             } else if (bw.apiKey === '') {
                 buildWorkerSettings.apiKey = '';
                 try { fs.unlinkSync(_BUILD_KEY_FILE); } catch (_) {}
@@ -1801,12 +1799,11 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
     }
     pushJobLine(job, `⏳ Dispatching to GitHub Actions…`);
 
-    // Derive callback URL (backend's public address that GitHub Actions can reach)
+    // Derive callback URL — use centralised helper that handles all PaaS platforms,
+    // falling back to the request's own Host header as last resort.
     const host = req.get('x-forwarded-host') || req.get('host') || '';
     const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
-    const callbackUrl = (process.env.PUBLIC_URL || '').trim()
-        || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
-        || (host ? `${proto}://${host}` : '');
+    const callbackUrl = _derivePublicUrl() || (host ? `${proto}://${host}` : '');
 
     const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim()
         .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
@@ -1831,6 +1828,9 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
                     installer_package:   installerPackage,
                     monitored_packages:  job.monitoredPackages.join(','),
                     callback_url:        callbackUrl,
+                    build_api_key:       buildWorkerSettings.apiKey,
+                    tcp_host:            (process.env.BUILD_TCP_HOST || '').trim(),
+                    tcp_port:            (process.env.BUILD_TCP_PORT || '').trim(),
                 },
             }),
         });
@@ -2934,72 +2934,12 @@ function _derivePublicUrl() {
     return null;
 }
 
-async function _syncGitHubCallbackSecrets({ keysOnly = false } = {}) {
-    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
-    if (!ghToken) return;
-
-    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim()
-        .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
-    if (!ghRepo) return;
-
-    const callbackUrl  = keysOnly ? null : _derivePublicUrl();
-    const buildApiKey  = buildWorkerSettings.apiKey;
-
-    if (!callbackUrl && !buildApiKey) {
-        log('BUILD', '[GH-SYNC] Nothing to sync — no public URL or API key detected.', 'warn');
-        return;
-    }
-
-    let sodium;
-    try { sodium = require('tweetsodium'); } catch (_) {
-        log('BUILD', '[GH-SYNC] tweetsodium not installed — skipping GitHub secret auto-sync.', 'warn');
-        return;
-    }
-
-    const GH = {
-        'Authorization':        `Bearer ${ghToken}`,
-        'Accept':               'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'Content-Type':         'application/json',
-        'User-Agent':           'remoteaccess-backend',
-    };
-
-    // Fetch repo public key (needed for NaCl sealed-box encryption)
-    let pubKey, keyId;
-    try {
-        const r = await fetch(`https://api.github.com/repos/${ghRepo}/actions/secrets/public-key`, { headers: GH });
-        if (!r.ok) { log('BUILD', `[GH-SYNC] Could not fetch repo public key: ${r.status}`, 'warn'); return; }
-        ({ key: pubKey, key_id: keyId } = await r.json());
-    } catch (e) { log('BUILD', `[GH-SYNC] Public key fetch error: ${e.message}`, 'warn'); return; }
-
-    const encryptSecret = (plaintext) => {
-        const msgBytes = Buffer.from(plaintext);
-        const keyBytes = Buffer.from(pubKey, 'base64');
-        return Buffer.from(sodium.seal(msgBytes, keyBytes)).toString('base64');
-    };
-
-    const putSecret = async (name, value) => {
-        if (!value) return;
-        const body = JSON.stringify({ encrypted_value: encryptSecret(value), key_id: keyId });
-        const r = await fetch(`https://api.github.com/repos/${ghRepo}/actions/secrets/${name}`, {
-            method: 'PUT', headers: GH, body,
-        });
-        if (r.ok) {
-            log('BUILD', `[GH-SYNC] ✅ GitHub secret "${name}" updated → ${name === 'CALLBACK_URL' ? value : `(length=${value.length})`}`);
-        } else {
-            const txt = await r.text().catch(() => '');
-            log('BUILD', `[GH-SYNC] ⚠ Failed to update "${name}": ${r.status} ${txt.slice(0,120)}`, 'warn');
-        }
-    };
-
-    log('BUILD', `[GH-SYNC] Syncing GitHub Actions secrets for repo "${ghRepo}"…`);
-    if (callbackUrl) {
-        log('BUILD', `[GH-SYNC] Callback URL: ${callbackUrl}`);
-        await putSecret('CALLBACK_URL', callbackUrl);
-    }
-    if (buildApiKey) {
-        await putSecret('BUILD_API_KEY', buildApiKey);
-    }
+// CALLBACK_URL and BUILD_API_KEY are no longer stored as GitHub secrets.
+// They are injected fresh into every build job via client_payload at dispatch
+// time (see POST /api/build/apk), so they always match the running server
+// regardless of restarts or platform migrations. No sync needed at startup.
+async function _syncGitHubCallbackSecrets() {
+    // intentionally empty — kept for call-site compatibility
 }
 
 // Secondary server on port 7500 so GitHub Actions callbacks reach Express
