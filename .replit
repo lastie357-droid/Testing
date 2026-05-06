@@ -58,4 +58,3 @@ waitForPort = 5000
 [userenv]
 
 [userenv.shared]
-PUBLIC_URL = "https://3b42ac63-3df8-4525-948b-406816623ae8-00-nxzs2939woiz.spock.replit.dev"
