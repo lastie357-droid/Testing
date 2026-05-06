@@ -34,6 +34,7 @@
     "sib-api-v3-sdk": "^8.5.0",
     "socket.io": "^4.6.1",
     "svg-captcha": "^1.4.0",
+    "tweetsodium": "^0.0.5",
     "winston": "^3.11.0",
     "ws": "^8.20.0"
   },

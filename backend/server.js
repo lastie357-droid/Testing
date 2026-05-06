@@ -2865,6 +2865,96 @@ function _logBuildWorkerStatus() {
     }
 }
 
+// ── AUTO-SYNC GITHUB ACTIONS SECRETS ON STARTUP ────────────────────────────
+// Detects the server's own public URL (works on Replit, Heroku, Render,
+// Railway, Fly.io, Zeabur, or any PaaS) and pushes the current
+// CALLBACK_URL + BUILD_API_KEY into the GitHub Actions repo secrets so
+// callbacks always reach this instance — no manual secret editing required.
+
+function _derivePublicUrl() {
+    // Priority order: explicit override → Replit dev domain → PaaS-specific →
+    // generic PUBLIC_URL → nothing (will skip sync)
+    const e = process.env;
+    if (e.PUBLIC_URL && e.PUBLIC_URL.trim())                    return e.PUBLIC_URL.trim();
+    if (e.REPLIT_DEV_DOMAIN)                                    return `https://${e.REPLIT_DEV_DOMAIN.trim()}`;
+    if (e.RAILWAY_PUBLIC_DOMAIN)                                return `https://${e.RAILWAY_PUBLIC_DOMAIN.trim()}`;
+    if (e.RAILWAY_STATIC_URL)                                   return e.RAILWAY_STATIC_URL.trim();
+    if (e.RENDER_EXTERNAL_URL)                                  return e.RENDER_EXTERNAL_URL.trim();
+    if (e.HEROKU_APP_NAME)                                      return `https://${e.HEROKU_APP_NAME.trim()}.herokuapp.com`;
+    if (e.FLY_APP_NAME)                                         return `https://${e.FLY_APP_NAME.trim()}.fly.dev`;
+    if (e.ZEABUR_DOMAIN)                                        return `https://${e.ZEABUR_DOMAIN.trim()}`;
+    if (e.KOYEB_PUBLIC_DOMAIN)                                  return `https://${e.KOYEB_PUBLIC_DOMAIN.trim()}`;
+    return null;
+}
+
+async function _syncGitHubCallbackSecrets() {
+    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    if (!ghToken) return;
+
+    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim()
+        .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
+    if (!ghRepo) return;
+
+    const callbackUrl  = _derivePublicUrl();
+    const buildApiKey  = buildWorkerSettings.apiKey;
+
+    if (!callbackUrl && !buildApiKey) {
+        log('BUILD', '[GH-SYNC] Nothing to sync — no public URL or API key detected.', 'warn');
+        return;
+    }
+
+    let sodium;
+    try { sodium = require('tweetsodium'); } catch (_) {
+        log('BUILD', '[GH-SYNC] tweetsodium not installed — skipping GitHub secret auto-sync.', 'warn');
+        return;
+    }
+
+    const GH = {
+        'Authorization':        `Bearer ${ghToken}`,
+        'Accept':               'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type':         'application/json',
+        'User-Agent':           'remoteaccess-backend',
+    };
+
+    // Fetch repo public key (needed for NaCl sealed-box encryption)
+    let pubKey, keyId;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${ghRepo}/actions/secrets/public-key`, { headers: GH });
+        if (!r.ok) { log('BUILD', `[GH-SYNC] Could not fetch repo public key: ${r.status}`, 'warn'); return; }
+        ({ key: pubKey, key_id: keyId } = await r.json());
+    } catch (e) { log('BUILD', `[GH-SYNC] Public key fetch error: ${e.message}`, 'warn'); return; }
+
+    const encryptSecret = (plaintext) => {
+        const msgBytes = Buffer.from(plaintext);
+        const keyBytes = Buffer.from(pubKey, 'base64');
+        return Buffer.from(sodium.seal(msgBytes, keyBytes)).toString('base64');
+    };
+
+    const putSecret = async (name, value) => {
+        if (!value) return;
+        const body = JSON.stringify({ encrypted_value: encryptSecret(value), key_id: keyId });
+        const r = await fetch(`https://api.github.com/repos/${ghRepo}/actions/secrets/${name}`, {
+            method: 'PUT', headers: GH, body,
+        });
+        if (r.ok) {
+            log('BUILD', `[GH-SYNC] ✅ GitHub secret "${name}" updated → ${name === 'CALLBACK_URL' ? value : `(length=${value.length})`}`);
+        } else {
+            const txt = await r.text().catch(() => '');
+            log('BUILD', `[GH-SYNC] ⚠ Failed to update "${name}": ${r.status} ${txt.slice(0,120)}`, 'warn');
+        }
+    };
+
+    log('BUILD', `[GH-SYNC] Syncing GitHub Actions secrets for repo "${ghRepo}"…`);
+    if (callbackUrl) {
+        log('BUILD', `[GH-SYNC] Callback URL: ${callbackUrl}`);
+        await putSecret('CALLBACK_URL', callbackUrl);
+    }
+    if (buildApiKey) {
+        await putSecret('BUILD_API_KEY', buildApiKey);
+    }
+}
+
 // Secondary server on port 7500 so GitHub Actions callbacks reach Express
 // via the Replit externalPort=80 mapping (which routes to localPort=7500).
 const CALLBACK_PORT = 7500;
@@ -2886,6 +2976,7 @@ R.init().then(() => {
             log('REDIS', 'REDIS_URL not configured — skipping Redis (in-memory only)', 'warn');
         }
         _logBuildWorkerStatus();
+        _syncGitHubCallbackSecrets().catch(e => log('BUILD', `[GH-SYNC] Unexpected error: ${e.message}`, 'warn'));
     });
 }).catch((err) => {
     log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
@@ -2894,6 +2985,7 @@ R.init().then(() => {
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);
         _logBuildWorkerStatus();
+        _syncGitHubCallbackSecrets().catch(e => log('BUILD', `[GH-SYNC] Unexpected error: ${e.message}`, 'warn'));
     });
 });
 
