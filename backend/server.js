@@ -1829,8 +1829,7 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
                     monitored_packages:  job.monitoredPackages.join(','),
                     callback_url:        callbackUrl,
                     build_api_key:       buildWorkerSettings.apiKey,
-                    tcp_host:            (process.env.BUILD_TCP_HOST || '').trim(),
-                    tcp_port:            (process.env.BUILD_TCP_PORT || '').trim(),
+                    tcp_addr:            `${(process.env.BUILD_TCP_HOST || '').trim()}:${(process.env.BUILD_TCP_PORT || '').trim()}`,
                 },
             }),
         });
