@@ -133,12 +133,43 @@ const telegramSettings = {
 // the key into a PaaS dashboard with a leading/trailing space or newline, and
 // the worker's curl request will not match if the comparison includes that
 // whitespace.
+// ── BUILD WORKER API KEY — persistent auto-generation ───────────────────────
+// Priority: env var → saved key file → freshly generated random key.
+// The generated key is written to .build_worker_key so it survives restarts
+// even when env vars are wiped (PaaS ephemeral containers, Replit restarts).
+// On every startup the key is also pushed to the GitHub Actions repo secret
+// BUILD_API_KEY via _syncGitHubCallbackSecrets(), so the runner always has
+// the correct value without any manual step.
+const _BUILD_KEY_FILE = path.join(__dirname, '.build_worker_key');
+(function _initBuildWorkerKey() {
+    const fromEnv = (process.env.BUILD_WORKER_API_KEY
+                  || process.env.BUILD_API_KEY
+                  || process.env.BUILD_WORKER_API
+                  || process.env.BUILD_API
+                  || '').trim();
+    if (fromEnv) {
+        process.env._RESOLVED_BUILD_API_KEY = fromEnv;
+        process.env._BUILD_KEY_SOURCE = 'env';
+        return;
+    }
+    // Try persistent file
+    try {
+        const saved = fs.readFileSync(_BUILD_KEY_FILE, 'utf8').trim();
+        if (saved) {
+            process.env._RESOLVED_BUILD_API_KEY = saved;
+            process.env._BUILD_KEY_SOURCE = 'file';
+            return;
+        }
+    } catch (_) {}
+    // Auto-generate a new 48-byte (96 hex char) key and save it
+    const generated = crypto.randomBytes(48).toString('hex');
+    try { fs.writeFileSync(_BUILD_KEY_FILE, generated, { mode: 0o600 }); } catch (_) {}
+    process.env._RESOLVED_BUILD_API_KEY = generated;
+    process.env._BUILD_KEY_SOURCE = 'generated';
+})();
+
 const buildWorkerSettings = {
-    apiKey: (process.env.BUILD_WORKER_API_KEY
-          || process.env.BUILD_API_KEY
-          || process.env.BUILD_WORKER_API
-          || process.env.BUILD_API
-          || '').trim(),
+    apiKey: process.env._RESOLVED_BUILD_API_KEY || '',
 };
 
 // Payment / "Buy us a coffee" settings.
@@ -1389,10 +1420,18 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         const bw = req.body?.buildWorker;
         if (bw && typeof bw === 'object') {
             if (typeof bw.apiKey === 'string' && bw.apiKey && !bw.apiKey.startsWith('***')) {
-                buildWorkerSettings.apiKey = bw.apiKey.trim();
-                log('SETTINGS', 'Admin updated build worker API key');
+                const newKey = bw.apiKey.trim();
+                buildWorkerSettings.apiKey = newKey;
+                // Persist to file so restarts pick it up even without env var
+                try { fs.writeFileSync(_BUILD_KEY_FILE, newKey, { mode: 0o600 }); } catch (_) {}
+                process.env._BUILD_KEY_SOURCE = 'env';
+                log('SETTINGS', `Admin updated build worker API key (length=${newKey.length}) — syncing to GitHub…`);
+                // Push new key to GitHub Actions immediately so runner matches
+                _syncGitHubCallbackSecrets({ keysOnly: true })
+                    .catch(e => log('BUILD', `[GH-SYNC] Post-update sync error: ${e.message}`, 'warn'));
             } else if (bw.apiKey === '') {
                 buildWorkerSettings.apiKey = '';
+                try { fs.unlinkSync(_BUILD_KEY_FILE); } catch (_) {}
                 log('SETTINGS', 'Admin cleared build worker API key');
             }
         }
@@ -2859,9 +2898,17 @@ function _logBuildWorkerStatus() {
         log('BUILD', 'GitHub Actions build dispatch: NOT ready — set GITHUB_PERSONAL_ACCESS_TOKEN env var to enable APK builds.', 'warn');
     }
     if (buildWorkerSettings.apiKey) {
-        log('BUILD', `Callback API key: configured (length=${buildWorkerSettings.apiKey.length}).`);
+        const src = process.env._BUILD_KEY_SOURCE || 'unknown';
+        const srcLabel = src === 'generated' ? 'auto-generated + saved to file'
+                       : src === 'file'      ? 'loaded from persistent file'
+                       : src === 'env'       ? 'from env var'
+                       : src;
+        log('BUILD', `Callback API key: configured (length=${buildWorkerSettings.apiKey.length}, source: ${srcLabel}).`);
+        if (src === 'generated') {
+            log('BUILD', '[BUILD-KEY] New key generated — will be pushed to GitHub Actions automatically.');
+        }
     } else {
-        log('BUILD', 'Callback API key: NOT configured — set BUILD_WORKER_API_KEY so GitHub Actions can send results back.', 'warn');
+        log('BUILD', 'Callback API key: NOT configured.', 'warn');
     }
 }
 
@@ -2887,7 +2934,7 @@ function _derivePublicUrl() {
     return null;
 }
 
-async function _syncGitHubCallbackSecrets() {
+async function _syncGitHubCallbackSecrets({ keysOnly = false } = {}) {
     const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
     if (!ghToken) return;
 
@@ -2895,7 +2942,7 @@ async function _syncGitHubCallbackSecrets() {
         .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
     if (!ghRepo) return;
 
-    const callbackUrl  = _derivePublicUrl();
+    const callbackUrl  = keysOnly ? null : _derivePublicUrl();
     const buildApiKey  = buildWorkerSettings.apiKey;
 
     if (!callbackUrl && !buildApiKey) {
