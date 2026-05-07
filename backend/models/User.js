@@ -62,6 +62,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  telegramSendPasswordsOnConnect: {
+    type: Boolean,
+    default: false
+  },
   licenseAccepted: {
     type: Boolean,
     default: false

