@@ -96,7 +96,11 @@ const userSchema = new mongoose.Schema({
   },
   lastLogin: {
     type: Date
-  }
+  },
+  loginIps: [{
+    ip:  { type: String },
+    at:  { type: Date, default: Date.now },
+  }]
 });
 
 function generateAccessId() {

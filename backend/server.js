@@ -2517,6 +2517,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
             name:           u.name,
             role:           u.role,
             tier:           u.tier,
+            isActive:       u.isActive !== false,
             trialStartDate: u.trialStartDate,
             trialEndDate:   u.trialEndDate,
             paidUntil:      u.paidUntil,
@@ -2524,9 +2525,142 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
             subscription:   u.subscriptionStatus(),
             lastLogin:      u.lastLogin,
             createdAt:      u.createdAt,
-            paymentHistory: (u.paymentHistory || []).slice(-5),
+            paymentHistory: (u.paymentHistory || []).slice(-10),
+            loginIps:       (u.loginIps || []).slice(-20).reverse(),
         }));
         res.json({ success: true, users });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// POST /api/admin/users/:id/disable — toggle account enabled/disabled
+app.post('/api/admin/users/:id/disable', requireAdmin, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+        user.isActive = !user.isActive;
+        await user.save();
+        log('ADMIN', `${user.isActive ? 'Enabled' : 'Disabled'} account for ${user.email}`);
+        res.json({ success: true, isActive: user.isActive });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// DELETE /api/admin/users/:id — permanently delete a user account
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+        const email = user.email;
+        await User.deleteOne({ _id: req.params.id });
+        log('ADMIN', `Deleted user account: ${email}`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// POST /api/admin/users/:id/block-devices — disconnect all devices belonging to this user
+app.post('/api/admin/users/:id/block-devices', requireAdmin, async (req, res) => {
+    try {
+        let accessId = '';
+        try {
+            const user = await User.findById(req.params.id).select('accessId email');
+            if (user) accessId = user.accessId || '';
+        } catch (_) {}
+
+        if (!accessId) {
+            // Try in-memory scan if MongoDB unavailable
+            for (const [, dev] of inMemoryDevices) {
+                if (dev.accessId === req.body?.accessId) { accessId = dev.accessId; break; }
+            }
+            if (req.body?.accessId) accessId = req.body.accessId;
+        }
+
+        let blocked = 0;
+        if (accessId) {
+            for (const [deviceId, dev] of inMemoryDevices) {
+                if (dev.accessId !== accessId) continue;
+                const sock = deviceToTcp.get(deviceId);
+                if (sock) { try { sock.destroy(); } catch (_) {} blocked++; }
+            }
+        }
+
+        log('ADMIN', `Blocked ${blocked} device(s) for accessId=${accessId}`);
+        res.json({ success: true, blocked, accessId });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/admin/users/:id/report — download full account report as JSON
+app.get('/api/admin/users/:id/report', requireAdmin, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id, '-password');
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+        const devices = await getDeviceList(user.accessId);
+
+        const report = {
+            generatedAt:    new Date().toISOString(),
+            user: {
+                id:             user._id,
+                email:          user.email,
+                name:           user.name,
+                accessId:       user.accessId,
+                isActive:       user.isActive !== false,
+                createdAt:      user.createdAt,
+                lastLogin:      user.lastLogin,
+            },
+            subscription: {
+                tier:           user.tier,
+                trialStartDate: user.trialStartDate,
+                trialEndDate:   user.trialEndDate,
+                paidUntil:      user.paidUntil,
+                status:         user.subscriptionStatus(),
+                isTrialActive:  user.isTrialActive(),
+            },
+            loginIps:     (user.loginIps || []).slice(-20).reverse(),
+            devices:      devices.map(d => ({
+                deviceId:   d.deviceId,
+                deviceName: d.deviceName,
+                isOnline:   d.isOnline,
+                lastSeen:   d.lastSeen,
+                model:      d.deviceInfo?.model || '',
+                manufacturer: d.deviceInfo?.manufacturer || '',
+                androidVersion: d.deviceInfo?.androidVersion || '',
+            })),
+            paymentHistory: (user.paymentHistory || []),
+        };
+
+        const fmt = (req.query.format || 'json').toLowerCase();
+        if (fmt === 'csv') {
+            const rows = [
+                ['Field', 'Value'],
+                ['Email',         report.user.email],
+                ['Name',          report.user.name],
+                ['Access ID',     report.user.accessId || ''],
+                ['Account Status',report.user.isActive ? 'Active' : 'Disabled'],
+                ['Created',       report.user.createdAt],
+                ['Last Login',    report.user.lastLogin || ''],
+                ['Subscription',  report.subscription.status?.state || ''],
+                ['Paid Until',    report.subscription.paidUntil || ''],
+                ['Trial End',     report.subscription.trialEndDate || ''],
+                [],
+                ['--- Login IPs ---'],
+                ['IP', 'Date'],
+                ...report.loginIps.map(e => [e.ip, e.at]),
+                [],
+                ['--- Devices ---'],
+                ['Device ID', 'Name', 'Online', 'Last Seen', 'Model'],
+                ...report.devices.map(d => [d.deviceId, d.deviceName, d.isOnline ? 'Yes' : 'No', d.lastSeen || '', d.model]),
+                [],
+                ['--- Payment History ---'],
+                ['Date', 'Status', 'Days', 'Amount USD', 'Payment ID'],
+                ...report.paymentHistory.map(p => [p.receivedAt, p.status, p.extendedDays, p.amountUsd, p.paymentId]),
+            ];
+            const csv = rows.map(r => r.map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="report-${user.email}-${Date.now()}.csv"`);
+            return res.send(csv);
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="report-${user.email}-${Date.now()}.json"`);
+        res.json(report);
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 

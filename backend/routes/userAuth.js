@@ -114,6 +114,13 @@ router.post('/login', async (req, res) => {
       const ts   = Date.now().toString(36).toUpperCase().slice(-4);
       user.accessId = `${prefix}-${ts}-${rand}`;
     }
+    // Record login IP (keep last 20 unique IPs)
+    const rawIp = (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    if (rawIp) {
+      user.loginIps = user.loginIps || [];
+      user.loginIps = user.loginIps.filter(e => e.ip !== rawIp).slice(-19);
+      user.loginIps.push({ ip: rawIp, at: new Date() });
+    }
     await user.save();
 
     const token = jwt.sign(
