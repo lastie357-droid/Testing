@@ -68,7 +68,7 @@ router.post('/register', async (req, res) => {
     await user.save();
 
     const token = jwt.sign(
-      { userId: user._id, role: 'user' },
+      { userId: user._id, role: 'user', accessId: user.accessId || '' },
       getJwtSecret(),
       { expiresIn: '7d' }
     );
@@ -117,7 +117,7 @@ router.post('/login', async (req, res) => {
     await user.save();
 
     const token = jwt.sign(
-      { userId: user._id, role: 'user' },
+      { userId: user._id, role: 'user', accessId: user.accessId || '' },
       getJwtSecret(),
       { expiresIn: '7d' }
     );

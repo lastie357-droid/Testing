@@ -56,6 +56,13 @@ export default function SettingsTab() {
   const [savingPayment,  setSavingPayment]  = useState(false);
   const [copiedWebhook,  setCopiedWebhook]  = useState(false);
 
+  // Admin-only: Device assignment panel
+  const [adminDevices,      setAdminDevices]      = useState([]);
+  const [adminUsers,        setAdminUsers]        = useState([]);
+  const [loadingDevMgmt,    setLoadingDevMgmt]    = useState(false);
+  const [assigningDevice,   setAssigningDevice]   = useState(null);
+  const [assignTarget,      setAssignTarget]      = useState({});
+
   // Admin token takes precedence (admin dashboard); otherwise use user token.
   const adminToken = localStorage.getItem('admin_token');
   const userToken  = localStorage.getItem('user_token');
@@ -121,6 +128,48 @@ export default function SettingsTab() {
     if (role !== 'admin') return;
     loadPayment();
   }, [role]);
+
+  const loadDeviceManagement = async () => {
+    setLoadingDevMgmt(true);
+    try {
+      const [dr, ur] = await Promise.all([
+        fetch('/api/admin/devices', { headers }).then(r => r.json()),
+        fetch('/api/admin/users',   { headers }).then(r => r.json()),
+      ]);
+      if (dr.success) setAdminDevices(dr.devices || []);
+      if (ur.success) setAdminUsers(ur.users   || []);
+    } catch (_) {}
+    finally { setLoadingDevMgmt(false); }
+  };
+
+  useEffect(() => {
+    if (role !== 'admin') return;
+    loadDeviceManagement();
+  }, [role]);
+
+  const handleAssignDevice = async (deviceId) => {
+    const newAccessId = (assignTarget[deviceId] || '').trim();
+    setAssigningDevice(deviceId);
+    try {
+      const r = await fetch(`/api/admin/devices/${encodeURIComponent(deviceId)}/assign`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ accessId: newAccessId }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        showToast(`Device assigned to Access ID: ${newAccessId || '(none)'}`);
+        setAdminDevices(prev => prev.map(dev =>
+          dev.deviceId === deviceId ? { ...dev, accessId: newAccessId } : dev
+        ));
+      } else {
+        showToast(d.error || 'Assign failed', 'error');
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setAssigningDevice(null);
+    }
+  };
 
   const handleSavePayment = async () => {
     setSavingPayment(true);
@@ -646,6 +695,114 @@ bash build.sh --worker`}
               {savingWorker ? '⏳ Saving…' : '💾 Save Worker Key'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Device Assignment — ADMIN ONLY */}
+      {isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📱</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Device → User Assignment</div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                  Link any connected device to a user's Access ID so it appears in their dashboard
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={loadDeviceManagement}
+              disabled={loadingDevMgmt}
+              style={{
+                background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
+                borderRadius: 8, color: '#a5b4fc', padding: '6px 12px', fontSize: 11,
+                cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              {loadingDevMgmt ? '⏳' : '🔄 Refresh'}
+            </button>
+          </div>
+
+          {adminDevices.length === 0 ? (
+            <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+              {loadingDevMgmt ? 'Loading devices…' : 'No devices connected yet.'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {adminDevices.map(dev => {
+                const ownerUser = adminUsers.find(u => u.accessId === dev.accessId);
+                const isAssigning = assigningDevice === dev.deviceId;
+                return (
+                  <div key={dev.deviceId} style={{
+                    background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10,
+                    padding: '12px 14px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                        background: dev.isOnline ? '#22c55e' : '#64748b',
+                      }} />
+                      <span style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0' }}>
+                        {dev.deviceName || dev.deviceId}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+                        {dev.deviceId}
+                      </span>
+                      {dev.accessId ? (
+                        <span style={{
+                          marginLeft: 'auto', fontSize: 11, color: '#86efac',
+                          background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+                          borderRadius: 6, padding: '2px 8px',
+                        }}>
+                          {ownerUser ? `${ownerUser.email}` : dev.accessId}
+                        </span>
+                      ) : (
+                        <span style={{
+                          marginLeft: 'auto', fontSize: 11, color: '#f87171',
+                          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                          borderRadius: 6, padding: '2px 8px',
+                        }}>
+                          Unassigned
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        value={assignTarget[dev.deviceId] ?? (dev.accessId || '')}
+                        onChange={e => setAssignTarget(prev => ({ ...prev, [dev.deviceId]: e.target.value }))}
+                        style={{
+                          flex: 1, background: '#1e293b', border: '1px solid #334155',
+                          borderRadius: 7, padding: '7px 10px', color: '#e2e8f0',
+                          fontSize: 12, outline: 'none',
+                        }}
+                      >
+                        <option value="">— Unassigned —</option>
+                        {adminUsers.map(u => (
+                          <option key={u._id} value={u.accessId || ''}>
+                            {u.email} ({u.accessId || 'no ID'})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleAssignDevice(dev.deviceId)}
+                        disabled={isAssigning}
+                        style={{
+                          background: 'linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)',
+                          border: 'none', borderRadius: 7, color: '#fff',
+                          padding: '7px 16px', fontSize: 12, fontWeight: 600,
+                          cursor: isAssigning ? 'wait' : 'pointer',
+                          opacity: isAssigning ? 0.7 : 1,
+                        }}
+                      >
+                        {isAssigning ? '⏳' : 'Assign'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

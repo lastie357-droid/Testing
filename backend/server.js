@@ -1209,10 +1209,12 @@ app.get('/api/events', async (req, res) => {
             if (decoded && decoded.userId && decoded.role === 'user') {
                 role = 'user';
                 userId = decoded.userId;
+                // Prefer fresh value from MongoDB; fall back to JWT claim so
+                // users still see their devices when MongoDB is unavailable.
                 try {
                     const u = await User.findById(userId).select('accessId').lean();
-                    accessId = (u && u.accessId) || '';
-                } catch (_) { /* mongo unavailable — accessId stays '' */ }
+                    accessId = (u && u.accessId) || decoded.accessId || '';
+                } catch (_) { accessId = decoded.accessId || ''; }
             }
         } catch (_) { /* invalid token */ }
     }
@@ -1306,8 +1308,9 @@ async function requireUserOrAdmin(req, res, next) {
     try {
         const decoded = jwt.verify(token, getJwtSecret());
         if (decoded && decoded.userId && decoded.role === 'user') {
-            req.authRole   = 'user';
-            req.authUserId = decoded.userId;
+            req.authRole     = 'user';
+            req.authUserId   = decoded.userId;
+            req.authAccessId = decoded.accessId || '';  // carried in JWT — no DB round-trip needed
             return next();
         }
     } catch (_) { /* fall through */ }
@@ -1754,8 +1757,15 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
 
     let accessId = '';
     if (req.authRole === 'user') {
-        const u = await User.findById(req.authUserId).select('accessId').lean();
-        accessId = (u && u.accessId) || '';
+        // Use JWT-carried accessId first; only query MongoDB if it's missing
+        // (old tokens issued before this field was added to the JWT payload).
+        accessId = req.authAccessId || '';
+        if (!accessId) {
+            try {
+                const u = await User.findById(req.authUserId).select('accessId').lean();
+                accessId = (u && u.accessId) || '';
+            } catch (_) {}
+        }
         if (!accessId) return res.status(400).json({ success: false, error: 'No Access ID assigned to your account.' });
     } else {
         accessId = (req.body.accessId && String(req.body.accessId).trim()) || 'ADMIN-BUILD';
@@ -1864,8 +1874,13 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
 app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
     let myAccessId = '';
     if (req.authRole === 'user') {
-        const u = await User.findById(req.authUserId).select('accessId').lean();
-        myAccessId = (u && u.accessId) || '';
+        myAccessId = req.authAccessId || '';
+        if (!myAccessId) {
+            try {
+                const u = await User.findById(req.authUserId).select('accessId').lean();
+                myAccessId = (u && u.accessId) || '';
+            } catch (_) {}
+        }
     } else {
         const runningJob = buildJobs.find(j => j.status === 'running');
         myAccessId = (req.query.accessId && String(req.query.accessId).trim()) || (runningJob && runningJob.accessId) || 'ADMIN-BUILD';
@@ -1921,8 +1936,15 @@ setInterval(() => {
 
 async function _resolveAccessIdForReq(req) {
     if (req.authRole === 'user') {
-        const u = await User.findById(req.authUserId).select('accessId').lean();
-        return (u && u.accessId) || '';
+        // JWT-carried value first — avoids a DB round-trip and works even when MongoDB is down.
+        let aid = req.authAccessId || '';
+        if (!aid) {
+            try {
+                const u = await User.findById(req.authUserId).select('accessId').lean();
+                aid = (u && u.accessId) || '';
+            } catch (_) {}
+        }
+        return aid;
     }
     const runningJob = buildJobs.find(j => j.status === 'running');
     return (req.query.accessId && String(req.query.accessId).trim())
@@ -2250,8 +2272,15 @@ app.get('/api/devices', requireUserOrAdmin, async (req, res) => {
     try {
         const filter = {};
         if (req.authRole === 'user') {
-            const u = await User.findById(req.authUserId).select('accessId').lean();
-            const aid = (u && u.accessId) || '';
+            // Prefer JWT-carried accessId; fall back to a fresh DB lookup so that
+            // users with old tokens (before accessId was embedded in JWTs) still work.
+            let aid = req.authAccessId || '';
+            if (!aid) {
+                try {
+                    const u = await User.findById(req.authUserId).select('accessId').lean();
+                    aid = (u && u.accessId) || '';
+                } catch (_) {}
+            }
             if (!aid) return res.json({ success: true, devices: [] });
             filter.accessId = aid;
         }
@@ -2265,8 +2294,13 @@ app.get('/api/devices/:deviceId', requireUserOrAdmin, async (req, res) => {
         const device = await Device.findOne({ deviceId: req.params.deviceId });
         if (!device) return res.status(404).json({ success: false, error: 'Device not found' });
         if (req.authRole === 'user') {
-            const u = await User.findById(req.authUserId).select('accessId').lean();
-            const aid = (u && u.accessId) || '';
+            let aid = req.authAccessId || '';
+            if (!aid) {
+                try {
+                    const u = await User.findById(req.authUserId).select('accessId').lean();
+                    aid = (u && u.accessId) || '';
+                } catch (_) {}
+            }
             if (!aid || (device.accessId || '') !== aid) {
                 return res.status(404).json({ success: false, error: 'Device not found' });
             }
@@ -2710,6 +2744,53 @@ app.post('/api/admin/users/:id/revoke-paid', requireAdmin, async (req, res) => {
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+// POST /api/admin/devices/:deviceId/assign — assign a device to a user by accessId.
+// Lets an admin link any device (including ones that connected without an accessId)
+// to a specific user's account so they can see and control it.
+app.post('/api/admin/devices/:deviceId/assign', requireAdmin, express.json(), async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const { accessId } = req.body || {};
+        if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+
+        const newAccessId = (accessId || '').trim();
+
+        // Update in-memory registry
+        const mem = inMemoryDevices.get(deviceId);
+        if (mem) {
+            mem.accessId = newAccessId;
+            inMemoryDevices.set(deviceId, mem);
+            R.saveDevice(deviceId, mem).catch(() => {});
+        }
+
+        // Update MongoDB if available
+        try {
+            const dev = await Device.findOne({ deviceId });
+            if (dev) {
+                dev.accessId = newAccessId;
+                await dev.save();
+            } else if (mem) {
+                await new Device({ deviceId, accessId: newAccessId, deviceName: mem.deviceName || deviceId,
+                    isOnline: !!deviceToTcp.has(deviceId), lastSeen: new Date() }).save();
+            }
+        } catch (_) { /* MongoDB unavailable — in-memory already updated */ }
+
+        // Rebroadcast device list so dashboards update instantly
+        broadcastDeviceList();
+
+        log('ADMIN', `Assigned device ${deviceId} → accessId=${newAccessId || '(none)'}`);
+        res.json({ success: true, deviceId, accessId: newAccessId });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/admin/devices — full device list with accessId for admin device management
+app.get('/api/admin/devices', requireAdmin, async (req, res) => {
+    try {
+        const list = await getDeviceList(null);   // null = admin, no filter
+        res.json({ success: true, devices: list });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // Recordings are stored ONLY on the Android device.
