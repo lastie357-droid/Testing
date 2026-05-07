@@ -70,6 +70,44 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
         </div>
       )}
 
+      {devices.filter(d => !d.isOnline).length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div className="section-title" style={{ color: '#94a3b8' }}>Offline Devices</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+            {devices.filter(d => !d.isOnline).map(d => (
+              <div
+                key={d.deviceId}
+                style={{
+                  background: '#16213e',
+                  border: '1px solid #2d2d4e',
+                  borderLeft: '4px solid #475569',
+                  borderRadius: 10,
+                  padding: 16,
+                  opacity: 0.65,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 24, filter: 'grayscale(1)' }}>📱</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#94a3b8' }}>{d.deviceName || d.deviceId}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>
+                      {d.deviceInfo?.manufacturer} {d.deviceInfo?.model}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#475569' }}>
+                  Android {d.deviceInfo?.androidVersion || 'N/A'} &nbsp;·&nbsp;
+                  Last seen: {d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString() : 'Unknown'}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                  🔴 Offline
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <div className="section-title">Activity Log</div>
         <div className="activity-log">

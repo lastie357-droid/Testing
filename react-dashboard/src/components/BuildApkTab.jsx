@@ -315,8 +315,11 @@ export default function BuildApkTab({ user }) {
   const [downloads, setDownloads] = useState({ module: false, installer: false });
   const [workerOnline, setWorkerOnline] = useState(false);
   const [disclaimer, setDisclaimer] = useState(null); // { type: 'module'|'installer' }
+  const [apkExpiresAt, setApkExpiresAt] = useState(null);
+  const [expiryCountdown, setExpiryCountdown] = useState(null);
   const logEndRef = useRef(null);
   const pollIdRef = useRef(null);
+  const expiryTickRef = useRef(null);
 
   useEffect(() => {
     if (logEndRef.current) logEndRef.current.scrollTop = logEndRef.current.scrollHeight;
@@ -336,11 +339,33 @@ export default function BuildApkTab({ user }) {
         if (!d.running && d.isMyBuild && d.success_ != null) {
           setLastResult({ success: !!d.success_, error: d.error || null });
         }
+        if (d.apkExpiresAt) setApkExpiresAt(d.apkExpiresAt);
         return d;
       }
     } catch (_) { /* network blip */ }
     return null;
   }, []);
+
+  // Countdown ticker for APK expiry
+  useEffect(() => {
+    if (expiryTickRef.current) clearInterval(expiryTickRef.current);
+    if (!apkExpiresAt) { setExpiryCountdown(null); return; }
+    const tick = () => {
+      const ms = apkExpiresAt - Date.now();
+      if (ms <= 0) {
+        setExpiryCountdown(null);
+        setDownloads({ module: false, installer: false });
+        clearInterval(expiryTickRef.current);
+      } else {
+        const m = Math.floor(ms / 60000);
+        const s = Math.floor((ms % 60000) / 1000);
+        setExpiryCountdown(`${m}:${String(s).padStart(2, '0')}`);
+      }
+    };
+    tick();
+    expiryTickRef.current = setInterval(tick, 1000);
+    return () => clearInterval(expiryTickRef.current);
+  }, [apkExpiresAt]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
@@ -588,6 +613,15 @@ export default function BuildApkTab({ user }) {
 
           <span style={{ flex: 1 }} />
 
+          {(downloads.module || downloads.installer) && expiryCountdown && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, color: '#fbbf24',
+              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)',
+              borderRadius: 6, padding: '3px 10px',
+            }}>
+              ⏳ Files expire in {expiryCountdown}
+            </span>
+          )}
           {downloads.module && (
             <button style={styles.dlBtn} onClick={() => downloadApk('module')}>⬇ Module.apk</button>
           )}

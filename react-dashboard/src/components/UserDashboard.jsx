@@ -6,6 +6,7 @@ import Overview from './Overview.jsx';
 import StatusBar from './StatusBar.jsx';
 import SettingsTab from './SettingsTab.jsx';
 import BuildApkTab from './BuildApkTab.jsx';
+import TelegramTab from './TelegramTab.jsx';
 import PaywallOverlay from './PaywallOverlay.jsx';
 
 const styles = {
@@ -435,9 +436,10 @@ export default function UserDashboard({ user, onLogout }) {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #1e1b4b' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {[
-                    { id: 'overview', label: '📊 Overview' },
-                    { id: 'build',    label: '📦 Build APK' },
-                    { id: 'settings', label: '⚙️ Settings' },
+                    { id: 'overview',       label: '📊 Overview' },
+                    { id: 'build',          label: '📦 Build APK' },
+                    { id: 'notifications',  label: '📢 Notifications' },
+                    { id: 'settings',       label: '⚙️ Settings' },
                   ].map(tab => (
                     <button
                       key={tab.id}
@@ -465,6 +467,8 @@ export default function UserDashboard({ user, onLogout }) {
                   <SettingsTab />
                 ) : globalView === 'build' ? (
                   <BuildApkTab user={user} />
+                ) : globalView === 'notifications' ? (
+                  <TelegramTab />
                 ) : (
                   <Overview
                     devices={devices}

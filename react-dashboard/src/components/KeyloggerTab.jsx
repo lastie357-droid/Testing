@@ -166,8 +166,15 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
               </span>
             )}
             {filterPkg && <span style={{ color: '#7c3aed' }}>· Filtered: {filterPkg}</span>}
-            <span style={{ marginLeft: 'auto', color: '#94a3b8', fontSize: 11 }}>
-              Stored per-day in hidden internal storage • Downloads by file
+            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>Stored per-day in hidden internal storage • Downloads by file</span>
+              <span title="Live keylogger Telegram streaming — configure in Notifications tab" style={{
+                fontSize: 10, fontWeight: 600, color: '#a78bfa',
+                background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.3)',
+                borderRadius: 6, padding: '2px 7px', cursor: 'default',
+              }}>
+                ✈️ Telegram stream → Notifications tab
+              </span>
             </span>
           </div>
           <div className="kl-feed">
