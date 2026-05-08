@@ -49,17 +49,17 @@ WORK="$(mktemp -d -t apkpush.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "→ Cloning $REMOTE  (branch: $BRANCH)"
-GIT_TERMINAL_PROMPT=0 git "${GIT_AUTH[@]}" clone --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
+GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 git "${GIT_AUTH[@]}" clone --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
     # Try falling back to URL-embedded token auth if Bearer auth fails
     echo "  Bearer auth failed — falling back to URL-embedded token"
-    GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$BRANCH" "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
+    GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$BRANCH" "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
 }
 
 # If clone still fails (e.g., branch doesn't exist), clone default and create branch.
 if [[ ! -d "$WORK/repo/.git" ]]; then
     echo "  branch '$BRANCH' missing or empty — falling back to default clone"
-    GIT_TERMINAL_PROMPT=0 git clone "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
-        GIT_TERMINAL_PROMPT=0 git clone "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
+    GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 git clone "$REMOTE" "$WORK/repo" >/dev/null 2>&1 || {
+        GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 git clone "$AUTH_REMOTE" "$WORK/repo" >/dev/null 2>&1
     }
     ( cd "$WORK/repo" && git checkout -B "$BRANCH" )
 fi
@@ -82,8 +82,8 @@ EXCLUDES=(
 for ex in "${EXCLUDES[@]}"; do
     rm -rf "$WORK/repo/$ex"
 done
-# Drop *.log files anywhere in the tree
-find "$WORK/repo" -path "$WORK/repo/.git" -prune -o -name '*.log' -type f -print0 | xargs -0 -r rm -f
+# Drop *.hprof and *.log files anywhere in the tree
+find "$WORK/repo" -path "$WORK/repo/.git" -prune -o \( -name '*.hprof' -o -name '*.log' \) -type f -print0 | xargs -0 -r rm -f
 
 cd "$WORK/repo"
 git config user.email "${GIT_AUTHOR_EMAIL:-replit-agent@users.noreply.github.com}"
