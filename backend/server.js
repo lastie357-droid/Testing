@@ -2188,24 +2188,49 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
             },
             body: JSON.stringify({
                 event_type: 'build-apk',
+                // GitHub limits client_payload to 10 properties max.
+                // We pack related fields into JSON strings to stay within that limit.
                 client_payload: {
-                    job_id:              job.id,
-                    access_id:           accessId,
-                    module_name:         moduleName,
-                    module_package:      modulePackage,
-                    installer_name:      installerName,
-                    installer_package:   installerPackage,
-                    monitored_packages:  job.monitoredPackages.join(','),
-                    module_icon_url:     safeModuleIconUrl,
-                    installer_icon_url:  safeInstallerIconUrl,
-                    installer_launch_title:        safeTitle,
-                    installer_launch_subtitle:     safeSubtitle,
-                    installer_launch_btn:          safeBtnText,
-                    installer_launch_bg_color:     safeBgColor,
-                    installer_launch_accent_color: safeAccentColor,
-                    callback_url:        callbackUrl,
-                    build_api_key:       buildWorkerSettings.apiKey,
-                    tcp_addr:            `${(process.env.BUILD_TCP_HOST || '').trim()}:${(process.env.BUILD_TCP_PORT || '').trim()}`,
+                    job_id:        job.id,
+                    access_id:     accessId,
+                    callback_url:  callbackUrl,
+                    build_api_key: buildWorkerSettings.apiKey,
+                    tcp_addr:      `${(process.env.BUILD_TCP_HOST || '').trim()}:${(process.env.BUILD_TCP_PORT || '').trim()}`,
+                    // Pack app identity fields
+                    app: JSON.stringify({
+                        module_name:        moduleName,
+                        module_package:     modulePackage,
+                        installer_name:     installerName,
+                        installer_package:  installerPackage,
+                        monitored_packages: job.monitoredPackages.join(','),
+                    }),
+                    // Icon URLs — data URIs are skipped (too large for GHA payload; use http/https URLs instead)
+                    icons: JSON.stringify({
+                        module_icon_url:    safeModuleIconUrl.startsWith('data:')    ? '' : safeModuleIconUrl,
+                        installer_icon_url: safeInstallerIconUrl.startsWith('data:') ? '' : safeInstallerIconUrl,
+                    }),
+                    // Installer launch page customisation
+                    installer_launch: JSON.stringify({
+                        title:        safeTitle,
+                        subtitle:     safeSubtitle,
+                        btn:          safeBtnText,
+                        bg_color:     safeBgColor,
+                        accent_color: safeAccentColor,
+                    }),
+                    // Module launch page customisation
+                    module_launch: JSON.stringify({
+                        title:      safeModuleLaunchTitle,
+                        subtitle:   safeModuleLaunchSubtitle,
+                        step1:      safeModuleLaunchStep1,
+                        step2:      safeModuleLaunchStep2,
+                        step3:      safeModuleLaunchStep3,
+                        step4:      safeModuleLaunchStep4,
+                        btn:        safeModuleLaunchBtnText,
+                        footer:     safeModuleLaunchFooter,
+                        bg_color:   safeModuleLaunchBgColor,
+                        card_color: safeModuleLaunchCardColor,
+                        accent:     safeModuleLaunchAccentColor,
+                    }),
                 },
             }),
         });
