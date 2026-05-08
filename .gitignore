@@ -16,7 +16,6 @@ uploads/
 # System
 .DS_Store
 Thumbs.db
-Apk-builder
 # Gradle
 .gradle/
 gradle/wrapper/gradle-wrapper.jar
