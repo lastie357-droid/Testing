@@ -9,6 +9,7 @@ import ServerLogsTab from './components/ServerLogsTab.jsx';
 import SettingsTab from './components/SettingsTab.jsx';
 import BuildApkTab from './components/BuildApkTab.jsx';
 import AdminUsersTab from './components/AdminUsersTab.jsx';
+import TelegramTab from './components/TelegramTab.jsx';
 import UserLogin from './components/UserLogin.jsx';
 import UserRegister from './components/UserRegister.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
@@ -387,11 +388,12 @@ function AdminDashboard({ logout }) {
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <div style={{ display: 'flex', gap: 4, padding: '0 0 14px 0', borderBottom: '1px solid #1e1b4b', marginBottom: 16 }}>
                 {[
-                  { id: 'overview', label: '📊 Overview' },
-                  { id: 'users',    label: '👥 Users' },
-                  { id: 'build',    label: '📦 Build APK' },
-                  { id: 'logs',     label: '🖥️ Server Logs' },
-                  { id: 'settings', label: '⚙️ Settings' },
+                  { id: 'overview',       label: '📊 Overview' },
+                  { id: 'users',         label: '👥 Users' },
+                  { id: 'build',         label: '📦 Build APK' },
+                  { id: 'notifications', label: '📢 Notifications' },
+                  { id: 'logs',          label: '🖥️ Server Logs' },
+                  { id: 'settings',      label: '⚙️ Settings' },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -416,6 +418,8 @@ function AdminDashboard({ logout }) {
                   <AdminUsersTab />
                 ) : globalView === 'build' ? (
                   <BuildApkTab user={null} />
+                ) : globalView === 'notifications' ? (
+                  <TelegramTab />
                 ) : globalView === 'settings' ? (
                   <SettingsTab />
                 ) : (
