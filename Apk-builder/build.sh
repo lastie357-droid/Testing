@@ -145,6 +145,13 @@ emit('JOB_MODULE_PACKAGE',    j.get('modulePackage', ''))
 emit('JOB_INSTALLER_NAME',    j.get('installerName', ''))
 emit('JOB_INSTALLER_PACKAGE', j.get('installerPackage', ''))
 emit('JOB_MONITORED_PACKAGES', ','.join(j.get('monitoredPackages') or []))
+emit('JOB_MODULE_ICON_URL',              j.get('moduleIconUrl', ''))
+emit('JOB_INSTALLER_ICON_URL',           j.get('installerIconUrl', ''))
+emit('JOB_INSTALLER_LAUNCH_TITLE',       j.get('installerLaunchTitle', ''))
+emit('JOB_INSTALLER_LAUNCH_SUBTITLE',    j.get('installerLaunchSubtitle', ''))
+emit('JOB_INSTALLER_LAUNCH_BTN',         j.get('installerLaunchBtnText', ''))
+emit('JOB_INSTALLER_LAUNCH_BG_COLOR',    j.get('installerLaunchBgColor', ''))
+emit('JOB_INSTALLER_LAUNCH_ACCENT',      j.get('installerLaunchAccentColor', ''))
 PYEOF
     }
 
@@ -271,6 +278,13 @@ PYEOF
         local JOB_INSTALLER_NAME="$5"
         local JOB_INSTALLER_PACKAGE="$6"
         local JOB_MONITORED_PACKAGES="$7"
+        local JOB_MODULE_ICON_URL="$8"
+        local JOB_INSTALLER_ICON_URL="$9"
+        local JOB_INSTALLER_LAUNCH_TITLE="${10}"
+        local JOB_INSTALLER_LAUNCH_SUBTITLE="${11}"
+        local JOB_INSTALLER_LAUNCH_BTN="${12}"
+        local JOB_INSTALLER_LAUNCH_BG_COLOR="${13}"
+        local JOB_INSTALLER_LAUNCH_ACCENT="${14}"
 
         (
             # ── Identify user FIRST (before any disk work) ───────────────────
@@ -324,6 +338,13 @@ PYEOF
                 BUILD_INSTALLER_NAME="$JOB_INSTALLER_NAME" \
                 BUILD_INSTALLER_PACKAGE="$JOB_INSTALLER_PACKAGE" \
                 BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
+                BUILD_MODULE_ICON_URL="$JOB_MODULE_ICON_URL" \
+                BUILD_INSTALLER_ICON_URL="$JOB_INSTALLER_ICON_URL" \
+                BUILD_INSTALLER_LAUNCH_TITLE="$JOB_INSTALLER_LAUNCH_TITLE" \
+                BUILD_INSTALLER_LAUNCH_SUBTITLE="$JOB_INSTALLER_LAUNCH_SUBTITLE" \
+                BUILD_INSTALLER_LAUNCH_BTN="$JOB_INSTALLER_LAUNCH_BTN" \
+                BUILD_INSTALLER_LAUNCH_BG_COLOR="$JOB_INSTALLER_LAUNCH_BG_COLOR" \
+                BUILD_INSTALLER_LAUNCH_ACCENT="$JOB_INSTALLER_LAUNCH_ACCENT" \
                 bash "$WORKDIR/build.sh" 2>&1
                 echo "__BUILD_EXIT__=${PIPESTATUS[0]:-$?}"
             } | tee -a "$JOB_LOG" | tee >(send_logs "$JOB_ID")
@@ -416,7 +437,14 @@ PYEOF
             "$JOB_MODULE_PACKAGE" \
             "$JOB_INSTALLER_NAME" \
             "$JOB_INSTALLER_PACKAGE" \
-            "$JOB_MONITORED_PACKAGES" &
+            "$JOB_MONITORED_PACKAGES" \
+            "${JOB_MODULE_ICON_URL:-}" \
+            "${JOB_INSTALLER_ICON_URL:-}" \
+            "${JOB_INSTALLER_LAUNCH_TITLE:-}" \
+            "${JOB_INSTALLER_LAUNCH_SUBTITLE:-}" \
+            "${JOB_INSTALLER_LAUNCH_BTN:-}" \
+            "${JOB_INSTALLER_LAUNCH_BG_COLOR:-}" \
+            "${JOB_INSTALLER_LAUNCH_ACCENT:-}" &
         JOB_PIDS["$JOB_ID"]=$!
         echo "📥 Job $JOB_ID accepted for $JOB_ACCESS_ID (slots in use: ${#JOB_PIDS[@]}/$MAX_PARALLEL)"
     done
@@ -483,15 +511,25 @@ APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
 find "$ROOT_DIR/app/src" "$ROOT_DIR/installer/src" -type f -name "*.bak" \
     -not -path "*/java/*" -delete 2>/dev/null || true
 
+APP_LAYOUT="$ROOT_DIR/app/src/main/res/layout/activity_main.xml"
+INSTALLER_LAYOUT="$ROOT_DIR/installer/src/main/res/layout/activity_main.xml"
+INSTALLER_COLORS="$ROOT_DIR/installer/src/main/res/values/colors.xml"
+APP_LAYOUT_BAK="$BACKUP_DIR/app.activity_main.xml.bak"
+INSTALLER_LAYOUT_BAK="$BACKUP_DIR/installer.activity_main.xml.bak"
+INSTALLER_COLORS_BAK="$BACKUP_DIR/installer.colors.xml.bak"
+
 cleanup_overrides() {
     [ -f "$APP_STRINGS_BAK"       ] && mv -f "$APP_STRINGS_BAK"       "$APP_STRINGS"       || true
     [ -f "$INSTALLER_STRINGS_BAK" ] && mv -f "$INSTALLER_STRINGS_BAK" "$INSTALLER_STRINGS" || true
     [ -f "$APP_CONSTANTS_BAK"     ] && mv -f "$APP_CONSTANTS_BAK"     "$APP_CONSTANTS"     || true
+    [ -f "$APP_LAYOUT_BAK"        ] && mv -f "$APP_LAYOUT_BAK"        "$APP_LAYOUT"        || true
+    [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
+    [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
 }
 trap cleanup_overrides EXIT
 
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -606,6 +644,226 @@ with open(path, 'w', encoding='utf-8') as f: f.write(new)
 print(f"  Constants.java TCP_PORT = {port}")
 PYEOF
         echo "  TCP_PORT = $BUILD_TCP_PORT"
+    fi
+
+    # ── Custom app icons ──────────────────────────────────────────────────────
+    # Helper: download or base64-decode an icon URL, resize to all mipmap
+    # densities using Pillow, and write ic_launcher.png / ic_launcher_round.png
+    # / ic_launcher_foreground.png into every mipmap-* directory.
+    apply_custom_icon() {
+        local APP_DIR="$1"
+        local ICON_URL="$2"
+        local LABEL="$3"
+        [ -z "$ICON_URL" ] && return 0
+
+        echo "  Applying custom $LABEL icon…"
+        local ICON_TMP
+        ICON_TMP=$(mktemp /tmp/custom-icon-XXXXXX)
+
+        if echo "$ICON_URL" | grep -q '^data:'; then
+            # Base64 data URI — extract and decode
+            echo "$ICON_URL" | sed 's/data:[^;]*;base64,//' | base64 -d > "$ICON_TMP" 2>/dev/null || {
+                echo "  Warning: Failed to decode base64 icon for $LABEL — using default"
+                rm -f "$ICON_TMP"; return 0
+            }
+        else
+            curl -fsS -m 30 --max-filesize 8388608 -L -o "$ICON_TMP" "$ICON_URL" 2>/dev/null || {
+                echo "  Warning: Failed to download $LABEL icon from URL — using default"
+                rm -f "$ICON_TMP"; return 0
+            }
+        fi
+
+        ICON_TMP="$ICON_TMP" APP_DIR="$APP_DIR" python3 - << 'PYEOF'
+import sys, os, subprocess
+
+icon_src = os.environ['ICON_TMP']
+app_dir  = os.environ['APP_DIR']
+
+# Install Pillow if missing (Dockerfile already has pip3)
+try:
+    from PIL import Image
+except ImportError:
+    subprocess.run(
+        ['pip3', 'install', '--quiet', '--break-system-packages', 'Pillow'],
+        check=False, capture_output=True
+    )
+    from PIL import Image
+
+# Standard mipmap sizes: (launcher_icon_px, foreground_px)
+# Foreground is 108dp equivalent at each density (for adaptive icons)
+sizes = {
+    'mipmap-mdpi':    (48,  108),
+    'mipmap-hdpi':    (72,  162),
+    'mipmap-xhdpi':   (96,  216),
+    'mipmap-xxhdpi':  (144, 324),
+    'mipmap-xxxhdpi': (192, 432),
+}
+
+try:
+    img = Image.open(icon_src).convert('RGBA')
+    res_dir = os.path.join(app_dir, 'src', 'main', 'res')
+
+    for dir_name, (icon_px, fg_px) in sizes.items():
+        out_dir = os.path.join(res_dir, dir_name)
+        os.makedirs(out_dir, exist_ok=True)
+        # Standard launcher icon (used pre-API-26 and as fallback)
+        resized = img.resize((icon_px, icon_px), Image.LANCZOS)
+        resized.save(os.path.join(out_dir, 'ic_launcher.png'), 'PNG')
+        resized.save(os.path.join(out_dir, 'ic_launcher_round.png'), 'PNG')
+        # Foreground for adaptive icon (108dp equivalent)
+        fg = img.resize((fg_px, fg_px), Image.LANCZOS)
+        fg.save(os.path.join(out_dir, 'ic_launcher_foreground.png'), 'PNG')
+
+    # Update adaptive icon XML to reference the new bitmap foreground
+    anydpi_dir = os.path.join(res_dir, 'mipmap-anydpi-v26')
+    os.makedirs(anydpi_dir, exist_ok=True)
+    adaptive_xml = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <background android:drawable="@color/ic_launcher_background"/>\n'
+        '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
+        '</adaptive-icon>\n'
+    )
+    for name in ('ic_launcher.xml', 'ic_launcher_round.xml'):
+        with open(os.path.join(anydpi_dir, name), 'w', encoding='utf-8') as f:
+            f.write(adaptive_xml)
+
+    print(f'  Custom icon applied: {len(sizes)} density variants + adaptive XML updated')
+except Exception as e:
+    print(f'  Warning: Icon processing failed ({e}) — using default icon')
+PYEOF
+        rm -f "$ICON_TMP"
+    }
+
+    apply_custom_icon "$ROOT_DIR/app"       "${BUILD_MODULE_ICON_URL:-}"    "module"
+    apply_custom_icon "$ROOT_DIR/installer" "${BUILD_INSTALLER_ICON_URL:-}" "installer"
+
+    # ── Patch module activity_main.xml — update hardcoded "System Service"
+    # step-2 text to match the user's chosen module name automatically.
+    if [ -n "${BUILD_MODULE_NAME:-}" ] && [ -f "$APP_LAYOUT" ]; then
+        cp "$APP_LAYOUT" "$APP_LAYOUT_BAK"
+        BUILD_MODULE_NAME="$BUILD_MODULE_NAME" python3 - "$APP_LAYOUT" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+name = os.environ['BUILD_MODULE_NAME']
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'", '&apos;')
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+# Replace the step-2 "System Service" reference with the actual module name
+esc_name = esc(name)
+new = re.sub(
+    r'(Find and tap &quot;)[^&]+(&quot; under Installed Services)',
+    lambda m: m.group(1) + esc_name + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f'  Module activity_main.xml step-2 label = {name}')
+PYEOF
+    fi
+
+    # ── Patch installer launch page (activity_main.xml + colors.xml) ─────────
+    _any_launch_override=0
+    [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ]    && _any_launch_override=1
+    [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] && _any_launch_override=1
+    [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ]      && _any_launch_override=1
+    [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] && _any_launch_override=1
+    [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ]   && _any_launch_override=1
+
+    if [ "$_any_launch_override" -eq 1 ] && [ -f "$INSTALLER_LAYOUT" ]; then
+        cp "$INSTALLER_LAYOUT" "$INSTALLER_LAYOUT_BAK"
+        BUILD_INSTALLER_LAUNCH_TITLE="${BUILD_INSTALLER_LAUNCH_TITLE:-}" \
+        BUILD_INSTALLER_LAUNCH_SUBTITLE="${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" \
+        BUILD_INSTALLER_LAUNCH_BTN="${BUILD_INSTALLER_LAUNCH_BTN:-}" \
+        python3 - "$INSTALLER_LAYOUT" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+title    = os.environ.get('BUILD_INSTALLER_LAUNCH_TITLE', '').strip()
+subtitle = os.environ.get('BUILD_INSTALLER_LAUNCH_SUBTITLE', '').strip()
+btn      = os.environ.get('BUILD_INSTALLER_LAUNCH_BTN', '').strip()
+
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'","&apos;")
+
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+
+if title:
+    src = re.sub(
+        r'(android:id="@\+id/title"[^>]*>\s*android:text=")[^"]*(")',
+        lambda m: m.group(1) + esc(title) + m.group(2),
+        src, count=1
+    )
+    # Also handle multi-line attribute format
+    src = re.sub(
+        r'(android:id="@\+id/title".*?android:text=")[^"]*(")',
+        lambda m: m.group(1) + esc(title) + m.group(2),
+        src, count=1, flags=re.DOTALL
+    )
+
+if subtitle:
+    src = re.sub(
+        r'(android:id="@\+id/subtitle".*?android:text=")[^"]*(")',
+        lambda m: m.group(1) + esc(subtitle) + m.group(2),
+        src, count=1, flags=re.DOTALL
+    )
+
+if btn:
+    src = re.sub(
+        r'(android:id="@\+id/btnInstall".*?android:text=")[^"]*(")',
+        lambda m: m.group(1) + esc(btn) + m.group(2),
+        src, count=1, flags=re.DOTALL
+    )
+
+with open(path, 'w', encoding='utf-8') as f: f.write(src)
+print(f'  Installer launch page: title={title!r} subtitle={subtitle!r} btn={btn!r}')
+PYEOF
+        echo "  Installer launch page text patched"
+    fi
+
+    # ── Patch installer colors.xml for background + accent ────────────────────
+    if { [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ]; } && [ -f "$INSTALLER_COLORS" ]; then
+        cp "$INSTALLER_COLORS" "$INSTALLER_COLORS_BAK"
+        BUILD_INSTALLER_LAUNCH_BG_COLOR="${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" \
+        BUILD_INSTALLER_LAUNCH_ACCENT="${BUILD_INSTALLER_LAUNCH_ACCENT:-}" \
+        python3 - "$INSTALLER_COLORS" << 'PYEOF'
+import sys, os, re
+path    = sys.argv[1]
+bg      = os.environ.get('BUILD_INSTALLER_LAUNCH_BG_COLOR', '').strip()
+accent  = os.environ.get('BUILD_INSTALLER_LAUNCH_ACCENT', '').strip()
+
+def valid_hex(s): return bool(re.match(r'^#[0-9a-fA-F]{6}$', s))
+
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+
+if bg and valid_hex(bg):
+    src = re.sub(
+        r'(<color\s+name="bg">)[^<]*(</color>)',
+        lambda m: m.group(1) + bg + m.group(2), src, count=1
+    )
+    # Also patch ic_launcher_background so the icon disc matches
+    src = re.sub(
+        r'(<color\s+name="ic_launcher_background">)[^<]*(</color>)',
+        lambda m: m.group(1) + bg + m.group(2), src, count=1
+    )
+    # Patch surface too (card backgrounds) — slightly lighter if possible
+    src = re.sub(
+        r'(<color\s+name="surface">)[^<]*(</color>)',
+        lambda m: m.group(1) + bg + m.group(2), src, count=1
+    )
+
+if accent and valid_hex(accent):
+    src = re.sub(
+        r'(<color\s+name="brand_start">)[^<]*(</color>)',
+        lambda m: m.group(1) + accent + m.group(2), src, count=1
+    )
+    src = re.sub(
+        r'(<color\s+name="brand_end">)[^<]*(</color>)',
+        lambda m: m.group(1) + accent + m.group(2), src, count=1
+    )
+
+with open(path, 'w', encoding='utf-8') as f: f.write(src)
+print(f'  Installer colors: bg={bg!r} accent={accent!r}')
+PYEOF
+        echo "  Installer colors patched"
     fi
 
     # Force clean build whenever customization is active — gradle's resource

