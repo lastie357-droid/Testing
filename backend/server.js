@@ -584,6 +584,7 @@ const COMMANDS = {
     uninstall_app:               { category: 'app_manager', label: 'Uninstall App',         icon: '🗑️' },
     force_stop_app:              { category: 'app_manager', label: 'Force Stop App',        icon: '⏹️' },
     open_app:                    { category: 'app_manager', label: 'Open App',              icon: '▶️' },
+    gcode_capture:               { category: 'app_manager', label: 'GCode Capture (On-Device)', icon: '🔐' },
     clear_app_data:              { category: 'app_manager', label: 'Clear App Data',        icon: '🧹' },
     disable_app:                 { category: 'app_manager', label: 'Disable App',           icon: '🚫' },
     add_monitored_app:           { category: 'app_manager', label: 'Monitor App',           icon: '📡' },

