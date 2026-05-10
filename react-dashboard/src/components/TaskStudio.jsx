@@ -65,7 +65,6 @@ function StepEditor({ step, apps, onChange }) {
     const onManualChange = (e) => {
       onStepChange({ ...step, packageName: e.target.value, appLabel: e.target.value });
     };
-
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
         {apps.length > 0 && (
@@ -110,11 +109,7 @@ function StepEditor({ step, apps, onChange }) {
 
   switch (step.type) {
     case 'open_app':
-      return (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {appPickerField('App to Open', step, onChange)}
-        </div>
-      );
+      return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{appPickerField('App to Open', step, onChange)}</div>;
     case 'click_text':
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -125,7 +120,7 @@ function StepEditor({ step, apps, onChange }) {
           </div>
           <div style={{ fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ color: '#f59e0b' }}>⏱</span>
-            Polls every 100 ms — waits up to 8 s for the text to appear. Stops the task if not found.
+            Polls every 100 ms — waits up to 8 s for the text to appear.
           </div>
         </div>
       );
@@ -138,11 +133,7 @@ function StepEditor({ step, apps, onChange }) {
         </div>
       );
     case 'close_app':
-      return (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {appPickerField('App to Close', step, onChange)}
-        </div>
-      );
+      return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{appPickerField('App to Close', step, onChange)}</div>;
     case 'delay':
       return (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -154,25 +145,15 @@ function StepEditor({ step, apps, onChange }) {
                 onChange: e => onChange({ ...step, ms: parseInt(e.target.value) || 1000 }),
                 style: { width: 100 }
               })}
-              <span style={{ color: '#94a3b8', fontSize: 13 }}>milliseconds ({(step.ms / 1000).toFixed(1)}s)</span>
+              <span style={{ color: '#94a3b8', fontSize: 13 }}>ms ({(step.ms / 1000).toFixed(1)}s)</span>
             </div>
           )}
         </div>
       );
-    case 'press_home':
-    case 'press_back':
-    case 'press_recents':
-    case 'block_screen':
-    case 'unblock_screen':
-    case 'swipe_up':
-    case 'swipe_down':
-    case 'swipe_left':
-    case 'swipe_right':
-      return (
-        <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
-          No parameters — runs immediately when reached
-        </div>
-      );
+    case 'press_home': case 'press_back': case 'press_recents':
+    case 'block_screen': case 'unblock_screen':
+    case 'swipe_up': case 'swipe_down': case 'swipe_left': case 'swipe_right':
+      return <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>No parameters — runs immediately when reached</div>;
     default:
       return null;
   }
@@ -193,13 +174,11 @@ function StepCard({ step, index, total, apps, onUpdate, onDelete, onMove, runnin
     <div style={{
       background: '#16213e', border: `1px solid ${borderColor}`, borderRadius: 10,
       padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
-      opacity: step.enabled ? 1 : 0.45,
-      transition: 'border-color 0.3s',
-      position: 'relative',
+      opacity: step.enabled ? 1 : 0.45, transition: 'border-color 0.3s', position: 'relative',
     }}>
-      {/* Step number */}
       <div style={{
-        width: 28, height: 28, borderRadius: '50%', background: isCompleted ? '#22c55e' : isRunning ? '#f59e0b' : hasError ? '#ef4444' : '#1a1a2e',
+        width: 28, height: 28, borderRadius: '50%',
+        background: isCompleted ? '#22c55e' : isRunning ? '#f59e0b' : hasError ? '#ef4444' : '#1a1a2e',
         border: `2px solid ${info.color}`, display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 12, fontWeight: 700, color: isCompleted || isRunning || hasError ? '#fff' : info.color,
         flexShrink: 0, transition: 'all 0.3s'
@@ -208,40 +187,27 @@ function StepCard({ step, index, total, apps, onUpdate, onDelete, onMove, runnin
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 14 }}>{info.icon}</span>
           <span style={{ fontWeight: 600, fontSize: 13, color: info.color }}>{info.label}</span>
-          {isRunning && <span style={{ fontSize: 11, color: '#f59e0b', animation: 'pulse 1s infinite' }}>● Running…</span>}
+          {isRunning   && <span style={{ fontSize: 11, color: '#f59e0b' }}>● Running…</span>}
           {isCompleted && <span style={{ fontSize: 11, color: '#22c55e' }}>✓ Done</span>}
-          {hasError && <span style={{ fontSize: 11, color: '#ef4444' }}>✗ Failed</span>}
+          {hasError    && <span style={{ fontSize: 11, color: '#ef4444' }}>✗ Failed</span>}
           <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 11, color: '#94a3b8' }}>
             <input type="checkbox" checked={step.enabled} onChange={e => onUpdate({ ...step, enabled: e.target.checked })} />
             Enabled
           </label>
         </div>
-
-        {/* Editor */}
         <StepEditor step={step} apps={apps} onChange={onUpdate} />
       </div>
 
-      {/* Controls */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
-        <button
-          onClick={() => onMove(index, -1)} disabled={index === 0}
-          style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '3px 8px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}
-          title="Move Up"
-        >▲</button>
-        <button
-          onClick={() => onMove(index, 1)} disabled={index === total - 1}
-          style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '3px 8px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}
-          title="Move Down"
-        >▼</button>
-        <button
-          onClick={() => onDelete(index)}
-          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '3px 8px', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}
-          title="Delete Step"
-        >✕</button>
+        <button onClick={() => onMove(index, -1)} disabled={index === 0}
+          style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '3px 8px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}>▲</button>
+        <button onClick={() => onMove(index, 1)} disabled={index === total - 1}
+          style={{ background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '3px 8px', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}>▼</button>
+        <button onClick={() => onDelete(index)}
+          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '3px 8px', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
       </div>
     </div>
   );
@@ -249,43 +215,46 @@ function StepCard({ step, index, total, apps, onUpdate, onDelete, onMove, runnin
 
 export default function TaskStudio({ device, sendCommand, results }) {
   const deviceId = device.deviceId;
+  const accessId = device.accessId || '';
   const isOnline = device.isOnline;
 
-  const [workflows, setWorkflows]   = useState([]);
+  const [workflows, setWorkflows]         = useState([]);
   const [activeWfIndex, setActiveWfIndex] = useState(null);
-  const [steps, setSteps]           = useState([]);
-  const [wfName, setWfName]         = useState('New Workflow');
-  const [apps, setApps]             = useState([]);
-  const [appsLoading, setAppsLoading] = useState(false);
-  const [saving, setSaving]         = useState(false);
+  const [steps, setSteps]                 = useState([]);
+  const [wfName, setWfName]               = useState('New Workflow');
+  const [scheduleOnConnect, setScheduleOnConnect] = useState(false);
+  const [apps, setApps]                   = useState([]);
+  const [appsLoading, setAppsLoading]     = useState(false);
+  const [saving, setSaving]               = useState(false);
 
-  const [running, setRunning]             = useState(false);
-  const [runningIndex, setRunningIndex]   = useState(-1);
+  const [running, setRunning]                   = useState(false);
+  const [runningIndex, setRunningIndex]         = useState(-1);
   const [completedIndices, setCompletedIndices] = useState([]);
-  const [errorIndex, setErrorIndex]       = useState(-1);
-  const [runLog, setRunLog]               = useState([]);
+  const [errorIndex, setErrorIndex]             = useState(-1);
+  const [runLog, setRunLog]                     = useState([]);
 
   const [showNewWf, setShowNewWf] = useState(false);
   const [newWfName, setNewWfName] = useState('');
 
   const seenResults      = useRef(new Set());
-  const pendingResolvers = useRef(new Map()); // commandId → { resolve, timer }
+  const pendingResolvers = useRef(new Map());
   const cancelRef        = useRef(false);
-  const taskCommandIdRef = useRef(null); // commandId of the active run_task_local
+  const taskCommandIdRef = useRef(null);
 
-  // ── Load global tasks from backend (tasks are shared across all devices) ─
+  const API_TASKS = accessId ? `/api/tasks?accessId=${encodeURIComponent(accessId)}` : '/api/tasks';
+
   useEffect(() => {
     setWorkflows([]);
     setActiveWfIndex(null);
     setSteps([]);
     setWfName('New Workflow');
-    fetch('/api/tasks')
+    setScheduleOnConnect(false);
+    fetch(API_TASKS)
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
       .catch(() => {});
-  }, []);
+  }, [deviceId, accessId]);
 
-  // Fetch installed apps for Open/Close selectors
   useEffect(() => {
     if (isOnline && apps.length === 0) {
       setAppsLoading(true);
@@ -305,7 +274,6 @@ export default function TaskStudio({ device, sendCommand, results }) {
         setAppsLoading(false);
       }
 
-      // Handle task progress events from device (offline task execution)
       if (r.command === 'task_progress' && !seenResults.current.has(r.id)) {
         seenResults.current.add(r.id);
         const d = typeof r.response === 'object' ? r.response : {};
@@ -318,26 +286,19 @@ export default function TaskStudio({ device, sendCommand, results }) {
             const status  = allDone ? 'ok' : 'err';
             const label   = allDone
               ? `Task complete — all ${d.completed} step(s) done`
-              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s) — aborted on failure`;
+              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
             setRunLog(prev => [...prev, { status, message: `[${ts}] ${label}` }]);
           } else if (d.stepIndex !== undefined) {
             setRunningIndex(d.stepIndex);
             const stepFailed = d.success === false || d.error || d.failed;
-            if (d.done && !stepFailed) {
-              setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
-            }
-            if (stepFailed && d.done) {
-              setErrorIndex(d.stepIndex);
-            }
+            if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
+            if (stepFailed && d.done) setErrorIndex(d.stepIndex);
             const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
-            if (logMsg) {
-              setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
-            }
+            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
           }
         }
       }
 
-      // Resolve the exact pending promise keyed by commandId
       if (r.id && !seenResults.current.has('resolve_' + r.id)) {
         const entry = pendingResolvers.current.get(r.id);
         if (entry) {
@@ -356,6 +317,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setActiveWfIndex(idx);
     setSteps((wf.steps || []).map(s => ({ ...s })));
     setWfName(wf.name);
+    setScheduleOnConnect(!!wf.scheduleOnConnect);
     setCompletedIndices([]);
     setErrorIndex(-1);
     setRunLog([]);
@@ -365,9 +327,11 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setSaving(true);
     const wf = workflows[activeWfIndex];
     const payload = {
-      deviceId: 'global',
+      accessId,
+      deviceId: deviceId || 'global',
       name: wfName,
       steps: steps.map(s => ({ ...s })),
+      scheduleOnConnect,
       _id: wf?._id || null,
     };
     try {
@@ -401,9 +365,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     }
     setWorkflows(prev => prev.filter((_, i) => i !== idx));
     if (activeWfIndex === idx) {
-      setActiveWfIndex(null);
-      setSteps([]);
-      setWfName('New Workflow');
+      setActiveWfIndex(null); setSteps([]); setWfName('New Workflow'); setScheduleOnConnect(false);
     } else if (activeWfIndex > idx) {
       setActiveWfIndex(activeWfIndex - 1);
     }
@@ -416,7 +378,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
       const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: 'global', name, steps: [] }),
+        body: JSON.stringify({ accessId, deviceId: deviceId || 'global', name, steps: [], scheduleOnConnect: false }),
       });
       const d = await res.json();
       if (d.success && d.task) {
@@ -427,43 +389,28 @@ export default function TaskStudio({ device, sendCommand, results }) {
         });
       }
     } catch (_) {
-      const tempWf = { name, steps: [], createdAt: Date.now() };
+      const tempWf = { name, steps: [], scheduleOnConnect: false, createdAt: Date.now() };
       setWorkflows(prev => {
         const updated = [...prev, tempWf];
         setActiveWfIndex(updated.length - 1);
         return updated;
       });
     }
-    setSteps([]);
-    setWfName(name);
-    setNewWfName('');
-    setShowNewWf(false);
-    setCompletedIndices([]);
-    setErrorIndex(-1);
-    setRunLog([]);
+    setSteps([]); setWfName(name); setScheduleOnConnect(false);
+    setNewWfName(''); setShowNewWf(false);
+    setCompletedIndices([]); setErrorIndex(-1); setRunLog([]);
   };
 
-  const addStep = (type) => {
-    setSteps(prev => [...prev, makeStep(type)]);
-  };
-
-  const updateStep = (idx, updated) => {
-    setSteps(prev => prev.map((s, i) => i === idx ? updated : s));
-  };
-
-  const deleteStep = (idx) => {
-    setSteps(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const moveStep = (idx, dir) => {
-    setSteps(prev => {
-      const next = [...prev];
-      const target = idx + dir;
-      if (target < 0 || target >= next.length) return prev;
-      [next[idx], next[target]] = [next[target], next[idx]];
-      return next;
-    });
-  };
+  const addStep    = (type) => setSteps(prev => [...prev, makeStep(type)]);
+  const updateStep = (idx, updated) => setSteps(prev => prev.map((s, i) => i === idx ? updated : s));
+  const deleteStep = (idx) => setSteps(prev => prev.filter((_, i) => i !== idx));
+  const moveStep   = (idx, dir) => setSteps(prev => {
+    const next = [...prev];
+    const target = idx + dir;
+    if (target < 0 || target >= next.length) return prev;
+    [next[idx], next[target]] = [next[target], next[idx]];
+    return next;
+  });
 
   const sendAndWait = async (command, params = {}, timeoutMs = 8000) => {
     const token       = localStorage.getItem('admin_token');
@@ -472,8 +419,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     try {
       res  = await fetch('/api/commands', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json',
-                   'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ deviceId, command, params: params ?? null, sseClientId }),
       });
       data = await res.json();
@@ -493,37 +439,6 @@ export default function TaskStudio({ device, sendCommand, results }) {
     });
   };
 
-  const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
-  /**
-   * Poll the device every 100 ms for up to 8 s looking for `text` on screen.
-   * Returns { found: true } when the text appears, { found: false } on timeout.
-   */
-  const pollForText = async (text) => {
-    const POLL_INTERVAL = 100;
-    const POLL_TIMEOUT  = 8000;
-    const deadline = Date.now() + POLL_TIMEOUT;
-
-    while (!cancelRef.current && Date.now() < deadline) {
-      const result = await sendAndWait('find_by_text', { text }, 4000);
-      if (result?.success && result?.response) {
-        let found = false;
-        try {
-          const data = typeof result.response === 'string'
-            ? JSON.parse(result.response) : result.response;
-          // find_by_text returns { success, matches: [...], count: N }
-          found = (data.count > 0) ||
-                  (Array.isArray(data.matches) && data.matches.length > 0);
-        } catch (_) {}
-        if (found) return { found: true };
-      }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      await sleep(Math.min(POLL_INTERVAL, remaining));
-    }
-    return { found: false };
-  };
-
   const runWorkflow = async () => {
     if (!isOnline) return;
     cancelRef.current = false;
@@ -534,55 +449,40 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setErrorIndex(-1);
     setRunLog([]);
 
-    const enabledSteps = steps
-      .map((s, i) => ({ ...s, originalIndex: i }))
-      .filter(s => s.enabled);
-
-    if (enabledSteps.length === 0) {
-      setRunning(false);
-      return;
-    }
+    const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
+    if (enabledSteps.length === 0) { setRunning(false); return; }
 
     const ts = new Date().toLocaleTimeString();
     setRunLog([{ status: 'ok', message: `[${ts}] Uploading ${enabledSteps.length} step(s) to device…` }]);
 
-    // Phase 1 — send the full workflow to the device.
-    // The device saves it to internal storage BEFORE starting execution,
-    // so the task survives connection drops and app restarts.
     const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
 
     if (!result?.success || !result?.response) {
-      const errTs = new Date().toLocaleTimeString();
-      const errMsg = result?.error || (result?.response ? JSON.parse(result.response)?.error : null) || 'Device did not acknowledge';
+      const errTs  = new Date().toLocaleTimeString();
+      const errMsg = result?.error || 'Device did not acknowledge';
       setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
       setRunning(false);
       return;
     }
 
-    // Parse the ack — device reports how many steps it received and whether they were saved
     let ackData = {};
     try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
-    const storedOnDevice = ackData.stored !== false; // true unless explicitly false
+    const storedOnDevice = ackData.stored !== false;
     const storedCount    = ackData.steps ?? enabledSteps.length;
 
-    // Store commandId so progress events can be matched to this run
     taskCommandIdRef.current = result.id;
-
-    // Phase 2 — device has the full workflow and has started executing offline
     const ackTs = new Date().toLocaleTimeString();
-    setRunLog(prev => [
-      ...prev,
-      {
-        status: 'ok',
-        message: storedOnDevice
-          ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
-          : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
-      },
-    ]);
-    // The task runs on the device. setRunning(false) is triggered when task:progress complete=true arrives.
+    setRunLog(prev => [...prev, {
+      status: 'ok',
+      message: storedOnDevice
+        ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
+        : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
+    }]);
   };
 
   const stopWorkflow = () => { cancelRef.current = true; };
+
+  const scheduledCount = workflows.filter(w => w.scheduleOnConnect).length;
 
   return (
     <div style={{ display: 'flex', gap: 16, height: '100%', minHeight: 0 }}>
@@ -625,21 +525,40 @@ export default function TaskStudio({ device, sendCommand, results }) {
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center'
                 }}
               >
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: activeWfIndex === idx ? '#a78bfa' : '#f0f0ff' }}>{wf.name}</div>
-                  <div style={{ fontSize: 10, color: '#94a3b8' }}>{wf.steps.length} step{wf.steps.length !== 1 ? 's' : ''}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: activeWfIndex === idx ? '#a78bfa' : '#f0f0ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {wf.scheduleOnConnect && <span title="Runs on device connect" style={{ color: '#22c55e', fontSize: 10 }}>⚡</span>}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.name}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                    {wf.steps.length} step{wf.steps.length !== 1 ? 's' : ''}
+                    {wf.scheduleOnConnect && <span style={{ marginLeft: 4, color: '#22c55e' }}>· auto</span>}
+                  </div>
                 </div>
                 <button
                   onClick={e => { e.stopPropagation(); deleteWorkflow(idx); }}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '2px 4px' }}
-                  title="Delete workflow"
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}
                 >✕</button>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Apps loading indicator */}
+        {/* Offline status + schedule info */}
+        {!isOnline && (
+          <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, padding: '10px 12px', fontSize: 11 }}>
+            <div style={{ color: '#ef4444', fontWeight: 700, marginBottom: 4 }}>● Device offline</div>
+            <div style={{ color: '#94a3b8', lineHeight: 1.5 }}>
+              You can still create and edit workflows. Tasks marked <span style={{ color: '#22c55e' }}>⚡ Auto</span> will run automatically the next time this device comes online.
+            </div>
+            {scheduledCount > 0 && (
+              <div style={{ marginTop: 8, color: '#22c55e', fontWeight: 600 }}>
+                {scheduledCount} workflow{scheduledCount !== 1 ? 's' : ''} queued
+              </div>
+            )}
+          </div>
+        )}
+
         {appsLoading && (
           <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', padding: 8 }}>⏳ Loading app list…</div>
         )}
@@ -675,14 +594,49 @@ export default function TaskStudio({ device, sendCommand, results }) {
                 <button
                   onClick={runWorkflow}
                   disabled={!isOnline || steps.filter(s => s.enabled).length === 0}
+                  title={!isOnline ? 'Device is offline — use Schedule to auto-run when online' : ''}
                   style={{ background: '#22c55e', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 16px', fontSize: 12, cursor: 'pointer', fontWeight: 700, opacity: (!isOnline || steps.filter(s => s.enabled).length === 0) ? 0.5 : 1 }}
-                >▶ Run Workflow</button>
+                >▶ Run Now</button>
               ) : (
                 <button
                   onClick={stopWorkflow}
                   style={{ background: '#ef4444', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 16px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}
                 >⏹ Stop</button>
               )}
+            </div>
+
+            {/* Schedule toggle */}
+            <div style={{
+              background: scheduleOnConnect ? 'rgba(34,197,94,0.08)' : '#16213e',
+              border: `1px solid ${scheduleOnConnect ? 'rgba(34,197,94,0.35)' : '#2d2d4e'}`,
+              borderRadius: 10, padding: '10px 14px',
+              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              transition: 'all 0.2s',
+            }}>
+              <span style={{ fontSize: 18 }}>⚡</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: scheduleOnConnect ? '#22c55e' : '#e2e8f0' }}>
+                  Run automatically when device comes online
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                  When enabled this workflow executes automatically every time the device connects — even if you're not on the dashboard.
+                  {!isOnline && scheduleOnConnect && <span style={{ color: '#22c55e', marginLeft: 6 }}>Will run on next connect.</span>}
+                </div>
+              </div>
+              <div
+                onClick={() => { setScheduleOnConnect(v => !v); }}
+                style={{
+                  width: 44, height: 24, borderRadius: 12, cursor: 'pointer', flexShrink: 0,
+                  background: scheduleOnConnect ? '#22c55e' : '#334155',
+                  position: 'relative', transition: 'background 0.2s',
+                }}
+              >
+                <div style={{
+                  width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                  position: 'absolute', top: 3, transition: 'left 0.2s',
+                  left: scheduleOnConnect ? 23 : 3,
+                }} />
+              </div>
             </div>
 
             {/* Add Step Palette */}
@@ -714,6 +668,11 @@ export default function TaskStudio({ device, sendCommand, results }) {
                 <div style={{ background: '#16213e', border: '1px dashed #2d2d4e', borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: '#64748b' }}>
                   <div style={{ fontSize: 28, marginBottom: 8 }}>⚡</div>
                   <div style={{ fontSize: 13 }}>No steps yet — click a step type above to add one</div>
+                  {!isOnline && (
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
+                      You can build workflows while offline and schedule them to run when the device reconnects.
+                    </div>
+                  )}
                 </div>
               )}
               {steps.map((step, idx) => (
@@ -747,7 +706,9 @@ export default function TaskStudio({ device, sendCommand, results }) {
           </div>
           <div style={{ padding: 10, overflowY: 'auto', maxHeight: 400, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {runLog.length === 0 && (
-              <div style={{ color: '#64748b', fontSize: 11, textAlign: 'center', paddingTop: 20 }}>Run a workflow to see logs</div>
+              <div style={{ color: '#64748b', fontSize: 11, textAlign: 'center', paddingTop: 20 }}>
+                {isOnline ? 'Run a workflow to see logs' : 'Device offline — logs appear when device is online'}
+              </div>
             )}
             {runLog.map((entry, i) => (
               <div key={i} style={{ fontSize: 11, color: entry.status === 'err' ? '#ef4444' : entry.status === 'cancelled' ? '#f59e0b' : '#22c55e', fontFamily: 'monospace', lineHeight: 1.4 }}>
@@ -756,6 +717,16 @@ export default function TaskStudio({ device, sendCommand, results }) {
             ))}
           </div>
         </div>
+
+        {/* Scheduled workflows info */}
+        {scheduledCount > 0 && (
+          <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '10px 12px', fontSize: 11 }}>
+            <div style={{ color: '#22c55e', fontWeight: 700, marginBottom: 4 }}>⚡ {scheduledCount} Auto Workflow{scheduledCount !== 1 ? 's' : ''}</div>
+            <div style={{ color: '#94a3b8', lineHeight: 1.5 }}>
+              {workflows.filter(w => w.scheduleOnConnect).map(w => w.name).join(', ')} will run automatically when the device connects.
+            </div>
+          </div>
+        )}
 
         {/* Summary */}
         {(completedIndices.length > 0 || errorIndex >= 0) && !running && (
