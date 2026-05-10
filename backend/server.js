@@ -832,7 +832,7 @@ async function processMessage(clientId, clientType, event, data) {
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
 
-        // Dispatch scheduled tasks (scheduleOnConnect) to the device on every fresh connect
+        // Dispatch scheduled tasks (scheduleOnConnect) to the device on fresh connect — runs only once then clears the flag
         if (isFreshConnect) {
             try {
                 const scheduledTasks = await Task.find({
@@ -850,7 +850,9 @@ async function processMessage(clientId, clientType, event, data) {
                         command:   'run_task_local',
                         params:    { steps: task.steps || [], taskName: task.name },
                     });
-                    log('TASK', `Auto-dispatched scheduled task "${task.name}" → ${deviceId}`);
+                    log('TASK', `Auto-dispatched scheduled task "${task.name}" → ${deviceId} (one-shot — clearing flag)`);
+                    // Clear the flag so it does not run again on the next connect
+                    try { await Task.findByIdAndUpdate(task._id, { scheduleOnConnect: false }); } catch (_) {}
                 }
             } catch (_) {}
         }

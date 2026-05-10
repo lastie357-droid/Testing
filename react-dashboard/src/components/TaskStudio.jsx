@@ -11,6 +11,8 @@ const STEP_TYPES = [
   { type: 'press_recents',   label: 'Press Recents',      icon: '⬜',  color: '#06b6d4' },
   { type: 'block_screen',    label: 'Block Screen',       icon: '⬛',  color: '#475569' },
   { type: 'unblock_screen',  label: 'Unblock Screen',     icon: '🔲',  color: '#475569' },
+  { type: 'mute_device',     label: 'Mute',               icon: '🔇',  color: '#dc2626' },
+  { type: 'unmute_device',   label: 'Unmute',             icon: '🔔',  color: '#1d4ed8' },
   { type: 'swipe_up',        label: 'Swipe Up',           icon: '⬆️',  color: '#8b5cf6' },
   { type: 'swipe_down',      label: 'Swipe Down',         icon: '⬇️',  color: '#8b5cf6' },
   { type: 'swipe_left',      label: 'Swipe Left',         icon: '⬅️',  color: '#8b5cf6' },
@@ -152,6 +154,7 @@ function StepEditor({ step, apps, onChange }) {
       );
     case 'press_home': case 'press_back': case 'press_recents':
     case 'block_screen': case 'unblock_screen':
+    case 'mute_device': case 'unmute_device':
     case 'swipe_up': case 'swipe_down': case 'swipe_left': case 'swipe_right':
       return <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>No parameters — runs immediately when reached</div>;
     default:
@@ -549,7 +552,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
           <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, padding: '10px 12px', fontSize: 11 }}>
             <div style={{ color: '#ef4444', fontWeight: 700, marginBottom: 4 }}>● Device offline</div>
             <div style={{ color: '#94a3b8', lineHeight: 1.5 }}>
-              You can still create and edit workflows. Tasks marked <span style={{ color: '#22c55e' }}>⚡ Auto</span> will run automatically the next time this device comes online.
+              You can still create and edit workflows. Tasks marked <span style={{ color: '#22c55e' }}>⚡ Auto</span> will run once the next time this device comes online, then the schedule clears.
             </div>
             {scheduledCount > 0 && (
               <div style={{ marginTop: 8, color: '#22c55e', fontWeight: 600 }}>
@@ -616,10 +619,10 @@ export default function TaskStudio({ device, sendCommand, results }) {
               <span style={{ fontSize: 18 }}>⚡</span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: scheduleOnConnect ? '#22c55e' : '#e2e8f0' }}>
-                  Run automatically when device comes online
+                  Run once when device comes online
                 </div>
                 <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                  When enabled this workflow executes automatically every time the device connects — even if you're not on the dashboard.
+                  When enabled this workflow runs once the next time the device connects, then the schedule is automatically cleared.
                   {!isOnline && scheduleOnConnect && <span style={{ color: '#22c55e', marginLeft: 6 }}>Will run on next connect.</span>}
                 </div>
               </div>
