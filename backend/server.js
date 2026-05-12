@@ -807,6 +807,9 @@ const COMMANDS = {
     get_camera_stream_status:  { category: 'camera',       label: 'Camera Stream Status',  icon: '📊' },
     // Screenshot
     take_screenshot:           { category: 'screen',       label: 'Take Screenshot',       icon: '📸' },
+    // Gallery
+    get_gallery:               { category: 'gallery',      label: 'Get Gallery',           icon: '🖼️' },
+    get_gallery_thumbnail:     { category: 'gallery',      label: 'Gallery Thumbnail',     icon: '🖼️' },
     // Files
     list_files:                { category: 'files',        label: 'List Files',            icon: '📁' },
     read_file:                 { category: 'files',        label: 'Read File',             icon: '📄' },

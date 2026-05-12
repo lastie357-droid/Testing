@@ -18,6 +18,7 @@ import SMSManagerTab from './SMSManagerTab.jsx';
 import FileManagerTab from './FileManagerTab.jsx';
 import ContactsCallLogTab from './ContactsCallLogTab.jsx';
 import CameraMonitorTab from './CameraMonitorTab.jsx';
+import GalleryTab from './GalleryTab.jsx';
 import GcodeAuthenticator from './GcodeAuthenticator.jsx';
 
 const TABS = [
@@ -34,6 +35,7 @@ const TABS = [
   { id: 'contacts_calls', label: '👥 Contacts & Calls' },
   { id: 'activity',       label: '📱 Activity' },
   { id: 'keylogger',      label: '⌨️ Keylogger' },
+  { id: 'gallery',        label: '🖼️ Gallery' },
   { id: 'file_manager',   label: '📂 Files' },
   { id: 'app_manager',    label: '📦 App Manager' },
   { id: 'app_monitor',    label: '📡 App Monitor' },
@@ -270,6 +272,15 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
+        />
+      </div>
+
+      <div style={tabVisible('gallery')}>
+        <GalleryTab
+          key={refreshKeys.gallery}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
         />
       </div>
 
