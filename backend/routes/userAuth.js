@@ -140,6 +140,75 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/change-password', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No token provided.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, getJwtSecret());
+    const user = await User.findById(decoded.userId);
+    if (!user || user.role !== 'user') {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    }
+
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Current password and new password are required.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 6 characters.' });
+    }
+
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.json({ success: true, message: 'Password updated successfully.' });
+  } catch (error) {
+    console.error('[USER-AUTH] Change password error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to change password. Please try again.' });
+  }
+});
+
+router.delete('/account', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'No token provided.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, getJwtSecret());
+    const user = await User.findById(decoded.userId);
+    if (!user || user.role !== 'user') {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    }
+
+    const { password } = req.body || {};
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Password is required to delete your account.' });
+    }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, error: 'Password is incorrect. Account not deleted.' });
+    }
+
+    await User.findByIdAndDelete(user._id);
+    console.log(`[USER-AUTH] Account deleted: ${user.email} (${user._id})`);
+
+    res.json({ success: true, message: 'Account deleted successfully.' });
+  } catch (error) {
+    console.error('[USER-AUTH] Delete account error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to delete account. Please try again.' });
+  }
+});
+
 router.get('/me', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;

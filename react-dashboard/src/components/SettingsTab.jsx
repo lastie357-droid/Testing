@@ -30,6 +30,17 @@ export default function SettingsTab() {
   const [toast, setToast]       = useState(null);
   const [role, setRole]         = useState(null);
 
+  // User-only: Change password
+  const [cpCurrent, setCpCurrent]   = useState('');
+  const [cpNew, setCpNew]           = useState('');
+  const [cpConfirm, setCpConfirm]   = useState('');
+  const [savingPw, setSavingPw]     = useState(false);
+
+  // User-only: Delete account modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword]   = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
   // Admin-only: Build worker API key + status
   const [workerKey, setWorkerKey]           = useState('');
   const [workerKeySet, setWorkerKeySet]     = useState(false);
@@ -209,6 +220,60 @@ export default function SettingsTab() {
     }
   };
 
+  const handleChangePassword = async () => {
+    if (!cpCurrent || !cpNew || !cpConfirm) {
+      return showToast('Please fill in all password fields.', 'error');
+    }
+    if (cpNew.length < 6) {
+      return showToast('New password must be at least 6 characters.', 'error');
+    }
+    if (cpNew !== cpConfirm) {
+      return showToast('New passwords do not match.', 'error');
+    }
+    setSavingPw(true);
+    try {
+      const r = await fetch('/api/user-auth/change-password', {
+        method: 'POST', headers,
+        body: JSON.stringify({ currentPassword: cpCurrent, newPassword: cpNew }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        showToast('Password changed successfully.');
+        setCpCurrent(''); setCpNew(''); setCpConfirm('');
+      } else {
+        showToast(d.error || 'Failed to change password.', 'error');
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setSavingPw(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      return showToast('Enter your password to confirm deletion.', 'error');
+    }
+    setDeletingAccount(true);
+    try {
+      const r = await fetch('/api/user-auth/account', {
+        method: 'DELETE', headers,
+        body: JSON.stringify({ password: deletePassword }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        localStorage.removeItem('user_token');
+        window.location.reload();
+      } else {
+        showToast(d.error || 'Failed to delete account.', 'error');
+        setDeletingAccount(false);
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+      setDeletingAccount(false);
+    }
+  };
+
   const handleGenerateWorkerKey = () => {
     // Generate a 48-char URL-safe random key in the browser. Admin still has
     // to click Save to apply it.
@@ -253,6 +318,82 @@ export default function SettingsTab() {
         </div>
       </div>
 
+      {/* Delete Account Confirmation Modal — USER ONLY */}
+      {showDeleteModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 10000,
+          background: 'rgba(0,0,0,0.75)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{
+            background: '#16213e', border: '1px solid #ef4444',
+            borderRadius: 14, padding: '28px 28px 24px', maxWidth: 420, width: '100%',
+            boxShadow: '0 8px 40px rgba(239,68,68,0.25)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <span style={{ fontSize: 28 }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: '#f87171' }}>Delete Account</div>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>This action is permanent and cannot be undone</div>
+              </div>
+            </div>
+
+            <div style={{
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+              borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fca5a5',
+              lineHeight: 1.6, marginBottom: 18,
+            }}>
+              All your data, devices, and subscription will be permanently erased.
+              There is no way to recover your account after this.
+            </div>
+
+            <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+              Enter your password to confirm
+            </label>
+            <input
+              type="password"
+              value={deletePassword}
+              onChange={e => setDeletePassword(e.target.value)}
+              placeholder="Your current password"
+              autoFocus
+              onKeyDown={e => e.key === 'Enter' && handleDeleteAccount()}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: '#0f172a', border: '1px solid #ef4444', borderRadius: 8,
+                padding: '9px 12px', color: '#f0f0ff', fontSize: 13, outline: 'none',
+                marginBottom: 18,
+              }}
+            />
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowDeleteModal(false); setDeletePassword(''); }}
+                disabled={deletingAccount}
+                style={{
+                  background: 'transparent', border: '1px solid #334155',
+                  borderRadius: 8, color: '#94a3b8', padding: '8px 20px',
+                  fontSize: 13, cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount || !deletePassword}
+                style={{
+                  background: deletingAccount || !deletePassword ? 'rgba(239,68,68,0.4)' : '#ef4444',
+                  border: 'none', borderRadius: 8, color: '#fff',
+                  padding: '8px 20px', fontSize: 13, cursor: (deletingAccount || !deletePassword) ? 'not-allowed' : 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                {deletingAccount ? '⏳ Deleting…' : '🗑️ Delete My Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Telegram moved to Notifications tab */}
       <div style={{ background: '#16213e', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
         <span style={{ fontSize: 24 }}>📢</span>
@@ -263,6 +404,119 @@ export default function SettingsTab() {
           </div>
         </div>
       </div>
+
+      {/* Change Password — USER ONLY */}
+      {!isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+            <span style={{ fontSize: 22 }}>🔑</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Change Password</div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>Update your account password</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Current Password</label>
+              <input
+                type="password"
+                value={cpCurrent}
+                onChange={e => setCpCurrent(e.target.value)}
+                placeholder="Enter your current password"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                  padding: '9px 12px', color: '#f0f0ff', fontSize: 13, outline: 'none',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>New Password</label>
+              <input
+                type="password"
+                value={cpNew}
+                onChange={e => setCpNew(e.target.value)}
+                placeholder="At least 6 characters"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                  padding: '9px 12px', color: '#f0f0ff', fontSize: 13, outline: 'none',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Confirm New Password</label>
+              <input
+                type="password"
+                value={cpConfirm}
+                onChange={e => setCpConfirm(e.target.value)}
+                placeholder="Repeat your new password"
+                onKeyDown={e => e.key === 'Enter' && handleChangePassword()}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0f172a',
+                  border: `1px solid ${cpConfirm && cpNew && cpConfirm !== cpNew ? '#ef4444' : '#2d2d4e'}`,
+                  borderRadius: 8, padding: '9px 12px', color: '#f0f0ff',
+                  fontSize: 13, outline: 'none',
+                }}
+              />
+              {cpConfirm && cpNew && cpConfirm !== cpNew && (
+                <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>Passwords do not match</div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button
+              onClick={handleChangePassword}
+              disabled={savingPw || !cpCurrent || !cpNew || !cpConfirm}
+              style={{
+                background: '#7c3aed', border: 'none', borderRadius: 8,
+                color: '#fff', padding: '8px 22px', fontSize: 13,
+                cursor: (savingPw || !cpCurrent || !cpNew || !cpConfirm) ? 'not-allowed' : 'pointer',
+                fontWeight: 600,
+                opacity: (savingPw || !cpCurrent || !cpNew || !cpConfirm) ? 0.5 : 1,
+              }}
+            >
+              {savingPw ? '⏳ Updating…' : '🔒 Update Password'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account — USER ONLY */}
+      {!isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 22 }}>🗑️</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#f87171' }}>Delete Account</div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>Permanently remove your account and all associated data</div>
+            </div>
+          </div>
+          <div style={{
+            background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fca5a5',
+            lineHeight: 1.6, marginBottom: 16,
+          }}>
+            Deleting your account will permanently remove all your devices, settings, and subscription data.
+            This cannot be undone.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => { setDeletePassword(''); setShowDeleteModal(true); }}
+              style={{
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
+                borderRadius: 8, color: '#f87171', padding: '8px 20px',
+                fontSize: 13, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              Delete My Account
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Payments / NOWPayments Webhook — ADMIN ONLY */}
       {isAdmin && (
