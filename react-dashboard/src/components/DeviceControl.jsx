@@ -46,7 +46,7 @@ const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
 
 export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
-  streamFrame, send, keylogPushEntries, notifPushEntries,
+  streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
   activityAppEntries, screenReaderPushData, offlineRecordingVersion,
   serverLatency, deviceLatency, gcodeVersion,
 }) {
@@ -194,6 +194,7 @@ export default function DeviceControl({
           device={device}
           sendCommand={sendCommand}
           results={results}
+          sseCameraFrame={cameraFrame}
         />
       </div>
 

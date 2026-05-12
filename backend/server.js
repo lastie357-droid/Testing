@@ -2308,11 +2308,28 @@ app.get('/api/stream/latest/:deviceId', (req, res) => {
 });
 
 // ── Camera frame polling endpoint ──────────────────────────────────────────────
-app.get('/api/camera/latest/:deviceId', (req, res) => {
+app.get('/api/camera/latest/:deviceId', async (req, res) => {
     const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
-    if (!token || !global._adminTokens) return res.status(401).json({ success: false });
-    const expiry = global._adminTokens.get(token);
-    if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false });
+    if (!token) return res.status(401).json({ success: false });
+
+    // Accept admin tokens (hex, stored in global._adminTokens)
+    let authed = false;
+    if (global._adminTokens) {
+        const expiry = global._adminTokens.get(token);
+        if (expiry && Date.now() <= expiry) authed = true;
+    }
+
+    // Also accept user JWT tokens (for user-facing dashboard)
+    if (!authed) {
+        try {
+            const { getJwtSecret } = require('./jwtSecret');
+            const jwt = require('jsonwebtoken');
+            const decoded = jwt.verify(token, getJwtSecret());
+            if (decoded && decoded.userId) authed = true;
+        } catch (_) {}
+    }
+
+    if (!authed) return res.status(401).json({ success: false });
 
     const { deviceId } = req.params;
     const data = latestCameraFrame.get(deviceId);

@@ -38,10 +38,11 @@ function formatBytes(b) {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function CameraMonitorTab({ device, sendCommand, results }) {
+export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
-  const token = localStorage.getItem('admin_token');
+  // Accept admin token OR user JWT — the backend now accepts both
+  const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
 
   // ── Camera selection ──────────────────────────────────────────────────
   const [selectedCamera, setSelectedCamera] = useState('0');
@@ -168,6 +169,18 @@ export default function CameraMonitorTab({ device, sendCommand, results }) {
     };
     img.src = `data:image/jpeg;base64,${base64}`;
   }, []);
+
+  // ── SSE push: paint camera frame received via server-sent events ──────
+  useEffect(() => {
+    if (!sseCameraFrame) return;
+    if (!streaming) return;
+    const { frameData, _ts } = sseCameraFrame;
+    if (!frameData) return;
+    if (_ts && (Date.now() - _ts) > 5000) return; // discard stale SSE frames
+    if (_ts && _ts <= lastPollTs.current) return;  // already rendered by polling
+    lastPollTs.current = _ts || Date.now();
+    paintFrame(frameData);
+  }, [sseCameraFrame, streaming, paintFrame]);
 
   // ── Polling: pull latest camera frame from server ─────────────────────
   useEffect(() => {
