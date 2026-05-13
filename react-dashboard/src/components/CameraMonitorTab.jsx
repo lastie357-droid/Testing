@@ -38,7 +38,7 @@ function formatBytes(b) {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame }) {
+export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame, galleryActive }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
   // Accept admin token OR user JWT — the backend now accepts both
@@ -287,6 +287,17 @@ export default function CameraMonitorTab({ device, sendCommand, results, sseCame
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1, minHeight: 0 }}>
+
+      {/* ── Gallery mutex warning ── */}
+      {galleryActive && (
+        <div style={{
+          background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.35)',
+          borderRadius: 8, padding: '8px 14px', color: '#facc15', fontSize: 13,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          ⚠️ Gallery is loading — camera stream is paused to save bandwidth. Stop or wait for the gallery to finish first.
+        </div>
+      )}
 
       {/* ── Top controls bar ── */}
       <div style={{

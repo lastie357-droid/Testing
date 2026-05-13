@@ -437,14 +437,33 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                 />
                 {!hasFrame && (
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
-                    <div style={{ fontSize: 48 }}>📡</div>
-                    <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
+                    <div style={{ fontSize: 48 }}>
+                      {isStreaming && isOnline ? '⏳' : '📡'}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center', lineHeight: 1.5 }}>
                       {!isOnline
                         ? 'Device offline'
                         : !isStreaming
                           ? 'Click Start Stream to begin'
-                          : 'Waiting for first frame…'}
+                          : <>
+                              <span style={{ color: '#a78bfa' }}>Connecting…</span>
+                              <br />
+                              <span style={{ fontSize: 11 }}>First frame arrives within a few seconds.<br />On 3G this may take up to 10 s.</span>
+                            </>
+                      }
                     </div>
+                    {isStreaming && isOnline && (
+                      <div style={{
+                        marginTop: 16, width: 120, height: 3, borderRadius: 99,
+                        background: 'rgba(167,139,250,0.15)', overflow: 'hidden',
+                      }}>
+                        <div style={{
+                          height: '100%', width: '40%', borderRadius: 99,
+                          background: '#7c3aed',
+                          animation: 'sc-pulse-bar 1.4s ease-in-out infinite',
+                        }} />
+                      </div>
+                    )}
                   </div>
                 )}
                 {hasFrame && (

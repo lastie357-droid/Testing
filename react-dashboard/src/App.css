@@ -79,6 +79,12 @@ body {
   50% { opacity: 0.4; }
 }
 
+@keyframes sc-pulse-bar {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(150%); }
+}
+
 /* Sidebar */
 .sidebar {
   width: 260px;

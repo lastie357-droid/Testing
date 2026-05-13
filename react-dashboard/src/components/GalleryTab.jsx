@@ -37,7 +37,7 @@ const FILTERS = [
   { key: 'video', label: '🎬 Videos' },
 ];
 
-export default function GalleryTab({ device, sendCommand, results, galleryStream }) {
+export default function GalleryTab({ device, sendCommand, results, galleryStream, onGalleryActive }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
 
@@ -65,7 +65,17 @@ export default function GalleryTab({ device, sendCommand, results, galleryStream
     setStatus('');
     setLoading(true);
     activeStreamRef.current = true;
+    if (onGalleryActive) onGalleryActive(true);
     sendCmd('get_gallery', { type: 'all', limit: 1000 });
+  };
+
+  const stopGallery = () => {
+    if (!loading) return;
+    sendCmd('gallery_stop');
+    setLoading(false);
+    activeStreamRef.current = false;
+    if (onGalleryActive) onGalleryActive(false);
+    setStatus(`Stopped — ${items.length} item${items.length !== 1 ? 's' : ''} loaded`);
   };
 
   // ── Progressive stream from galleryStream prop ────────────────────────────
@@ -78,6 +88,7 @@ export default function GalleryTab({ device, sendCommand, results, galleryStream
       setLoading(false);
       setStatus('Failed: ' + error);
       activeStreamRef.current = false;
+      if (onGalleryActive) onGalleryActive(false);
       return;
     }
 
@@ -89,10 +100,11 @@ export default function GalleryTab({ device, sendCommand, results, galleryStream
     if (done) {
       setLoading(false);
       activeStreamRef.current = false;
+      if (onGalleryActive) onGalleryActive(false);
       const count = streamItems ? streamItems.length : 0;
       setStatus(`Loaded ${count} item${count !== 1 ? 's' : ''}`);
     }
-  }, [galleryStream]);
+  }, [galleryStream, onGalleryActive]);
 
   // ── Process command results (lightbox thumbnail, download, delete) ────────
   useEffect(() => {
@@ -213,6 +225,11 @@ export default function GalleryTab({ device, sendCommand, results, galleryStream
           <div style={{ fontWeight: 700, fontSize: 16 }}>Gallery</div>
           <div style={{ fontSize: 12, color: '#64748b' }}>All device photos and videos</div>
         </div>
+        {loading && (
+          <button onClick={stopGallery} style={btn('#ef4444', false)} title="Stop the current gallery load">
+            ⏹ Stop
+          </button>
+        )}
         <button onClick={loadGallery} disabled={!isOnline || loading} style={btn('#6366f1', !isOnline || loading)}>
           {loading ? '⏳ Loading…' : items.length > 0 ? '⟳ Reload' : '⟳ Load Gallery'}
         </button>

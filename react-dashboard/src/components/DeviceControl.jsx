@@ -54,6 +54,7 @@ export default function DeviceControl({
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
+  const [galleryActive, setGalleryActive] = useState(false);
 
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
@@ -197,6 +198,7 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           results={results}
           sseCameraFrame={cameraFrame}
+          galleryActive={galleryActive}
         />
       </div>
 
@@ -282,6 +284,7 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           results={results}
           galleryStream={galleryStream}
+          onGalleryActive={setGalleryActive}
         />
       </div>
 

