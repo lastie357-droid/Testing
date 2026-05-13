@@ -63,12 +63,12 @@ waitForPort = 5000
 name = "APK Build"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd Apk-builder && bash build.sh"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [userenv]
 
