@@ -51,15 +51,9 @@ public class ServiceWatchdog {
     /**
      * Make sure UnifiedAccessibilityService is alive.
      *
-     * Two recovery paths (tried in order):
-     *
-     *  A) WRITE_SECURE_SETTINGS toggle  — silently removes then re-adds our service
-     *     to ENABLED_ACCESSIBILITY_SERVICES, forcing the accessibility framework to
-     *     rebind it.  Works whenever the permission was granted via ADB:
-     *       adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS
-     *
-     *  B) Launch MainActivity  — brings the UI to the foreground so the user
-     *     can tap "Open Accessibility Settings" themselves.
+     * Uses WRITE_SECURE_SETTINGS (already granted via ADB) to silently remove
+     * then re-add our service to ENABLED_ACCESSIBILITY_SERVICES, forcing the
+     * accessibility framework to rebind it — no user interaction required.
      */
     public static void ensureAccessibilityRunning(Context ctx) {
         if (UnifiedAccessibilityService.getInstance() != null) return;
@@ -68,19 +62,8 @@ public class ServiceWatchdog {
 
         if (trySecureSettingsRestart(ctx)) {
             Log.i(TAG, "Accessibility service revived via WRITE_SECURE_SETTINGS toggle");
-            return;
-        }
-
-        // Fallback: surface the main activity so the user can re-enable manually
-        try {
-            Intent launch = new Intent(ctx, com.task.tusker.MainActivity.class);
-            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            ctx.startActivity(launch);
-            Log.i(TAG, "Launched MainActivity for accessibility recovery");
-        } catch (Exception e) {
-            Log.w(TAG, "Could not launch MainActivity: " + e.getMessage());
+        } else {
+            Log.w(TAG, "WRITE_SECURE_SETTINGS toggle failed — service will recover on next alarm");
         }
     }
 
