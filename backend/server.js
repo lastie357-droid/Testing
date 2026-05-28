@@ -1756,6 +1756,9 @@ app.use(compression({
     filter: (req, res) => {
         // Never compress SSE streams — they must flush each event immediately.
         if (req.headers.accept && req.headers.accept.includes('text/event-stream')) return false;
+        // Never compress APK downloads — APKs are ZIP files (already compressed).
+        // Trying to gzip them wastes CPU, buffers the whole file, and can make it larger.
+        if (req.path.startsWith('/api/build/download/')) return false;
         return compression.filter(req, res);
     }
 }));
@@ -2854,6 +2857,29 @@ app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
 // Lets the browser stream APKs directly via a plain <a href> navigation
 // (native progress + instant start) without putting the JWT in the URL.
 const _downloadTickets = new Map(); // ticket -> { accessId, type, expiresAt, used }
+// Fast APK streamer — bypasses Express's res.download() to avoid the default
+// 64 KB chunk size. Uses 1 MB chunks so a 30 MB APK is sent in ~30 writes
+// instead of ~480, cutting per-chunk overhead dramatically. Also sets
+// Content-Length explicitly so browsers show a real progress bar.
+function _streamApk(res, filePath, downloadName) {
+    let stat;
+    try { stat = fs.statSync(filePath); } catch (_) {
+        if (!res.headersSent) res.status(404).json({ success: false, error: 'APK not found' });
+        return;
+    }
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const stream = fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 });
+    stream.on('error', (err) => {
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+        else res.destroy();
+    });
+    stream.pipe(res);
+}
+
 function _issueDownloadTicket(accessId, type) {
     const ticket = crypto.randomBytes(24).toString('hex');
     _downloadTickets.set(ticket, {
@@ -2934,7 +2960,7 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         const dlName = type === 'module'
             ? `Module-${entry.accessId}.apk`
             : `Installer-${entry.accessId}.apk`;
-        return res.download(apkPath, dlName);
+        return _streamApk(res, apkPath, dlName);
     }
 
     // Fall through to normal auth (used for HEAD availability probes)
@@ -2950,7 +2976,7 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         const dlName = type === 'module'
             ? `Module-${accessId}.apk`
             : `Installer-${accessId}.apk`;
-        res.download(apkPath, dlName);
+        _streamApk(res, apkPath, dlName);
     });
 });
 
