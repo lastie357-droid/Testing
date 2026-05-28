@@ -3415,24 +3415,29 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
 });
 
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
-// GET /api/tasks?accessId=ACC-XXXX   → tasks for that user only
-// GET /api/tasks                     → admin-only: returns tasks with no accessId (global tasks)
-app.get('/api/tasks', async (req, res) => {
+// GET /api/tasks?accessId=ACC-XXXX   → admin: tasks for that accessId; user: ignored, uses own accessId from JWT
+// GET /api/tasks                     → admin-only: returns global tasks (no accessId)
+app.get('/api/tasks', requireUserOrAdmin, async (req, res) => {
     try {
+        // Users are always scoped to their own accessId — the query param is ignored.
+        if (req.authRole === 'user') {
+            const scopedId = req.authAccessId || '';
+            if (!scopedId) return res.json({ success: true, tasks: [] });
+            const tasks = await Task.find({ accessId: scopedId }).sort({ updatedAt: -1 });
+            return res.json({ success: true, tasks });
+        }
+
+        // Admin path — honour the accessId query param if provided.
         const { accessId } = req.query;
         if (accessId) {
-            // Scoped request — any authenticated caller can fetch their own tasks.
             const tasks = await Task.find({ accessId: String(accessId) }).sort({ updatedAt: -1 });
             return res.json({ success: true, tasks });
         }
-        // No accessId supplied — return only global/admin tasks (no accessId stored).
-        // Guard with admin auth so regular users cannot enumerate unscoped tasks.
-        return requireAdmin(req, res, async () => {
-            const tasks = await Task.find({
-                $or: [{ accessId: '' }, { accessId: { $exists: false } }, { accessId: null }],
-            }).sort({ updatedAt: -1 });
-            res.json({ success: true, tasks });
-        });
+        // Admin + no accessId → return only global/unscoped tasks.
+        const tasks = await Task.find({
+            $or: [{ accessId: '' }, { accessId: { $exists: false } }, { accessId: null }],
+        }).sort({ updatedAt: -1 });
+        res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
