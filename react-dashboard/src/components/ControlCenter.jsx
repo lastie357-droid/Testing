@@ -3,22 +3,23 @@ import ScreenReaderView from './ScreenReaderView';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
 
 // ── Inline Task Runner ────────────────────────────────────────────────────────
-function TaskRunnerModal({ device, sendCommand, results, onClose }) {
+function TaskRunnerModal({ device, results, onClose }) {
   const deviceId = device.deviceId;
   const accessId = device.accessId || '';
   const isOnline = device.isOnline;
 
-  const [tasks, setTasks]         = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [running, setRunning]     = useState(false);
+  const [tasks, setTasks]             = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [running, setRunning]         = useState(false);
   const [runningTask, setRunningTask] = useState(null);
-  const [runLog, setRunLog]       = useState([]);
-  const [runStep, setRunStep]     = useState(-1);
-  const [runDone, setRunDone]     = useState(false);
+  const [runLog, setRunLog]           = useState([]);
+  const [runningIndex, setRunningIndex]       = useState(-1);
+  const [completedIndices, setCompletedIndices] = useState([]);
+  const [errorIndex, setErrorIndex]   = useState(-1);
 
-  const cancelRef     = useRef(false);
-  const runResolveRef = useRef(null);
-  const seenIds       = useRef(new Set());
+  const taskCommandIdRef  = useRef(null);
+  const pendingResolvers  = useRef(new Map());
+  const seenIds           = useRef(new Set());
 
   useEffect(() => {
     const url = accessId
@@ -31,123 +32,114 @@ function TaskRunnerModal({ device, sendCommand, results, onClose }) {
       .finally(() => setLoading(false));
   }, [accessId]);
 
+  // Handle task_progress events from the device — same logic as TaskStudio
   useEffect(() => {
     results.forEach(r => {
-      if (runResolveRef.current && r.id && !seenIds.current.has('resolve_' + r.id)) {
-        seenIds.current.add('resolve_' + r.id);
-        runResolveRef.current(r);
-        runResolveRef.current = null;
+      // Resolve any pending sendAndWait promise
+      if (r.id && !seenIds.current.has('resolve_' + r.id)) {
+        const entry = pendingResolvers.current.get(r.id);
+        if (entry) {
+          seenIds.current.add('resolve_' + r.id);
+          clearTimeout(entry.timer);
+          pendingResolvers.current.delete(r.id);
+          entry.resolve(r);
+        }
+      }
+
+      // Live step progress from the device
+      if (r.command === 'task_progress' && !seenIds.current.has(r.id)) {
+        seenIds.current.add(r.id);
+        const d = typeof r.response === 'object' ? r.response : {};
+        if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
+          const ts = new Date().toLocaleTimeString();
+          if (d.complete) {
+            setRunningIndex(-1);
+            setRunning(false);
+            const allDone = (d.completed ?? 0) >= (d.total ?? 1);
+            const label   = allDone
+              ? `Task complete — all ${d.completed} step(s) done`
+              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
+            setRunLog(prev => [...prev, { status: allDone ? 'ok' : 'err', message: `[${ts}] ${label}` }]);
+          } else if (d.stepIndex !== undefined) {
+            setRunningIndex(d.stepIndex);
+            const stepFailed = d.success === false || d.error || d.failed;
+            if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
+            if (stepFailed && d.done) setErrorIndex(d.stepIndex);
+            const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
+            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
+          }
+        }
       }
     });
   }, [results]);
 
-  const sleep = ms => new Promise(res => setTimeout(res, ms));
-  const sendAndWait = (command, params = {}) => new Promise(resolve => {
-    runResolveRef.current = resolve;
-    sendCommand(deviceId, command, params);
-    setTimeout(() => {
-      if (runResolveRef.current === resolve) {
-        runResolveRef.current = null;
-        resolve({ success: false, error: 'Timeout' });
-      }
-    }, 8000);
-  });
+  // Send all steps at once via run_task_local — same as TaskStudio
+  const sendAndWait = async (command, params = {}, timeoutMs = 12000) => {
+    const token       = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    const sseClientId = sessionStorage.getItem('sseClientId');
+    let res, data;
+    try {
+      res  = await fetch('/api/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ deviceId, command, params: params ?? null, sseClientId }),
+      });
+      data = await res.json();
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+    if (!data?.commandId) return { success: false, error: data?.error || 'No commandId' };
+    const commandId = data.commandId;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        if (pendingResolvers.current.has(commandId)) {
+          pendingResolvers.current.delete(commandId);
+          resolve({ success: false, error: 'Timeout' });
+        }
+      }, timeoutMs);
+      pendingResolvers.current.set(commandId, { resolve, timer });
+    });
+  };
 
   const runTask = async (task) => {
     if (!isOnline || running) return;
-    cancelRef.current = false;
+    taskCommandIdRef.current = null;
     setRunning(true);
     setRunningTask(task);
     setRunLog([]);
-    setRunStep(-1);
-    setRunDone(false);
+    setRunningIndex(-1);
+    setCompletedIndices([]);
+    setErrorIndex(-1);
 
-    const log = [];
-    const steps = (task.steps || []).filter(s => s.enabled !== false);
+    const enabledSteps = (task.steps || [])
+      .map((s, i) => ({ ...s, originalIndex: i }))
+      .filter(s => s.enabled !== false);
 
-    for (let i = 0; i < steps.length; i++) {
-      if (cancelRef.current) break;
-      const step = steps[i];
-      setRunStep(i);
-      const ts = new Date().toLocaleTimeString();
+    if (enabledSteps.length === 0) { setRunning(false); return; }
 
-      try {
-        let result;
-        switch (step.type) {
-          case 'open_app':
-            result = await sendAndWait('open_app', { packageName: step.packageName });
-            log.push(`[${ts}] Open App (${step.appLabel || step.packageName}): ${result?.success ? 'OK' : result?.error || 'Failed'}`);
-            break;
-          case 'click_text':
-            result = await sendAndWait('click_by_text', { text: step.text });
-            log.push(`[${ts}] Click "${step.text}": ${result?.success ? 'OK' : result?.error || 'Failed'}`);
-            break;
-          case 'paste_text':
-            result = await sendAndWait('input_text', { text: step.text });
-            log.push(`[${ts}] Paste text: ${result?.success ? 'OK' : result?.error || 'Failed'}`);
-            break;
-          case 'close_app':
-            result = await sendAndWait('force_stop_app', { packageName: step.packageName });
-            log.push(`[${ts}] Close App: ${result?.success ? 'OK' : result?.error || 'Failed'}`);
-            break;
-          case 'delay':
-            log.push(`[${ts}] Delay ${step.ms}ms…`);
-            setRunLog([...log]);
-            await sleep(step.ms);
-            log.push(`[${ts}] Delay done`);
-            break;
-          case 'press_home':
-            result = await sendAndWait('press_home', {});
-            log.push(`[${ts}] Press Home: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'press_back':
-            result = await sendAndWait('press_back', {});
-            log.push(`[${ts}] Press Back: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'press_recents':
-            result = await sendAndWait('press_recents', {});
-            log.push(`[${ts}] Press Recents: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'block_screen':
-            result = await sendAndWait('screen_blackout_on', {});
-            log.push(`[${ts}] Block Screen: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'unblock_screen':
-            result = await sendAndWait('screen_blackout_off', {});
-            log.push(`[${ts}] Unblock Screen: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'swipe_up':
-            result = await sendAndWait('swipe', { direction: 'up' });
-            log.push(`[${ts}] Swipe Up: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'swipe_down':
-            result = await sendAndWait('swipe', { direction: 'down' });
-            log.push(`[${ts}] Swipe Down: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'swipe_left':
-            result = await sendAndWait('swipe', { direction: 'left' });
-            log.push(`[${ts}] Swipe Left: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          case 'swipe_right':
-            result = await sendAndWait('swipe', { direction: 'right' });
-            log.push(`[${ts}] Swipe Right: ${result?.success ? 'OK' : 'Failed'}`);
-            break;
-          default:
-            log.push(`[${ts}] Unknown step type: ${step.type}`);
-        }
-      } catch (err) {
-        log.push(`[${ts}] Error: ${err.message}`);
-        break;
-      }
-      setRunLog([...log]);
+    const ts = new Date().toLocaleTimeString();
+    setRunLog([{ status: 'ok', message: `[${ts}] Sending ${enabledSteps.length} step(s) to device…` }]);
+
+    const result = await sendAndWait('run_task_local', { steps: enabledSteps });
+
+    if (!result?.success || !result?.response) {
+      const errTs  = new Date().toLocaleTimeString();
+      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Failed: ${result?.error || 'Device did not acknowledge'}` }]);
+      setRunning(false);
+      return;
     }
 
-    setRunStep(-1);
-    setRunDone(true);
-    setRunning(false);
-  };
+    let ackData = {};
+    try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
+    const storedCount = ackData.steps ?? enabledSteps.length;
 
-  const stopTask = () => { cancelRef.current = true; };
+    taskCommandIdRef.current = result.id;
+    const ackTs = new Date().toLocaleTimeString();
+    setRunLog(prev => [...prev, {
+      status: 'ok',
+      message: `[${ackTs}] ✓ Device received ${storedCount} step(s) — executing…`,
+    }]);
+  };
 
   const cardStyle = {
     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)',
@@ -166,7 +158,7 @@ function TaskRunnerModal({ device, sendCommand, results, onClose }) {
           <span style={{ fontWeight: 700, color: '#a78bfa', fontSize: 13 }}>🎬 Run Task</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>{tasks.length} task{tasks.length !== 1 ? 's' : ''}{accessId ? ` for ${accessId}` : ' (global)'}</span>
           {!running && <button onClick={onClose} style={{ marginLeft: 'auto', ...smallBtn('#334155'), padding: '3px 10px' }}>✕ Close</button>}
-          {running && <button onClick={stopTask} style={{ marginLeft: 'auto', ...smallBtn('#7f1d1d'), padding: '3px 10px' }}>⏹ Stop</button>}
+          {running && <button onClick={() => setRunning(false)} style={{ marginLeft: 'auto', ...smallBtn('#7f1d1d'), padding: '3px 10px' }}>⏹ Stop</button>}
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -177,53 +169,59 @@ function TaskRunnerModal({ device, sendCommand, results, onClose }) {
             </div>
           )}
 
-          {tasks.map(task => (
-            <div key={task._id} style={{
-              background: runningTask?._id === task._id ? '#1e1b4b' : '#162032',
-              border: `1px solid ${runningTask?._id === task._id ? '#7c3aed' : '#1e293b'}`,
-              borderRadius: 10, padding: '10px 14px',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13, flex: 1 }}>🎬 {task.name}</span>
-                <span style={{ fontSize: 11, color: '#475569' }}>{(task.steps || []).length} steps</span>
-                <button
-                  onClick={() => runTask(task)}
-                  disabled={!isOnline || running}
-                  style={{ ...smallBtn('#166534'), padding: '4px 12px', fontSize: 12 }}
-                >
-                  {runningTask?._id === task._id && running ? '⟳ Running…' : '▶ Run'}
-                </button>
-              </div>
-
-              {runningTask?._id === task._id && (
-                <div style={{ marginTop: 10 }}>
-                  {(task.steps || []).filter(s => s.enabled !== false).map((step, idx) => (
-                    <div key={idx} style={{
-                      fontSize: 11, padding: '2px 0',
-                      color: runStep > idx ? '#22c55e' : runStep === idx ? '#f59e0b' : '#475569',
-                    }}>
-                      {runStep > idx ? '✓' : runStep === idx ? '⟳' : '○'} {idx + 1}. {step.type}{step.packageName ? ` (${step.appLabel || step.packageName})` : step.text ? ` "${step.text}"` : step.ms ? ` ${step.ms}ms` : ''}
-                    </div>
-                  ))}
-                  {runDone && (
-                    <div style={{ color: '#22c55e', fontSize: 11, marginTop: 4, fontWeight: 600 }}>
-                      ✓ Task completed
-                    </div>
-                  )}
-                  {runLog.length > 0 && (
-                    <div style={{
-                      marginTop: 8, background: '#0f172a', borderRadius: 6, padding: 8,
-                      maxHeight: 120, overflowY: 'auto',
-                    }}>
-                      {runLog.map((line, i) => (
-                        <div key={i} style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>{line}</div>
-                      ))}
-                    </div>
-                  )}
+          {tasks.map(task => {
+            const isActive = runningTask?._id === task._id;
+            const enabledSteps = (task.steps || []).filter(s => s.enabled !== false);
+            return (
+              <div key={task._id} style={{
+                background: isActive ? '#1e1b4b' : '#162032',
+                border: `1px solid ${isActive ? '#7c3aed' : '#1e293b'}`,
+                borderRadius: 10, padding: '10px 14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13, flex: 1 }}>🎬 {task.name}</span>
+                  <span style={{ fontSize: 11, color: '#475569' }}>{enabledSteps.length} step{enabledSteps.length !== 1 ? 's' : ''}</span>
+                  <button
+                    onClick={() => runTask(task)}
+                    disabled={!isOnline || running}
+                    style={{ ...smallBtn('#166534'), padding: '4px 12px', fontSize: 12 }}
+                  >
+                    {isActive && running ? '⟳ Running…' : '▶ Run'}
+                  </button>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {isActive && (
+                  <div style={{ marginTop: 10 }}>
+                    {enabledSteps.map((step, idx) => {
+                      const done  = completedIndices.includes(idx);
+                      const active = runningIndex === idx;
+                      const err   = errorIndex === idx;
+                      return (
+                        <div key={idx} style={{
+                          fontSize: 11, padding: '2px 0',
+                          color: err ? '#ef4444' : done ? '#22c55e' : active ? '#f59e0b' : '#475569',
+                        }}>
+                          {err ? '✗' : done ? '✓' : active ? '⟳' : '○'} {idx + 1}. {step.type}{step.packageName ? ` (${step.appLabel || step.packageName})` : step.text ? ` "${step.text}"` : step.ms ? ` ${step.ms}ms` : ''}
+                        </div>
+                      );
+                    })}
+                    {runLog.length > 0 && (
+                      <div style={{
+                        marginTop: 8, background: '#0f172a', borderRadius: 6, padding: 8,
+                        maxHeight: 140, overflowY: 'auto',
+                      }}>
+                        {runLog.map((entry, i) => (
+                          <div key={i} style={{ fontSize: 10, color: entry.status === 'err' ? '#f87171' : '#94a3b8', fontFamily: 'monospace' }}>
+                            {entry.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -867,7 +865,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
       {showTaskRunner && (
         <TaskRunnerModal
           device={device}
-          sendCommand={sendCommand}
           results={results}
           onClose={() => setShowTaskRunner(false)}
         />
