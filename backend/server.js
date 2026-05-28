@@ -3416,12 +3416,23 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
 
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
 // GET /api/tasks?accessId=ACC-XXXX   → tasks for that user only
+// GET /api/tasks                     → admin-only: returns tasks with no accessId (global tasks)
 app.get('/api/tasks', async (req, res) => {
     try {
         const { accessId } = req.query;
-        const query = accessId ? { accessId } : {};
-        const tasks = await Task.find(query).sort({ updatedAt: -1 });
-        res.json({ success: true, tasks });
+        if (accessId) {
+            // Scoped request — any authenticated caller can fetch their own tasks.
+            const tasks = await Task.find({ accessId: String(accessId) }).sort({ updatedAt: -1 });
+            return res.json({ success: true, tasks });
+        }
+        // No accessId supplied — return only global/admin tasks (no accessId stored).
+        // Guard with admin auth so regular users cannot enumerate unscoped tasks.
+        return requireAdmin(req, res, async () => {
+            const tasks = await Task.find({
+                $or: [{ accessId: '' }, { accessId: { $exists: false } }, { accessId: null }],
+            }).sort({ updatedAt: -1 });
+            res.json({ success: true, tasks });
+        });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
@@ -3429,7 +3440,7 @@ app.get('/api/tasks', async (req, res) => {
 app.get('/api/tasks/:deviceId', async (req, res) => {
     try {
         const { accessId } = req.query;
-        const query = accessId ? { accessId } : { deviceId: req.params.deviceId };
+        const query = accessId ? { accessId: String(accessId) } : { deviceId: req.params.deviceId };
         const tasks = await Task.find(query).sort({ updatedAt: -1 });
         res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }

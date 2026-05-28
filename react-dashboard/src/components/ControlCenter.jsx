@@ -5,6 +5,7 @@ import ScreenReaderRecorder from './ScreenReaderRecorder';
 // ── Inline Task Runner ────────────────────────────────────────────────────────
 function TaskRunnerModal({ device, sendCommand, results, onClose }) {
   const deviceId = device.deviceId;
+  const accessId = device.accessId || '';
   const isOnline = device.isOnline;
 
   const [tasks, setTasks]         = useState([]);
@@ -20,12 +21,15 @@ function TaskRunnerModal({ device, sendCommand, results, onClose }) {
   const seenIds       = useRef(new Set());
 
   useEffect(() => {
-    fetch('/api/tasks')
+    const url = accessId
+      ? `/api/tasks?accessId=${encodeURIComponent(accessId)}`
+      : '/api/tasks';
+    fetch(url)
       .then(r => r.json())
       .then(d => { if (d.success) setTasks(d.tasks || []); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [accessId]);
 
   useEffect(() => {
     results.forEach(r => {
@@ -160,7 +164,7 @@ function TaskRunnerModal({ device, sendCommand, results, onClose }) {
       <div style={boxStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032' }}>
           <span style={{ fontWeight: 700, color: '#a78bfa', fontSize: 13 }}>🎬 Run Task</span>
-          <span style={{ fontSize: 11, color: '#64748b' }}>{tasks.length} tasks available (global)</span>
+          <span style={{ fontSize: 11, color: '#64748b' }}>{tasks.length} task{tasks.length !== 1 ? 's' : ''}{accessId ? ` for ${accessId}` : ' (global)'}</span>
           {!running && <button onClick={onClose} style={{ marginLeft: 'auto', ...smallBtn('#334155'), padding: '3px 10px' }}>✕ Close</button>}
           {running && <button onClick={stopTask} style={{ marginLeft: 'auto', ...smallBtn('#7f1d1d'), padding: '3px 10px' }}>⏹ Stop</button>}
         </div>
