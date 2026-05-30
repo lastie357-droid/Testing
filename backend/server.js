@@ -53,7 +53,7 @@ function pushLog(source, level, message) {
 });
 
 // ============================================
-// FRP LAUNCHER  (frps → wait → frpc)
+// FRP LAUNCHER  (frps → wait → frpc) — auto-restart on any exit/error
 // ============================================
 (function startFRP() {
     const ROOT = path.resolve(__dirname, '..');
@@ -68,14 +68,6 @@ function pushLog(source, level, message) {
         return;
     }
 
-    function spawnFRP(bin, cfg, label) {
-        const proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
-        proc.stdout.on('data', d => { process.stdout.write(`[${label}] ${d}`); pushLog(label, 'info', String(d)); });
-        proc.stderr.on('data', d => { process.stderr.write(`[${label}] ${d}`); pushLog(label, 'warn', String(d)); });
-        proc.on('exit', code => console.log(`[${label}] exited with code ${code}`));
-        return proc;
-    }
-
     function waitForPort(port, retries, delay, cb) {
         const sock = new net.Socket();
         sock.setTimeout(1000);
@@ -83,23 +75,73 @@ function pushLog(source, level, message) {
         sock.on('error',   () => { sock.destroy(); retry(); });
         sock.on('timeout', () => { sock.destroy(); retry(); });
         sock.connect(port, '127.0.0.1');
-
         function retry() {
             if (retries <= 0) return cb(new Error(`Port ${port} not ready`));
             setTimeout(() => waitForPort(port, retries - 1, delay, cb), delay);
         }
     }
 
-    console.log('[FRP] Starting frps...');
-    spawnFRP(frpsBin, frpsCfg, 'frps');
+    // Spawn a process and restart it with exponential backoff whenever it exits.
+    // delay starts at initialDelay ms and doubles on each consecutive failure,
+    // capped at maxDelay. A clean (code=0) exit resets the delay counter.
+    // beforeSpawn(cb) is called before each launch — use it to wait for
+    // dependencies (e.g. frps being ready) before starting frpc.
+    function keepAlive(label, bin, cfg, { initialDelay = 1000, maxDelay = 30000, beforeSpawn } = {}) {
+        let delay = initialDelay;
+        let startedAt = 0;
 
-    waitForPort(7000, 30, 1000, (err) => {
-        if (err) {
-            console.error('[FRP] frps did not become ready — frpc will not start.');
-            return;
+        function launch() {
+            if (beforeSpawn) {
+                beforeSpawn(() => doSpawn());
+            } else {
+                doSpawn();
+            }
         }
-        console.log('[FRP] frps ready. Starting frpc...');
-        spawnFRP(frpcBin, frpcCfg, 'frpc');
+
+        function doSpawn() {
+            console.log(`[${label}] Starting…`);
+            startedAt = Date.now();
+            const proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
+            proc.stdout.on('data', d => { process.stdout.write(`[${label}] ${d}`); pushLog(label, 'info', String(d)); });
+            proc.stderr.on('data', d => { process.stderr.write(`[${label}] ${d}`); pushLog(label, 'warn', String(d)); });
+
+            proc.on('error', err => {
+                console.error(`[${label}] Spawn error: ${err.message}`);
+                pushLog(label, 'warn', `Spawn error: ${err.message}`);
+            });
+
+            proc.on('close', code => {
+                const uptime = ((Date.now() - startedAt) / 1000).toFixed(1);
+                console.warn(`[${label}] Exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s…`);
+                pushLog(label, 'warn', `Process exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s`);
+                // Reset backoff if it was running long enough to be considered stable (>60s)
+                if (Date.now() - startedAt > 60000) delay = initialDelay;
+                const nextDelay = delay;
+                delay = Math.min(delay * 2, maxDelay);
+                setTimeout(launch, nextDelay);
+            });
+        }
+
+        launch();
+    }
+
+    // Start frps — restart unconditionally on any exit.
+    keepAlive('frps', frpsBin, frpsCfg);
+
+    // Start frpc — but only after frps port 7000 is ready. On each restart of
+    // frpc, wait again for frps to be up first (frps may also be restarting).
+    keepAlive('frpc', frpcBin, frpcCfg, {
+        beforeSpawn: (cb) => {
+            waitForPort(7000, 30, 1000, (err) => {
+                if (err) {
+                    console.error('[FRP] frps not ready — will retry frpc in 5s…');
+                    setTimeout(cb, 5000);
+                } else {
+                    console.log('[FRP] frps ready — starting frpc…');
+                    cb();
+                }
+            });
+        },
     });
 })();
 
