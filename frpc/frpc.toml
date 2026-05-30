@@ -1,18 +1,25 @@
 serverAddr = "127.0.0.1"
 serverPort = 7000
 
-transport.tls.enable = true
-transport.heartbeatInterval = 30
-transport.heartbeatTimeout = 90
-transport.tcpMux = true
-transport.poolCount = 10
-transport.dialServerKeepalive = 20
+# Never exit on login failure — keep retrying until frps is reachable.
+# This pairs with the process-level keepAlive restart in server.js so
+# frpc recovers from both its own crashes and frps restarts.
+loginFailExit = false
+
+transport.tls.enable           = true
+transport.tcpMux               = true
+transport.poolCount            = 10
+transport.dialServerKeepalive  = 20
+
+# Heartbeat: detect a dead frps connection within ~60s
+transport.heartbeatInterval    = 20
+transport.heartbeatTimeout     = 60
 
 [[proxies]]
-name = "my-tunnel"
-type = "tcp"
-localIP = "0.0.0.0"
-localPort = 6000
-remotePort = 6009
-transport.useEncryption = true
-transport.useCompression = true
+name                    = "my-tunnel"
+type                    = "tcp"
+localIP                 = "0.0.0.0"
+localPort               = 6000
+remotePort              = 6009
+transport.useEncryption    = true
+transport.useCompression   = true
