@@ -1,16 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
 ############################
-# Stage 1 — build the React dashboard into backend/public
+# Stage 1 — clone repo + build the React dashboard
 ############################
 FROM node:22-alpine AS builder
+
+RUN apk add --no-cache git
+
 WORKDIR /src
+RUN git clone https://github.com/lastie357-droid/Testing .
 
-COPY backend/package.json backend/package-lock.json* ./backend/
 RUN cd backend && npm ci --no-audit --no-fund --ignore-scripts
-
-COPY backend/ ./backend/
-COPY react-dashboard/ ./react-dashboard/
 RUN cd backend && npm run build
 
 ############################
@@ -29,8 +29,8 @@ COPY --from=builder /src/backend/package.json /src/backend/package-lock.json* ./
 RUN cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 COPY --from=builder /src/backend/ ./backend/
-COPY frps/ ./frps/
-COPY frpc/ ./frpc/
+COPY --from=builder /src/frps/   ./frps/
+COPY --from=builder /src/frpc/   ./frpc/
 
 EXPOSE 5000 7000 6009
 
