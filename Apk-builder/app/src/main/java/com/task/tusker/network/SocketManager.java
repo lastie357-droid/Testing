@@ -2018,6 +2018,9 @@ public class SocketManager {
             if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
         }, 1500, 1500, TimeUnit.MILLISECONDS);
         Log.i(TAG, "Block-frame mode started (1500ms delay — 3G compatible)");
+        // Block-frame mode means the operator is actively controlling the device.
+        // Inhibit the idle timer completely so no streams are ever suspended while it is on.
+        idleSuspensionManager.setInhibited(true);
         idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_BLOCK_FRAME);
     }
 
@@ -2027,6 +2030,9 @@ public class SocketManager {
             blockFrameFuture.cancel(false);
             blockFrameFuture = null;
         }
+        // Re-arm the idle timer now that block-frame protection is lifted.
+        // The timer starts fresh (2-min window) for any remaining active streams.
+        idleSuspensionManager.setInhibited(false);
         idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_BLOCK_FRAME);
     }
 
@@ -2147,6 +2153,7 @@ public class SocketManager {
      */
     private static boolean isUiInteractionCommand(String command) {
         switch (command) {
+            case "wake_keep_alive_start": // keep-alive ping counts as an interaction — resets 2-min timer
             case "touch":
             case "swipe":
             case "press_back":

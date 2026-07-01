@@ -84,6 +84,8 @@ public class IdleSuspensionManager {
     private int suspendedTypes  = 0;
 
     private ScheduledFuture<?> timeoutFuture;
+    /** When true the timer is cancelled and will not restart until un-inhibited. */
+    private boolean inhibited = false;
 
     // ── Constructor ───────────────────────────────────────────────────────
 
@@ -147,6 +149,28 @@ public class IdleSuspensionManager {
         }
     }
 
+    /**
+     * Inhibit or un-inhibit the idle timer.
+     * <p>
+     * While inhibited the timer is cancelled and will not restart, so no streams will ever be
+     * auto-suspended. This is used when screen-blackout mode is active — the operator is
+     * actively controlling the device by definition, so suspension must not fire even if no
+     * qualifying interaction commands arrive for 2 minutes.
+     * </p>
+     *
+     * @param inhibit {@code true} to cancel and hold the timer; {@code false} to re-arm it
+     *                (timer restarts immediately if any streams are still active).
+     */
+    public synchronized void setInhibited(boolean inhibit) {
+        if (this.inhibited == inhibit) return; // no change — avoid spurious timer churn
+        this.inhibited = inhibit;
+        if (inhibit) {
+            cancelTimerLocked();
+        } else {
+            resetTimerLocked(); // re-arm with fresh 2-min window if streams are still active
+        }
+    }
+
     /** Release resources. Call from the owning component's shutdown / disconnect. */
     public synchronized void shutdown() {
         cancelTimerLocked();
@@ -161,6 +185,7 @@ public class IdleSuspensionManager {
     /** Must be called with {@code this} lock held. */
     private void resetTimerLocked() {
         cancelTimerLocked();
+        if (inhibited) return;          // timer suppressed while block-frame mode is on
         if (activeStreams == 0) return; // nothing streaming — no timer needed
         timeoutFuture = scheduler.schedule(this::onIdleTimeout,
                 IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
@@ -178,7 +203,7 @@ public class IdleSuspensionManager {
     private void onIdleTimeout() {
         int types;
         synchronized (this) {
-            if (activeStreams == 0 || suspended) return; // already clean
+            if (activeStreams == 0 || suspended || inhibited) return; // already clean
             types          = activeStreams;
             suspended      = true;
             suspendedTypes = types;
