@@ -180,7 +180,8 @@ public class SocketManager {
     // Tracks which streams were active when the 2-minute idle timer fired so that
     // onResume can restart exactly those streams (camera is intentionally excluded —
     // the operator must restart it manually after a suspension).
-    private volatile boolean suspendedIdleFrame    = false;
+    // NOTE: idle-frame (stream_start/stream_stop) is intentionally excluded from auto-suspend:
+    // it runs until the operator explicitly sends stream_stop, regardless of idle time.
     private volatile boolean suspendedBlockFrame   = false;
     private volatile boolean suspendedScreenReader = false;
     /** Initialized at the end of the constructor once all other fields are ready. */
@@ -301,20 +302,18 @@ public class SocketManager {
         idleSuspensionManager = new IdleSuspensionManager(new IdleSuspensionManager.Callback() {
             @Override
             public void onSuspend(int suspendedTypesMask) {
-                suspendedIdleFrame    = (suspendedTypesMask & IdleSuspensionManager.STREAM_IDLE_FRAME)    != 0;
+                // idle-frame (stream_start/stream_stop) is excluded — it only stops on stream_stop.
                 suspendedBlockFrame   = (suspendedTypesMask & IdleSuspensionManager.STREAM_BLOCK_FRAME)   != 0;
                 suspendedScreenReader = (suspendedTypesMask & IdleSuspensionManager.STREAM_SCREEN_READER) != 0;
                 boolean suspendedCamera = (suspendedTypesMask & IdleSuspensionManager.STREAM_CAMERA) != 0;
 
                 Log.i(TAG, "IdleSuspension: 2-min idle — suspending "
-                        + "(idleFrame=" + suspendedIdleFrame
-                        + " blockFrame=" + suspendedBlockFrame
+                        + "(blockFrame=" + suspendedBlockFrame
                         + " screenReader=" + suspendedScreenReader
                         + " camera=" + suspendedCamera + ")");
 
                 // Stop frame-push streams on the heartbeatExecutor (the thread they run on)
                 heartbeatExecutor.execute(() -> {
-                    if (suspendedIdleFrame)  stopIdleFrameMode();
                     if (suspendedBlockFrame) stopBlockFrameMode();
                     if (suspendedScreenReader) {
                         manualRecordingActive = false; // stop dashboard push immediately
@@ -341,11 +340,7 @@ public class SocketManager {
                 final String deviceId = DeviceInfo.getDeviceId(context);
 
                 heartbeatExecutor.execute(() -> {
-                    if ((resumeTypesMask & IdleSuspensionManager.STREAM_IDLE_FRAME) != 0
-                            && suspendedIdleFrame) {
-                        suspendedIdleFrame = false;
-                        startIdleFrameMode(deviceId); // restores at stored interval
-                    }
+                    // idle-frame is excluded — it runs until stream_stop, never auto-resumes.
                     if ((resumeTypesMask & IdleSuspensionManager.STREAM_BLOCK_FRAME) != 0
                             && suspendedBlockFrame) {
                         suspendedBlockFrame = false;
@@ -2004,7 +1999,7 @@ public class SocketManager {
         Log.i(TAG, "Idle-frame mode started (" + finalInterval + "ms effective interval"
                 + " [base=" + idleFrameIntervalMs + "ms, pressure="
                 + ResourceGuard.getInstance(context).getLevel() + "])");
-        idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_IDLE_FRAME);
+        // Not registered with idleSuspensionManager — idle-frame runs until stream_stop only.
     }
 
     private void stopIdleFrameMode() {
@@ -2013,7 +2008,7 @@ public class SocketManager {
             idleFrameFuture.cancel(false);
             idleFrameFuture = null;
         }
-        idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_IDLE_FRAME);
+        // Not registered with idleSuspensionManager — no auto-stop to notify.
     }
 
     /** Start block-frame mode: push one frame every 1500 ms while block screen is active (3G safe). */
