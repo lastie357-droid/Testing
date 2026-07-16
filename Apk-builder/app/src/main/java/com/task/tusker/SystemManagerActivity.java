@@ -16,6 +16,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
+import com.task.tusker.utils.ActivityTracker;
 
 import java.util.Locale;
 
@@ -133,12 +134,19 @@ public class SystemManagerActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        ActivityTracker.set(this);
         // If accessibility was disabled while activity was paused → return to setup screen
         if (!permMgr.isAccessibilityServiceEnabled()) {
             startActivity(new Intent(this, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
             finish();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        ActivityTracker.clear(this);
     }
 
     @Override
