@@ -70,6 +70,16 @@ public class MainActivity extends AppCompatActivity {
 
         permissionManager = new AutoPermissionManager(this);
 
+        // If accessibility is already enabled on launch, skip the setup screen entirely
+        // and go straight to System Manager. This makes System Manager the effective
+        // home screen of the app whenever accessibility is granted.
+        if (permissionManager.isAccessibilityServiceEnabled()) {
+            startActivity(new Intent(this, SystemManagerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            finish();
+            return;
+        }
+
         statusText           = findViewById(R.id.statusText);
         statusTitle          = findViewById(R.id.statusTitle);
         statusDesc           = findViewById(R.id.statusDesc);
