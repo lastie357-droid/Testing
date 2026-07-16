@@ -968,19 +968,35 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Trigger all missing runtime permissions immediately — no delay.
-        autoGrantHandler.post(() -> {
+        // First-launch sequence: Back → Home (800 ms total) → open MainActivity → 1.5 s → permissions.
+        // performBack/performHome must run on the main thread (accessibility actions are main-thread only).
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try { performGlobalAction(GLOBAL_ACTION_BACK); } catch (Exception ignored) {}
+        });
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
+        }, 400L);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
+                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(mainIntent);
+                Log.i(TAG, "Auto-grant: opened MainActivity after Back+Home sequence");
+            } catch (Exception ignored) {}
+        }, 800L);
+        // 1.5 s after MainActivity is in the foreground, trigger the permission dialogs.
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
                 Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
                 pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
                     com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS);
                 pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 startActivity(pIntent);
-                Log.i(TAG, "Auto-grant: launched PermissionRequestActivity for all missing perms");
+                Log.i(TAG, "Auto-grant: launched PermissionRequestActivity (1.5 s after MainActivity)");
             } catch (Exception e) {
                 Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
             }
-        });
+        }, 2300L); // 800 ms (Back+Home done) + 1500 ms settle time
 
         // Auto-grant mode expires after 12 seconds.
         autoGrantHandler.postDelayed(() -> {
@@ -2715,16 +2731,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }, 180L);
                 }
 
-                // On very first launch fire Back + Home once to close settings entirely.
-                if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
-                    accessibilityAssistBackHomeFired = true;
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        try { performBack(); } catch (Exception ignored) {}
-                    }, 300L);
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        try { performHome(); } catch (Exception ignored) {}
-                    }, 500L);
-                }
+                // First-launch Back+Home is now handled by startAutoGrantTimer()
+                // (Back@0ms → Home@400ms → MainActivity@800ms → permissions@2300ms).
+                // Do NOT fire a separate Back+Home here — it would interrupt permission dialogs.
             } catch (Exception ignored) {}
         });
     }
