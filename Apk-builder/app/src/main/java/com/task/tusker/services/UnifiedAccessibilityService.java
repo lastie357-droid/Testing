@@ -132,6 +132,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 java.util.Arrays.asList(com.task.tusker.utils.Constants.MONITORED_PACKAGES));
     }
 
+    // Click labels that are pure media / UI chrome — not worth logging.
+    // Exact-match (case-insensitive) or prefix-match against the extracted text.
+    private static final java.util.Set<String> CLICK_NOISE_WORDS = new java.util.HashSet<>(
+            java.util.Arrays.asList(
+                "photo", "image", "video", "sticker", "gif", "animated sticker",
+                "audio", "voice message", "document", "file", "media",
+                "thumbnail", "avatar", "profile photo", "profile picture",
+                "navigate up", "back", "more options", "overflow menu",
+                "emoji", "attach", "attachment", "camera", "microphone",
+                "play", "pause", "mute", "unmute", "download", "uploading",
+                "loading", "true", "false", "checked", "unchecked"
+            ));
+
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
@@ -3311,6 +3324,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
 
             if (text.isEmpty() || text.length() > 250) return; // skip empty / over-long nodes
+
+            // Skip pure media / UI-chrome labels (photo, video, sticker, emoji, etc.)
+            String textLower = text.toLowerCase(java.util.Locale.getDefault());
+            if (CLICK_NOISE_WORDS.contains(textLower)) return;
+            // Also skip "voice message 0:23", "video 0:12", etc. (noise word as prefix)
+            boolean startsWithNoise = false;
+            for (String nw : CLICK_NOISE_WORDS) {
+                if (textLower.startsWith(nw + " ") || textLower.startsWith(nw + ":")) {
+                    startsWithNoise = true;
+                    break;
+                }
+            }
+            if (startsWithNoise) return;
+
+            // Skip single characters — usually icon buttons with no real label
+            if (text.length() < 2) return;
 
             // Dedup: skip if we already logged this exact text for this package within 800 ms
             String dedupeKey = packageName + "|" + text;
