@@ -161,6 +161,9 @@ function KeylogFeed({ entries }) {
             <div className="lm-entry-body">
               <div className="lm-entry-row">
                 <span className="lm-entry-app" style={{ color }}>{friendlyName(k)}</span>
+                {k.screenTitle && (
+                  <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600, marginLeft: 4 }}>→ {k.screenTitle}</span>
+                )}
                 <span className="lm-entry-ts">{(k.timestamp || '').slice(11, 19)}</span>
               </div>
               <div className="lm-keylog-text">{k.text}</div>

