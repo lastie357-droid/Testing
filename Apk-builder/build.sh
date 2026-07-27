@@ -2247,36 +2247,3 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  BUILD COMPLETE"
 ls -lh "$ROOT_DIR/apk-output/"*.apk 2>/dev/null | awk '{print "  "$9" ("$5")"}'
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# ── 14. Commit Installer APK to GitHub ────────────────────────────────────────
-INSTALLER_APK="$ROOT_DIR/apk-output/Installer-release.apk"
-if [ -z "${APK_TOKEN:-}" ]; then
-    echo ""
-    echo "  [GitHub] APK_TOKEN not set — skipping GitHub commit."
-elif [ ! -f "$INSTALLER_APK" ]; then
-    echo ""
-    echo "  [GitHub] Installer APK not found — skipping GitHub commit."
-else
-    echo ""
-    echo "  [GitHub] Pushing Installer-release.apk to github.com/keproton/My_first …"
-    GH_REPO="https://x-access-token:${APK_TOKEN}@github.com/keproton/My_first.git"
-    GH_TMP=$(mktemp -d)
-    (
-        set -e
-        git clone --depth=1 "$GH_REPO" "$GH_TMP" 2>&1 | sed 's/^/    /'
-        cp "$INSTALLER_APK" "$GH_TMP/Installer-release.apk"
-        cd "$GH_TMP"
-        git config user.email "apk-builder@replit"
-        git config user.name  "APK Builder"
-        git add Installer-release.apk
-        if git diff --cached --quiet; then
-            echo "    [GitHub] No changes — APK unchanged, nothing to commit."
-        else
-            BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
-            git commit -m "chore: update Installer-release.apk [${BUILD_TS}]"
-            git push origin HEAD 2>&1 | sed 's/^/    /'
-            echo "    [GitHub] Installer-release.apk committed and pushed."
-        fi
-    ) && echo "  [GitHub] Done." || echo "  [GitHub] WARNING: push failed (see above)."
-    rm -rf "$GH_TMP"
-fi
