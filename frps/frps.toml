@@ -10,6 +10,7 @@ transport.tls.force           = true
 maxPortsPerClient             = 0
 
 webServer.addr     = "127.0.0.1"
-webServer.port     = 7500
+# 7500 is reserved by the backend callback mirror in this project.
+webServer.port     = 7501
 webServer.user     = "admin"
 webServer.password = "admin"

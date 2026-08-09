@@ -66,6 +66,15 @@ export default function SettingsTab() {
   const [assigningDevice,   setAssigningDevice]   = useState(null);
   const [assignTarget,      setAssignTarget]      = useState({});
 
+  // Admin-only: runtime service controls
+  const [services,           setServices]           = useState(null);
+  const [servicesLoading,    setServicesLoading]    = useState(false);
+  const [serviceBusy,        setServiceBusy]        = useState({});
+  const [serviceError,       setServiceError]       = useState('');
+  const [mongodbUri,         setMongodbUri]          = useState('');
+  const [redisUrl,           setRedisUrl]            = useState('');
+  const [savingDbUrls,       setSavingDbUrls]        = useState(false);
+
   // Admin token takes precedence (admin dashboard); otherwise use user token.
   const adminToken = localStorage.getItem('admin_token');
   const userToken  = localStorage.getItem('user_token');
@@ -143,6 +152,86 @@ export default function SettingsTab() {
     if (role !== 'admin') return;
     loadDeviceManagement();
   }, [role]);
+
+  const loadServices = async ({ quiet = false } = {}) => {
+    if (!quiet) setServicesLoading(true);
+    try {
+      const r = await fetch('/api/admin/services/status', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        cache: 'no-store',
+      });
+      const d = await r.json();
+      if (d.success) {
+        setServices(d.services || null);
+        if (d.services?.mongodb?.url) setMongodbUri(d.services.mongodb.url);
+        if (d.services?.redis?.url) setRedisUrl(d.services.redis.url);
+        setServiceError('');
+      } else if (!quiet) {
+        setServiceError(d.error || 'Could not load service status');
+      }
+    } catch (e) {
+      if (!quiet) setServiceError(`Service status unavailable: ${e.message}`);
+    } finally {
+      if (!quiet) setServicesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (role !== 'admin') return;
+    loadServices();
+    const id = setInterval(() => loadServices({ quiet: true }), 2000);
+    return () => clearInterval(id);
+  }, [role]);
+
+  const handleServiceAction = async (service, action) => {
+    const key = `${service}:${action}`;
+    setServiceBusy(prev => ({ ...prev, [key]: true }));
+    setServiceError('');
+    try {
+      const r = await fetch('/api/admin/services/action', {
+        method: 'POST',
+        headers: { ...headers, Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ service, action }),
+      });
+      const d = await r.json();
+      if (d.services) setServices(d.services);
+      if (!d.success) showToast(d.error || `${action} ${service} failed`, 'error');
+      else showToast(`${service} ${action} requested`);
+    } catch (e) {
+      showToast(`Network error: ${e.message}`, 'error');
+    } finally {
+      setServiceBusy(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      loadServices({ quiet: true });
+    }
+  };
+
+  const handleSaveDbUrls = async () => {
+    setSavingDbUrls(true);
+    setServiceError('');
+    try {
+      const r = await fetch('/api/admin/services/config', {
+        method: 'POST',
+        headers: { ...headers, Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ mongodbUri, redisUrl }),
+      });
+      const d = await r.json();
+      if (d.services) setServices(d.services);
+      if (d.success) {
+        showToast('Database URLs saved');
+        loadServices({ quiet: true });
+      } else {
+        showToast(d.error || 'Could not save database URLs', 'error');
+      }
+    } catch (e) {
+      showToast(`Network error: ${e.message}`, 'error');
+    } finally {
+      setSavingDbUrls(false);
+    }
+  };
 
   const handleAssignDevice = async (deviceId) => {
     const newAccessId = (assignTarget[deviceId] || '').trim();
@@ -802,6 +891,150 @@ bash build.sh --worker`}
             >
               {savingWorker ? '⏳ Saving…' : '💾 Save Worker Key'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Runtime Services — ADMIN ONLY */}
+      {isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid rgba(14,165,233,0.35)', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>🛠️</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Runtime Services</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                  Start, stop, restart, and monitor the server connections and FRP tunnel processes
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => loadServices()}
+              disabled={servicesLoading}
+              style={{
+                background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.35)',
+                borderRadius: 8, color: '#7dd3fc', padding: '6px 11px', fontSize: 11,
+                cursor: servicesLoading ? 'wait' : 'pointer', fontWeight: 600,
+              }}
+            >
+              {servicesLoading ? '⏳' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {serviceError && (
+            <div style={{
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+              borderRadius: 8, padding: '9px 12px', color: '#fca5a5', fontSize: 11, marginBottom: 12,
+            }}>
+              {serviceError}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {[
+              { id: 'mongodb', label: 'MongoDB', icon: '🍃', description: 'Database connection' },
+              { id: 'redis', label: 'Redis', icon: '⚡', description: 'Cache connection' },
+              { id: 'frps', label: 'FRP Server (frps)', icon: '🌐', description: 'Tunnel server process' },
+              { id: 'frpc', label: 'FRP Client (frpc)', icon: '🔌', description: 'Tunnel client process' },
+            ].map(item => {
+              const info = services?.[item.id];
+              const isRunning = info?.state === 'running';
+              const isStarting = info?.state === 'starting';
+              return (
+                <div key={item.id} style={{
+                  background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, padding: '12px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{item.label}</div>
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{item.description}</div>
+                    </div>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700,
+                      color: isRunning ? '#86efac' : isStarting ? '#fcd34d' : '#94a3b8',
+                    }}>
+                      <span style={{
+                        width: 7, height: 7, borderRadius: '50%',
+                        background: isRunning ? '#22c55e' : isStarting ? '#f59e0b' : '#64748b',
+                      }} />
+                      {info?.state || 'loading'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {['start', 'stop', 'restart'].map(action => {
+                      const busy = !!serviceBusy[`${item.id}:${action}`];
+                      return (
+                        <button
+                          key={action}
+                          onClick={() => handleServiceAction(item.id, action)}
+                          disabled={busy || (action === 'start' && isRunning) || (action === 'stop' && !isRunning && !isStarting)}
+                          style={{
+                            flex: 1, background: busy ? '#1e293b' : action === 'restart' ? 'rgba(99,102,241,0.18)' : 'rgba(51,65,85,0.65)',
+                            border: `1px solid ${action === 'restart' ? 'rgba(99,102,241,0.4)' : '#334155'}`,
+                            borderRadius: 6, color: busy ? '#64748b' : '#cbd5e1', padding: '6px 4px',
+                            fontSize: 10, fontWeight: 600, cursor: busy ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {busy ? '…' : action[0].toUpperCase() + action.slice(1)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {info?.note && <div style={{ color: '#475569', fontSize: 10, lineHeight: 1.4, marginTop: 8 }}>{info.note}</div>}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ borderTop: '1px solid #1e293b', marginTop: 16, paddingTop: 16 }}>
+            <div style={{ fontSize: 12, color: '#a5b4fc', fontWeight: 700, marginBottom: 4 }}>Database connection URLs</div>
+            <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.5, marginBottom: 12 }}>
+              Enter a new full URL to reconnect this server. Existing credentials are never returned to the browser.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div>
+                <label style={{ display: 'block', color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>MongoDB URL</label>
+                <input
+                  value={mongodbUri}
+                  onChange={e => setMongodbUri(e.target.value)}
+                  placeholder={services?.mongodb?.url || 'mongodb://user:password@host:27017/database'}
+                  spellCheck={false}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#020617', border: '1px solid #334155',
+                    borderRadius: 7, padding: '8px 10px', color: '#e2e8f0', fontSize: 11, outline: 'none',
+                    fontFamily: 'monospace',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', color: '#94a3b8', fontSize: 11, marginBottom: 5 }}>Redis URL <span style={{ color: '#475569' }}>(optional)</span></label>
+                <input
+                  value={redisUrl}
+                  onChange={e => setRedisUrl(e.target.value)}
+                  placeholder={services?.redis?.url || 'redis://user:password@host:6379'}
+                  spellCheck={false}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#020617', border: '1px solid #334155',
+                    borderRadius: 7, padding: '8px 10px', color: '#e2e8f0', fontSize: 11, outline: 'none',
+                    fontFamily: 'monospace',
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+              <button
+                onClick={handleSaveDbUrls}
+                disabled={savingDbUrls || (!mongodbUri.trim() && !redisUrl.trim())}
+                style={{
+                  background: '#0284c7', border: 'none', borderRadius: 7, color: '#fff',
+                  padding: '8px 16px', fontSize: 11, fontWeight: 700, cursor: savingDbUrls ? 'wait' : 'pointer',
+                  opacity: savingDbUrls || (!mongodbUri.trim() && !redisUrl.trim()) ? 0.5 : 1,
+                }}
+              >
+                {savingDbUrls ? '⏳ Saving…' : '💾 Save & Apply URLs'}
+              </button>
+            </div>
           </div>
         </div>
       )}

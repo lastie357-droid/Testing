@@ -37,6 +37,8 @@ const K = {
 
 let redis = null;
 let connected = false;
+let configuredUrl = process.env.REDIS_URL || '';
+let initPromise = null;
 
 function log(msg, level = 'info') {
     const ts = new Date().toISOString().slice(11, 23);
@@ -48,14 +50,21 @@ function log(msg, level = 'info') {
  * Initialise the Redis client.
  * Call once at server startup — returns a Promise that resolves when ready.
  */
-async function init() {
-    const url = process.env.REDIS_URL;
+async function init(urlOverride) {
+    if (typeof urlOverride === 'string') configuredUrl = urlOverride.trim();
+    const url = configuredUrl;
     if (!url) {
         log('REDIS_URL not set — Redis disabled (running in-memory only)', 'warn');
         return;
     }
 
-    return new Promise((resolve) => {
+    if (redis && (redis.status === 'ready' || redis.status === 'connecting' || redis.status === 'reconnecting')) {
+        return;
+    }
+
+    if (initPromise) return initPromise;
+
+    initPromise = new Promise((resolve) => {
         redis = new Redis(url, {
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
@@ -82,13 +91,19 @@ async function init() {
                 log(`flushall error: ${e.message}`, 'warn');
             }
             resolve();
+            initPromise = null;
         });
         redis.on('error',  (e)  => log(`Error: ${e.message}`, 'error'));
         redis.on('close',  ()   => { connected = false; log('Connection closed', 'warn'); });
         redis.on('reconnecting', (ms) => log(`Reconnecting in ${ms}ms…`));
 
-        setTimeout(resolve, 5000);  // don't block server startup indefinitely
+        setTimeout(() => {
+            resolve();
+            initPromise = null;
+        }, 5000);  // don't block server startup indefinitely
     });
+
+    return initPromise;
 }
 
 /** Whether Redis is currently usable */
@@ -330,11 +345,41 @@ async function quit() {
     if (redis) {
         try { await redis.quit(); log('Disconnected gracefully'); }
         catch (e) { redis.disconnect(); }
+        finally {
+            redis = null;
+            connected = false;
+            initPromise = null;
+        }
     }
 }
 
+/** Stop the current connection without changing the configured URL. */
+async function stop() {
+    await quit();
+}
+
+/** Start Redis using the current URL, or an optional replacement URL. */
+async function start(urlOverride) {
+    if (typeof urlOverride === 'string') configuredUrl = urlOverride.trim();
+    return init();
+}
+
+/** Restart Redis using the current URL, or an optional replacement URL. */
+async function restart(urlOverride) {
+    await stop();
+    return start(urlOverride);
+}
+
+function getConfiguredUrl() {
+    return configuredUrl;
+}
+
+function setConfiguredUrl(url) {
+    configuredUrl = typeof url === 'string' ? url.trim() : '';
+}
+
 module.exports = {
-    init, isConnected, client, quit, getStats,
+    init, start, stop, restart, getConfiguredUrl, setConfiguredUrl, isConnected, client, quit, getStats,
     saveDevice, getDevice, getAllDevices, markDeviceOnline, markDeviceOffline,
     pushNotification, getNotifications,
     pushActivity, getActivity,

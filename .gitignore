@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+backend/.runtime-db-settings.json
 
 # Dependencies
 node_modules/

@@ -55,6 +55,11 @@ function pushLog(source, level, message) {
 // ============================================
 // FRP LAUNCHER  (frps → wait → frpc) — auto-restart on any exit/error
 // ============================================
+const frpRuntime = {
+    frps: { controller: null, available: false },
+    frpc: { controller: null, available: false },
+};
+
 (function startFRP() {
     const ROOT = path.resolve(__dirname, '..');
 
@@ -89,8 +94,12 @@ function pushLog(source, level, message) {
     function keepAlive(label, bin, cfg, { initialDelay = 1000, maxDelay = 30000, beforeSpawn } = {}) {
         let delay = initialDelay;
         let startedAt = 0;
+        let proc = null;
+        let stopped = false;
+        let restartTimer = null;
 
         function launch() {
+            if (stopped) return;
             if (beforeSpawn) {
                 beforeSpawn(() => doSpawn());
             } else {
@@ -99,9 +108,10 @@ function pushLog(source, level, message) {
         }
 
         function doSpawn() {
+            if (stopped) return;
             console.log(`[${label}] Starting…`);
             startedAt = Date.now();
-            const proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
+            proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
             proc.stdout.on('data', d => { process.stdout.write(`[${label}] ${d}`); pushLog(label, 'info', String(d)); });
             proc.stderr.on('data', d => { process.stderr.write(`[${label}] ${d}`); pushLog(label, 'warn', String(d)); });
 
@@ -111,6 +121,8 @@ function pushLog(source, level, message) {
             });
 
             proc.on('close', code => {
+                proc = null;
+                if (stopped) return;
                 const uptime = ((Date.now() - startedAt) / 1000).toFixed(1);
                 console.warn(`[${label}] Exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s…`);
                 pushLog(label, 'warn', `Process exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s`);
@@ -118,19 +130,52 @@ function pushLog(source, level, message) {
                 if (Date.now() - startedAt > 60000) delay = initialDelay;
                 const nextDelay = delay;
                 delay = Math.min(delay * 2, maxDelay);
-                setTimeout(launch, nextDelay);
+                restartTimer = setTimeout(launch, nextDelay);
             });
         }
 
-        launch();
+        const controller = {
+            start() {
+                if (!stopped && (proc || restartTimer)) return;
+                stopped = false;
+                delay = initialDelay;
+                launch();
+            },
+            stop() {
+                stopped = true;
+                if (restartTimer) {
+                    clearTimeout(restartTimer);
+                    restartTimer = null;
+                }
+                if (proc) {
+                    const current = proc;
+                    proc = null;
+                    try { current.kill('SIGTERM'); } catch (_) {}
+                }
+            },
+            restart() {
+                this.stop();
+                setTimeout(() => this.start(), 50);
+            },
+            status() {
+                return {
+                    running: !!proc && !proc.killed,
+                    pid: proc?.pid || null,
+                    desired: !stopped,
+                };
+            },
+        };
+        controller.start();
+        return controller;
     }
 
     // Start frps — restart unconditionally on any exit.
-    keepAlive('frps', frpsBin, frpsCfg);
+    frpRuntime.frps.controller = keepAlive('frps', frpsBin, frpsCfg);
+    frpRuntime.frps.available = true;
 
     // Start frpc — but only after frps port 7000 is ready. On each restart of
     // frpc, wait again for frps to be up first (frps may also be restarting).
-    keepAlive('frpc', frpcBin, frpcCfg, {
+    frpRuntime.frpc.controller = keepAlive('frpc', frpcBin, frpcCfg, {
         beforeSpawn: (cb) => {
             waitForPort(7000, 30, 1000, (err) => {
                 if (err) {
@@ -143,6 +188,7 @@ function pushLog(source, level, message) {
             });
         },
     });
+    frpRuntime.frpc.available = true;
 })();
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
@@ -997,32 +1043,106 @@ const devicesRoutes = require('./routes/devices');
 const userAuthRoutes = require('./routes/userAuth');
 
 const MONGO_URI =
+    process.env.MONGO_URI ||
     process.env.MONGODB_URI ||
     process.env.MONGODB_URL ||
     process.env.mongodb_url ||
     process.env.mongodb_uri ||
     'mongodb://localhost:27017/access-control';
 
-const _mongoKey = process.env.MONGODB_URI ? 'MONGODB_URI'
+const DB_RUNTIME_SETTINGS_FILE = path.join(__dirname, '.runtime-db-settings.json');
+let runtimeDbSettings = {};
+(function loadRuntimeDbSettings() {
+    try {
+        const raw = JSON.parse(fs.readFileSync(DB_RUNTIME_SETTINGS_FILE, 'utf8'));
+        if (raw && typeof raw === 'object') runtimeDbSettings = raw;
+    } catch (_) {}
+})();
+
+let activeMongoUri = runtimeDbSettings.mongodbUri || MONGO_URI;
+const _mongoKey = runtimeDbSettings.mongodbUri ? 'dashboard setting'
+    : process.env.MONGO_URI              ? 'MONGO_URI'
+    : process.env.MONGODB_URI            ? 'MONGODB_URI'
     : process.env.MONGODB_URL             ? 'MONGODB_URL'
     : process.env.mongodb_url             ? 'mongodb_url'
     : process.env.mongodb_uri             ? 'mongodb_uri'
     : '(fallback: localhost)';
-log('DB', `Connecting via env key: ${_mongoKey}, protocol: ${MONGO_URI.split('://')[0]}, host starts with: ${MONGO_URI.split('@')[1]?.split('/')[0]?.substring(0,30) || 'N/A'}`);
+const initialRedisUrl = runtimeDbSettings.redisUrl || process.env.REDIS_URL || '';
+R.setConfiguredUrl(initialRedisUrl);
 
-mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000
-}).then(async () => {
-    log('DB', 'MongoDB connected');
-    // Mark every device offline on startup — the in-memory TCP map is empty after
-    // a restart, so any device still flagged online in the DB is a stale ghost.
-    // Devices will flip back to online as soon as they re-register over TCP.
+function mongoHostForLog(uri) {
     try {
-        const r = await Device.updateMany({ isOnline: true }, { isOnline: false, lastSeen: new Date() });
-        if (r.modifiedCount > 0) log('DB', `Startup: marked ${r.modifiedCount} stale device(s) offline`);
-    } catch (e) { log('DB', 'Startup offline-mark failed: ' + e.message, 'warn'); }
-}).catch(e => log('DB', 'MongoDB unavailable: ' + e.message, 'warn'));
+        const parsed = new URL(uri);
+        return parsed.hostname || 'unknown';
+    } catch (_) {
+        return 'unknown';
+    }
+}
+
+function maskConnectionUrl(value) {
+    if (!value) return '';
+    try {
+        const parsed = new URL(value);
+        if (parsed.username) parsed.username = '•••';
+        if (parsed.password) parsed.password = '•••';
+        return parsed.toString().replace(/\/$/, '');
+    } catch (_) {
+        return 'configured';
+    }
+}
+
+function validateMongoUrl(value) {
+    if (typeof value !== 'string' || value.length > 2048) return false;
+    return /^mongodb(?:\+srv)?:\/\/\S+$/i.test(value.trim());
+}
+
+function validateRedisUrl(value) {
+    if (typeof value !== 'string' || value.length > 2048) return false;
+    return /^rediss?:\/\/\S+$/i.test(value.trim());
+}
+
+function persistRuntimeDbSettings() {
+    try {
+        if (!runtimeDbSettings.mongodbUri && !runtimeDbSettings.redisUrl) {
+            fs.rmSync(DB_RUNTIME_SETTINGS_FILE, { force: true });
+            return;
+        }
+        fs.writeFileSync(DB_RUNTIME_SETTINGS_FILE, JSON.stringify(runtimeDbSettings), { mode: 0o600 });
+    } catch (e) {
+        log('DB', `Could not persist dashboard database settings: ${e.message}`, 'warn');
+    }
+}
+
+let mongoOperation = Promise.resolve();
+function connectMongo(uri = activeMongoUri) {
+    activeMongoUri = uri;
+    mongoOperation = mongoOperation.then(async () => {
+        if (mongoose.connection.readyState !== 0) {
+            try { await mongoose.disconnect(); } catch (_) {}
+        }
+        log('DB', `Connecting via ${runtimeDbSettings.mongodbUri ? 'dashboard setting' : _mongoKey}, protocol: ${uri.split('://')[0]}, host: ${mongoHostForLog(uri)}`);
+        await mongoose.connect(uri, {
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000,
+        });
+        log('DB', 'MongoDB connected');
+        try {
+            const r = await Device.updateMany({ isOnline: true }, { isOnline: false, lastSeen: new Date() });
+            if (r.modifiedCount > 0) log('DB', `Startup: marked ${r.modifiedCount} stale device(s) offline`);
+        } catch (e) { log('DB', 'Startup offline-mark failed: ' + e.message, 'warn'); }
+    }).catch(e => {
+        log('DB', 'MongoDB unavailable: ' + e.message, 'warn');
+        throw e;
+    });
+    return mongoOperation;
+}
+
+function stopMongo() {
+    mongoOperation = mongoOperation.then(() => mongoose.disconnect().catch(() => {}));
+    return mongoOperation;
+}
+
+connectMongo(activeMongoUri).catch(() => {});
 
 // ============================================
 // STATE
@@ -2012,6 +2132,136 @@ function requireAdmin(req, res, next) {
     if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false, error: 'Unauthorized' });
     next();
 }
+
+function serviceState(state, extra = {}) {
+    return { state, ...extra };
+}
+
+function getManagedServiceStatus() {
+    const mongoReady = mongoose.connection.readyState === 1;
+    const mongoConnecting = mongoose.connection.readyState === 2;
+    const redisReady = R.isConnected();
+    const redisConfigured = !!R.getConfiguredUrl();
+    const frps = frpRuntime.frps.controller;
+    const frpc = frpRuntime.frpc.controller;
+
+    return {
+        mongodb: serviceState(
+            mongoReady ? 'running' : mongoConnecting ? 'starting' : 'stopped',
+            {
+                kind: 'connection',
+                managed: true,
+                url: maskConnectionUrl(activeMongoUri),
+                configured: !!activeMongoUri,
+                note: 'Controls this server’s MongoDB connection; it does not power off a remote MongoDB host.',
+            },
+        ),
+        redis: serviceState(
+            redisReady ? 'running' : 'stopped',
+            {
+                kind: 'connection',
+                managed: true,
+                url: maskConnectionUrl(R.getConfiguredUrl()),
+                configured: redisConfigured,
+                note: 'Controls this server’s Redis connection; it does not power off a remote Redis host.',
+            },
+        ),
+        frps: frps
+            ? serviceState(frps.status().running ? 'running' : 'stopped', { kind: 'process', managed: true })
+            : serviceState('unavailable', { kind: 'process', managed: false }),
+        frpc: frpc
+            ? serviceState(frpc.status().running ? 'running' : 'stopped', { kind: 'process', managed: true })
+            : serviceState('unavailable', { kind: 'process', managed: false }),
+        updatedAt: Date.now(),
+    };
+}
+
+function ensureServiceName(name) {
+    return ['mongodb', 'redis', 'frps', 'frpc'].includes(name);
+}
+
+// Admin-only runtime service controls. Database controls intentionally manage
+// this server's connections, since MongoDB/Redis URLs may point to another host.
+app.get('/api/admin/services/status', requireAdmin, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, services: getManagedServiceStatus() });
+});
+
+app.post('/api/admin/services/action', requireAdmin, async (req, res) => {
+    const service = String(req.body?.service || '').toLowerCase();
+    const action = String(req.body?.action || '').toLowerCase();
+    if (!ensureServiceName(service)) {
+        return res.status(400).json({ success: false, error: 'Unknown service' });
+    }
+    if (!['start', 'stop', 'restart'].includes(action)) {
+        return res.status(400).json({ success: false, error: 'Action must be start, stop, or restart' });
+    }
+
+    try {
+        if (service === 'mongodb') {
+            if (!activeMongoUri) return res.status(400).json({ success: false, error: 'MongoDB URL is not configured' });
+            if (action === 'stop') await stopMongo();
+            else if (action === 'restart') {
+                await stopMongo();
+                await connectMongo(activeMongoUri);
+            } else {
+                await connectMongo(activeMongoUri);
+            }
+        } else if (service === 'redis') {
+            if (!R.getConfiguredUrl()) return res.status(400).json({ success: false, error: 'Redis URL is not configured' });
+            if (action === 'stop') await R.stop();
+            else if (action === 'restart') await R.restart();
+            else await R.start();
+        } else {
+            const controller = frpRuntime[service].controller;
+            if (!controller) return res.status(503).json({ success: false, error: `${service} is unavailable` });
+            controller[action]();
+        }
+
+        log('ADMIN', `Service action: ${action} ${service}`);
+        res.json({ success: true, service, action, services: getManagedServiceStatus() });
+    } catch (e) {
+        log('ADMIN', `Service action failed: ${action} ${service}: ${e.message}`, 'warn');
+        res.status(500).json({ success: false, error: e.message, services: getManagedServiceStatus() });
+    }
+});
+
+app.post('/api/admin/services/config', requireAdmin, async (req, res) => {
+    const body = req.body || {};
+    const requestedMongo = body.mongodbUri == null ? null : String(body.mongodbUri).trim();
+    const requestedRedis = body.redisUrl == null ? null : String(body.redisUrl).trim();
+    // The status endpoint masks credentials. A masked value means “keep the
+    // current URL”, while an empty Redis value explicitly disables Redis.
+    const nextMongo = requestedMongo == null || requestedMongo.includes('•••') ? activeMongoUri : requestedMongo;
+    const nextRedis = requestedRedis == null || requestedRedis.includes('•••') ? R.getConfiguredUrl() : requestedRedis;
+
+    if (!validateMongoUrl(nextMongo)) {
+        return res.status(400).json({ success: false, error: 'MongoDB URL must start with mongodb:// or mongodb+srv://' });
+    }
+    if (nextRedis && !validateRedisUrl(nextRedis)) {
+        return res.status(400).json({ success: false, error: 'Redis URL must start with redis:// or rediss://' });
+    }
+
+    const mongoChanged = nextMongo !== activeMongoUri;
+    const redisChanged = nextRedis !== R.getConfiguredUrl();
+    const mongoWasReady = mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2;
+    const redisWasReady = R.isConnected();
+
+    runtimeDbSettings.mongodbUri = nextMongo;
+    runtimeDbSettings.redisUrl = nextRedis;
+    activeMongoUri = nextMongo;
+    R.setConfiguredUrl(nextRedis);
+    persistRuntimeDbSettings();
+
+    try {
+        if (mongoChanged && mongoWasReady) await connectMongo(nextMongo);
+        if (redisChanged && redisWasReady) await R.restart(nextRedis);
+        log('ADMIN', 'Database connection URLs updated from dashboard');
+        res.json({ success: true, services: getManagedServiceStatus() });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message, services: getManagedServiceStatus() });
+    }
+});
 
 // Accepts either admin tokens (hex) OR user JWTs. Sets req.authRole = 'admin'|'user'
 // and (for users) req.authUserId.
