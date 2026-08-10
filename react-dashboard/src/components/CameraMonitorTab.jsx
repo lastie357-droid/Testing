@@ -38,7 +38,7 @@ function formatBytes(b) {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame, galleryActive }) {
+export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame, galleryActive, connected }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
   // Accept admin token OR user JWT — the backend now accepts both
@@ -182,9 +182,9 @@ export default function CameraMonitorTab({ device, sendCommand, results, sseCame
     paintFrame(frameData);
   }, [sseCameraFrame, streaming, paintFrame]);
 
-  // ── Polling: pull latest camera frame from server ─────────────────────
+  // ── Polling fallback: only while SSE is disconnected ─────────────────
   useEffect(() => {
-    if (!streaming || !isOnline) return;
+    if (!streaming || !isOnline || connected) return;
     const POLL_MS = Math.max(500, intervalMs);
     const poll = async () => {
       try {
@@ -200,7 +200,7 @@ export default function CameraMonitorTab({ device, sendCommand, results, sseCame
     poll();
     const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
-  }, [streaming, isOnline, deviceId, token, intervalMs, paintFrame]);
+  }, [streaming, isOnline, connected, deviceId, token, intervalMs, paintFrame]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────
   useEffect(() => () => {

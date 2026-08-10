@@ -18,27 +18,40 @@ export function useTcpStream(onMessage) {
 
   const esRef         = useRef(null);
   const retryRef      = useRef(null);
+  const connectRef    = useRef(null);
+  const generationRef = useRef(0);
+  const disposedRef   = useRef(false);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
   const onMessageRef  = useRef(onMessage);
   onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
+    if (disposedRef.current) return;
     // Admin token takes precedence (admin dashboard); otherwise fall back to
     // the user JWT so the user dashboard can also stream events.
     const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
     if (!token) return;
+
+    // Never allow two EventSource instances to survive a reconnect race.
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    const generation = ++generationRef.current;
 
     // EventSource opens a persistent TCP connection; browser reconnects automatically.
     const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
     esRef.current = es;
 
     es.onopen = () => {
+      if (generation !== generationRef.current || disposedRef.current) return;
       setConnected(true);
       setReconnecting(false);
       clearTimeout(retryRef.current);
     };
 
     es.onmessage = (e) => {
+      if (generation !== generationRef.current || disposedRef.current) return;
       try {
         const msg = JSON.parse(e.data);
         // Capture our sseClientId the first time the server sends it
@@ -51,19 +64,26 @@ export function useTcpStream(onMessage) {
     };
 
     es.onerror = () => {
+      if (generation !== generationRef.current || disposedRef.current) return;
       setConnected(false);
       setReconnecting(true);
       es.close();
-      // EventSource would retry automatically but we want consistent 3-s backoff
-      retryRef.current = setTimeout(connect, 3000);
+      // EventSource would retry automatically but we want controlled backoff.
+      clearTimeout(retryRef.current);
+      retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
     };
   }, []);
+  connectRef.current = connect;
 
   useEffect(() => {
+    disposedRef.current = false;
     connect();
     return () => {
+      disposedRef.current = true;
+      generationRef.current += 1;
       clearTimeout(retryRef.current);
       if (esRef.current) esRef.current.close();
+      esRef.current = null;
     };
   }, [connect]);
 

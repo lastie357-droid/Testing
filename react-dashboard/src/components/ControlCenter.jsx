@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import ScreenReaderView from './ScreenReaderView';
+import React, { Suspense, lazy, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
+
+const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
 
 // ── Inline Task Runner ────────────────────────────────────────────────────────
 function TaskRunnerModal({ device, results, onClose }) {
@@ -261,7 +262,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -364,9 +365,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     paintFrame(streamFrame);
   }, [streamFrame, paintFrame]);
 
-  // ── Polling fallback — same as ScreenControl.jsx ──────────────────────
+  // ── Polling fallback — only while SSE is disconnected ─────────────────
   useEffect(() => {
-    if (!streaming || !isOnline) return;
+    if (!streaming || !isOnline || connected) return;
     const POLL_MS = 2000;
     const poll = async () => {
       try {
@@ -383,7 +384,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     poll();
     const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
-  }, [streaming, isOnline, deviceId, paintFrame]);
+  }, [streaming, isOnline, connected, deviceId, paintFrame]);
 
   const startStream = useCallback(() => {
     if (streamingRef.current) return;
@@ -651,7 +652,15 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, textAlign: 'center' }}>
             📺 Screen Reader
           </div>
-          <ScreenReaderView device={device} sendCommand={sendCommand} results={results} screenPushData={screenReaderPushData} />
+          <Suspense fallback={<div style={{ minHeight: 160, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: 12 }}>Loading screen reader…</div>}>
+            <ScreenReaderView
+              device={device}
+              sendCommand={sendCommand}
+              results={results}
+              screenPushData={screenReaderPushData}
+              connected={connected}
+            />
+          </Suspense>
         </div>
 
       </div>

@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 const PHONE_W = 360;
 const PHONE_H = 780;
 
-export default function ScreenReaderView({ device, sendCommand, results, screenPushData }) {
+export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
@@ -78,10 +78,11 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // being listed as a dep (which would cause a spurious extra stop on every toggle).
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
-  // ── Polling fallback — fetch latest frame from server at the configured interval ──
-  // SSE can be unreliable through proxies; polling guarantees continuous updates.
+  // ── Polling fallback — only while SSE is disconnected ──
+  // SSE is the primary path. Poll only during reconnects so healthy streams do not
+  // create a second request path for every frame interval.
   useEffect(() => {
-    if (!streaming || !isOnline) return;
+    if (!streaming || !isOnline || connected) return;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');
@@ -96,7 +97,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     poll(); // immediate first poll on start
     const id = setInterval(poll, streamInterval);
     return () => clearInterval(id);
-  }, [streaming, isOnline, deviceId, streamInterval]);
+  }, [streaming, isOnline, connected, deviceId, streamInterval]);
 
   // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
   // Using a ref instead of `streaming` in deps prevents this from firing a stop command

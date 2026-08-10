@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-export default function ScreenControl({ device, sendCommand, streamFrame, send }) {
+export default function ScreenControl({ device, sendCommand, streamFrame, send, connected }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
@@ -127,11 +127,11 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     paintFrame(streamFrame);
   }, [streamFrame, paintFrame]);
 
-  // ── Polling fallback — fetch latest frame from server at ~2s interval ──
-  // SSE can be unreliable through proxies; polling guarantees continuous updates
-  // even when SSE drops or the dashboard is restarted (mirrors how Screen Reader works).
+  // ── Polling fallback — only while SSE is disconnected ──
+  // SSE is the primary delivery path. Polling only during a reconnect avoids
+  // duplicate frame traffic and keeps the server/client responsive while healthy.
   useEffect(() => {
-    if (!isStreaming || !isOnline) return;
+    if (!isStreaming || !isOnline || connected) return;
     const POLL_MS = 2000;
     const poll = async () => {
       try {
@@ -153,7 +153,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     poll();
     const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
-  }, [isStreaming, isOnline, deviceId, paintFrame]);
+  }, [isStreaming, isOnline, connected, deviceId, paintFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);

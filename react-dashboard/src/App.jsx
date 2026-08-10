@@ -169,15 +169,9 @@ export default function App() {
 // ─── Splash screen ───────────────────────────────────────────────────────────
 function Splash({ text }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100vh',
-      background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
-      color: '#94a3b8',
-      fontSize: 14,
-      fontFamily: '"Inter", "Segoe UI", sans-serif',
-    }}>
-      {text}
+    <div className="app-splash" role="status" aria-live="polite">
+      <span className="loading-spinner" aria-hidden="true" />
+      <span>{text}</span>
     </div>
   );
 }
@@ -373,7 +367,7 @@ function AdminDashboard({ logout }) {
     if (!connected) return;
     const tick = () => send('dashboard:ping', { sentAt: Date.now() });
     tick();
-    const id = setInterval(tick, 5000);
+    const id = setInterval(tick, 15000);
     return () => clearInterval(id);
   }, [connected, send]);
 
@@ -403,6 +397,7 @@ function AdminDashboard({ logout }) {
               deviceLatency={deviceLatencies[selectedDevice] ?? null}
               gcodeVersion={gcodeVersion[selectedDevice] || 0}
               galleryStream={galleryStreams[selectedDevice] || null}
+               connected={connected}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

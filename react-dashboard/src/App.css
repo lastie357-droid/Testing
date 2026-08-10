@@ -79,6 +79,41 @@ body {
   50% { opacity: 0.4; }
 }
 
+.app-splash {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+  color: #94a3b8;
+  font: 14px "Inter", "Segoe UI", sans-serif;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(148, 163, 184, 0.25);
+  border-top-color: #818cf8;
+  border-radius: 50%;
+  animation: app-spin 0.75s linear infinite;
+  flex: 0 0 auto;
+}
+
+.tab-loading {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+@keyframes app-spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes sc-pulse-bar {
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(150%); }
