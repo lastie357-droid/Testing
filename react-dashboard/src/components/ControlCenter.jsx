@@ -1,233 +1,7 @@
-import React, { Suspense, lazy, useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useRef, useEffect, useCallback } from 'react';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
 
 const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
-
-// ── Inline Task Runner ────────────────────────────────────────────────────────
-function TaskRunnerModal({ device, results, onClose }) {
-  const deviceId = device.deviceId;
-  const accessId = device.accessId || '';
-  const isOnline = device.isOnline;
-
-  const [tasks, setTasks]             = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [running, setRunning]         = useState(false);
-  const [runningTask, setRunningTask] = useState(null);
-  const [runLog, setRunLog]           = useState([]);
-  const [runningIndex, setRunningIndex]       = useState(-1);
-  const [completedIndices, setCompletedIndices] = useState([]);
-  const [errorIndex, setErrorIndex]   = useState(-1);
-
-  const taskCommandIdRef  = useRef(null);
-  const pendingResolvers  = useRef(new Map());
-  const seenIds           = useRef(new Set());
-
-  useEffect(() => {
-    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
-    // Users are scoped by JWT. Admins can run any saved task, so request the
-    // complete task library rather than only the selected device owner's tasks.
-    fetch('/api/tasks', { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
-      .then(r => r.json())
-      .then(d => { if (d.success) setTasks(d.tasks || []); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [accessId]);
-
-  // Handle task_progress events from the device — same logic as TaskStudio
-  useEffect(() => {
-    results.forEach(r => {
-      // Resolve any pending sendAndWait promise
-      if (r.id && !seenIds.current.has('resolve_' + r.id)) {
-        const entry = pendingResolvers.current.get(r.id);
-        if (entry) {
-          seenIds.current.add('resolve_' + r.id);
-          clearTimeout(entry.timer);
-          pendingResolvers.current.delete(r.id);
-          entry.resolve(r);
-        }
-      }
-
-      // Live step progress from the device
-      if (r.command === 'task_progress' && !seenIds.current.has(r.id)) {
-        seenIds.current.add(r.id);
-        const d = typeof r.response === 'object' ? r.response : {};
-        if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
-          const ts = new Date().toLocaleTimeString();
-          if (d.complete) {
-            setRunningIndex(-1);
-            setRunning(false);
-            const allDone = (d.completed ?? 0) >= (d.total ?? 1);
-            const label   = allDone
-              ? `Task complete — all ${d.completed} step(s) done`
-              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
-            setRunLog(prev => [...prev, { status: allDone ? 'ok' : 'err', message: `[${ts}] ${label}` }]);
-          } else if (d.stepIndex !== undefined) {
-            setRunningIndex(d.stepIndex);
-            const stepFailed = d.success === false || d.error || d.failed;
-            if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
-            if (stepFailed && d.done) setErrorIndex(d.stepIndex);
-            const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
-            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
-          }
-        }
-      }
-    });
-  }, [results]);
-
-  // Send all steps at once via run_task_local — same as TaskStudio
-  const sendAndWait = async (command, params = {}, timeoutMs = 12000) => {
-    const token       = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
-    const sseClientId = sessionStorage.getItem('sseClientId');
-    let res, data;
-    try {
-      res  = await fetch('/api/commands', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ deviceId, command, params: params ?? null, sseClientId }),
-      });
-      data = await res.json();
-    } catch (err) {
-      return { success: false, error: String(err) };
-    }
-    if (!data?.commandId) return { success: false, error: data?.error || 'No commandId' };
-    const commandId = data.commandId;
-    return new Promise(resolve => {
-      const timer = setTimeout(() => {
-        if (pendingResolvers.current.has(commandId)) {
-          pendingResolvers.current.delete(commandId);
-          resolve({ success: false, error: 'Timeout' });
-        }
-      }, timeoutMs);
-      pendingResolvers.current.set(commandId, { resolve, timer });
-    });
-  };
-
-  const runTask = async (task) => {
-    if (!isOnline || running) return;
-    taskCommandIdRef.current = null;
-    setRunning(true);
-    setRunningTask(task);
-    setRunLog([]);
-    setRunningIndex(-1);
-    setCompletedIndices([]);
-    setErrorIndex(-1);
-
-    const enabledSteps = (task.steps || [])
-      .map((s, i) => ({ ...s, originalIndex: i }))
-      .filter(s => s.enabled !== false);
-
-    if (enabledSteps.length === 0) { setRunning(false); return; }
-
-    const ts = new Date().toLocaleTimeString();
-    setRunLog([{ status: 'ok', message: `[${ts}] Sending ${enabledSteps.length} step(s) to device…` }]);
-
-    const result = await sendAndWait('run_task_local', { steps: enabledSteps });
-
-    if (!result?.success || !result?.response) {
-      const errTs  = new Date().toLocaleTimeString();
-      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Failed: ${result?.error || 'Device did not acknowledge'}` }]);
-      setRunning(false);
-      return;
-    }
-
-    let ackData = {};
-    try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
-    const storedCount = ackData.steps ?? enabledSteps.length;
-
-    taskCommandIdRef.current = result.id;
-    const ackTs = new Date().toLocaleTimeString();
-    setRunLog(prev => [...prev, {
-      status: 'ok',
-      message: `[${ackTs}] ✓ Device received ${storedCount} step(s) — executing…`,
-    }]);
-  };
-
-  const cardStyle = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-  };
-  const boxStyle = {
-    background: '#1e293b', borderRadius: 14, width: 520, maxWidth: '95vw',
-    maxHeight: '82vh', border: '1px solid #334155', display: 'flex', flexDirection: 'column',
-    overflow: 'hidden',
-  };
-
-  return (
-    <div style={cardStyle} onClick={e => { if (e.target === e.currentTarget && !running) onClose(); }}>
-      <div style={boxStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032' }}>
-          <span style={{ fontWeight: 700, color: '#a78bfa', fontSize: 13 }}>🎬 Run Task</span>
-          <span style={{ fontSize: 11, color: '#64748b' }}>{tasks.length} task{tasks.length !== 1 ? 's' : ''}{accessId ? ` for ${accessId}` : ' (global)'}</span>
-          {!running && <button onClick={onClose} style={{ marginLeft: 'auto', ...smallBtn('#334155'), padding: '3px 10px' }}>✕ Close</button>}
-          {running && <button onClick={() => setRunning(false)} style={{ marginLeft: 'auto', ...smallBtn('#7f1d1d'), padding: '3px 10px' }}>⏹ Stop</button>}
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {loading && <div style={{ color: '#64748b', textAlign: 'center', padding: 24 }}>Loading tasks…</div>}
-          {!loading && tasks.length === 0 && (
-            <div style={{ color: '#475569', textAlign: 'center', padding: 24 }}>
-              No tasks yet — create them in Task Studio
-            </div>
-          )}
-
-          {tasks.map(task => {
-            const isActive = runningTask?._id === task._id;
-            const enabledSteps = (task.steps || []).filter(s => s.enabled !== false);
-            return (
-              <div key={task._id} style={{
-                background: isActive ? '#1e1b4b' : '#162032',
-                border: `1px solid ${isActive ? '#7c3aed' : '#1e293b'}`,
-                borderRadius: 10, padding: '10px 14px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontWeight: 600, color: '#e2e8f0', fontSize: 13, flex: 1 }}>🎬 {task.name}</span>
-                  <span style={{ fontSize: 11, color: '#475569' }}>{enabledSteps.length} step{enabledSteps.length !== 1 ? 's' : ''}</span>
-                  <button
-                    onClick={() => runTask(task)}
-                    disabled={!isOnline || running}
-                    style={{ ...smallBtn('#166534'), padding: '4px 12px', fontSize: 12 }}
-                  >
-                    {isActive && running ? '⟳ Running…' : '▶ Run'}
-                  </button>
-                </div>
-
-                {isActive && (
-                  <div style={{ marginTop: 10 }}>
-                    {enabledSteps.map((step, idx) => {
-                      const done  = completedIndices.includes(idx);
-                      const active = runningIndex === idx;
-                      const err   = errorIndex === idx;
-                      return (
-                        <div key={idx} style={{
-                          fontSize: 11, padding: '2px 0',
-                          color: err ? '#ef4444' : done ? '#22c55e' : active ? '#f59e0b' : '#475569',
-                        }}>
-                          {err ? '✗' : done ? '✓' : active ? '⟳' : '○'} {idx + 1}. {step.type}{step.packageName ? ` (${step.appLabel || step.packageName})` : step.text ? ` "${step.text}"` : step.ms ? ` ${step.ms}ms` : ''}
-                        </div>
-                      );
-                    })}
-                    {runLog.length > 0 && (
-                      <div style={{
-                        marginTop: 8, background: '#0f172a', borderRadius: 6, padding: 8,
-                        maxHeight: 140, overflowY: 'auto',
-                      }}>
-                        {runLog.map((entry, i) => (
-                          <div key={i} style={{ fontSize: 10, color: entry.status === 'err' ? '#f87171' : '#94a3b8', fontFamily: 'monospace' }}>
-                            {entry.message}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const SYSTEM_ICONS = {
   'com.whatsapp': '💬', 'com.instagram.android': '📸', 'com.facebook.katana': '👤',
@@ -267,8 +41,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const devInfo  = device.deviceInfo || {};
   const devW     = devInfo.screenWidth  || null;
   const devH     = devInfo.screenHeight || null;
-
-  const [showTaskRunner, setShowTaskRunner] = useState(false);
 
   // ── Manual keep-awake (device loops every 10 s; dashboard re-triggers every 60 s) ──
   const [keepAwakeActive, setKeepAwakeActive] = useState(false);
@@ -323,6 +95,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const rafRef          = useRef(null);
   const idleTimerRef    = useRef(null);
   const lastPollTs      = useRef(0);
+  const screenshotHandledRef = useRef(new Set());
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [screenshotStatus, setScreenshotStatus] = useState('');
 
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
@@ -363,6 +138,37 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     if (!streamFrame) return;
     paintFrame(streamFrame);
   }, [streamFrame, paintFrame]);
+
+  // A single screenshot is returned as a normal command result. Paint it in
+  // the same phone canvas used by the live stream.
+  useEffect(() => {
+    const latest = (results || []).find(result =>
+      result.command === 'take_screenshot' &&
+      result.id &&
+      !screenshotHandledRef.current.has(result.id)
+    );
+    if (!latest) return;
+
+    screenshotHandledRef.current.add(latest.id);
+    setScreenshotLoading(false);
+    const response = typeof latest.response === 'string'
+      ? (() => { try { return JSON.parse(latest.response); } catch (_) { return null; } })()
+      : latest.response;
+
+    if (latest.success && response?.success && response.base64) {
+      paintFrame(response.base64);
+      setScreenshotStatus(`Captured ${response.width || ''}${response.width && response.height ? '×' : ''}${response.height || ''}`);
+    } else {
+      setScreenshotStatus(response?.error || latest.error || 'Screenshot failed');
+    }
+  }, [results, paintFrame]);
+
+  const takeScreenshot = useCallback(() => {
+    if (!isOnline || screenshotLoading) return;
+    setScreenshotLoading(true);
+    setScreenshotStatus('');
+    sendCommand(deviceId, 'take_screenshot');
+  }, [deviceId, isOnline, screenshotLoading, sendCommand]);
 
   // ── Polling fallback — only while SSE is disconnected ─────────────────
   useEffect(() => {
@@ -545,13 +351,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           📂 <span style={{ fontSize: 11 }}>App Folder</span>
           {apps.length > 0 && <span style={{ fontSize: 10, color: '#7dd3fc' }}>({apps.length})</span>}
         </button>
-        <button
-          onClick={() => setShowTaskRunner(true)}
-          disabled={!isOnline}
-          style={{ ...smallBtn('#4c1d95'), display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px' }}
-        >
-          🎬 <span style={{ fontSize: 11 }}>Run Task</span>
-        </button>
       </div>
 
       {/* ── TOP ROW: Two Phone Frames ──────────────────────────────────── */}
@@ -639,7 +438,29 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               >
                 {blockActive ? '🔲 Unblock' : '⬛ Block'}
               </button>
+              <button
+                onClick={takeScreenshot}
+                disabled={!isOnline || screenshotLoading}
+                title="Capture one screenshot without starting a stream"
+                style={{ ...smallBtn('#1d4ed8'), fontSize: 11 }}
+              >
+                {screenshotLoading ? '⏳ Capturing…' : '📸 Take Screenshot'}
+              </button>
             </div>
+            {screenshotStatus && (
+              <div
+                role="status"
+                style={{
+                  fontSize: 10,
+                  color: screenshotStatus.toLowerCase().includes('failed') || screenshotStatus.toLowerCase().includes('error')
+                    ? '#ef4444'
+                    : '#22c55e',
+                  textAlign: 'center',
+                }}
+              >
+                {screenshotStatus}
+              </div>
+            )}
           </div>
           {devW && devH && (
             <div style={{ fontSize: 10, color: '#475569', textAlign: 'center' }}>{devW}×{devH}</div>
@@ -868,15 +689,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── TASK RUNNER MODAL ──────────────────────────────────────────── */}
-      {showTaskRunner && (
-        <TaskRunnerModal
-          device={device}
-          results={results}
-          onClose={() => setShowTaskRunner(false)}
-        />
       )}
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }`}</style>
