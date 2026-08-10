@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-export default function ScreenControl({ device, sendCommand, streamFrame, send, connected }) {
+export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
@@ -17,6 +17,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send, 
   const [showPaste, setShowPaste]             = useState(false);
   const [streamIdle, setStreamIdle]           = useState(false);
   const [hasFrame, setHasFrame]               = useState(false);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [screenshotStatus, setScreenshotStatus]   = useState('');
 
   const lastFrameTime    = useRef(null);
   const frameCountRef    = useRef(0);
@@ -31,6 +33,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send, 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
   const lastPollTs       = useRef(0);
+  const handledScreenshotIds = useRef(new Set());
 
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
@@ -120,6 +123,37 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send, 
     };
     img.src = `data:image/jpeg;base64,${base64}`;
   }, []);
+
+  // A single screenshot is returned as a normal command result. Paint it in
+  // the same phone canvas used by the live screen stream.
+  useEffect(() => {
+    const latest = (results || []).find(result =>
+      result.command === 'take_screenshot' &&
+      result.id &&
+      !handledScreenshotIds.current.has(result.id)
+    );
+    if (!latest) return;
+
+    handledScreenshotIds.current.add(latest.id);
+    setScreenshotLoading(false);
+    const response = typeof latest.response === 'string'
+      ? (() => { try { return JSON.parse(latest.response); } catch (_) { return null; } })()
+      : latest.response;
+
+    if (latest.success && response?.success && response.base64) {
+      paintFrame(response.base64);
+      setScreenshotStatus(`Captured ${response.width || ''}${response.width && response.height ? '×' : ''}${response.height || ''}`);
+    } else {
+      setScreenshotStatus(response?.error || latest.error || 'Screenshot failed');
+    }
+  }, [results, paintFrame]);
+
+  const handleTakeScreenshot = useCallback(() => {
+    if (!isOnline || screenshotLoading) return;
+    setScreenshotLoading(true);
+    setScreenshotStatus('');
+    sendCommand(deviceId, 'take_screenshot');
+  }, [deviceId, isOnline, screenshotLoading, sendCommand]);
 
   // ── SSE frame — paint immediately when a push frame arrives via SSE ──
   useEffect(() => {
@@ -504,6 +538,19 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send, 
                   <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline || !isStreaming} title="Swipe Right">▶</button>
                 </div>
               </div>
+              <button
+                className="sc-btn sc-btn-screenshot"
+                onClick={handleTakeScreenshot}
+                disabled={!isOnline || screenshotLoading}
+                title="Capture one high-quality screenshot using AccessibilityService"
+              >
+                {screenshotLoading ? '⏳ Capturing…' : '📸 Take Screenshot'}
+              </button>
+              {screenshotStatus && (
+                <div className={`sc-screenshot-status ${screenshotStatus.toLowerCase().includes('failed') || screenshotStatus.toLowerCase().includes('error') || screenshotStatus.toLowerCase().includes('not enabled') ? 'is-error' : ''}`} role="status">
+                  {screenshotStatus}
+                </div>
+              )}
               <div className="sc-phone-home-bar-sc" />
             </div>
           </div>

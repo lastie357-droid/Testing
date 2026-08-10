@@ -208,6 +208,7 @@ export default function DeviceControl({
           key={refreshKeys.screen_control}
           device={device}
           sendCommand={sendCommand}
+          results={results}
           streamFrame={streamFrame}
           send={send}
           connected={connected}

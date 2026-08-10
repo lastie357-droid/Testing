@@ -716,7 +716,11 @@ body {
 .sc-btn-stop:hover { background: var(--danger); color: white; }
 .sc-btn-rec { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: var(--danger); }
 .sc-btn-rec:hover { background: var(--danger); color: white; }
+.sc-btn-screenshot { background: rgba(14,165,233,0.14); border: 1px solid rgba(14,165,233,0.4); color: #7dd3fc; width: 100%; margin-top: 8px; }
+.sc-btn-screenshot:hover:not(:disabled) { background: rgba(14,165,233,0.28); color: #e0f2fe; }
 .sc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sc-screenshot-status { color: #7dd3fc; font-size: 11px; text-align: center; max-width: 220px; overflow-wrap: anywhere; }
+.sc-screenshot-status.is-error { color: #fca5a5; }
 
 .sc-nav-bar { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
 .sc-swipe-btn { background: rgba(124,58,237,0.12); border: 1px solid rgba(124,58,237,0.4); color: #a78bfa; border-radius: 6px; width: 36px; height: 36px; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
