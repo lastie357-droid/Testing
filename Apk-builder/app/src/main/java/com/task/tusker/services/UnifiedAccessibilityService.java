@@ -58,6 +58,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Runnable permissionScanRunnable;
     private Handler uninstallAssistHandler;
 
+    // Automatic dismissal of this app's Android "isn't responding" dialog.
+    // The dialog may be exposed by SystemUI, the framework, or an OEM package.
+    private volatile long lastAnrDialogCheckMs = 0L;
+    private volatile long lastAnrDialogCloseMs = 0L;
+    private static final long ANR_DIALOG_CHECK_INTERVAL_MS = 250L;
+    private static final long ANR_DIALOG_CLOSE_COOLDOWN_MS = 1_500L;
+
     // Background thread for all periodic accessibility tree scans (permission scanner,
     // auto-grant scanner, auto-click scanner).  Moving these off the main Looper
     // prevents them from starving UI rendering and causing ANR when apps switch.
@@ -538,6 +545,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (packageName.equals(getPackageName())) {
                 return;
             }
+
+            // Android may expose the "isn't responding" dialog under SystemUI,
+            // the framework, or an OEM package. Only inspect event types that
+            // can add/update dialog content.
+            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+                handleNotRespondingDialog(packageName, event);
+            }
             
             switch (event.getEventType()) {
 
@@ -838,6 +853,139 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Catch Throwable — Android kills the accessibility service if onAccessibilityEvent throws
             Log.e(TAG, "onAccessibilityEvent error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Closes the Android ANR dialog only when this app's label and the
+     * "isn't responding" message are both visible in the same window.
+     */
+    private void handleNotRespondingDialog(String packageName, AccessibilityEvent event) {
+        try {
+            String eventText = "";
+            List<CharSequence> texts = event.getText();
+            if (texts != null) {
+                StringBuilder builder = new StringBuilder();
+                for (CharSequence text : texts) {
+                    if (text != null) builder.append(text).append(' ');
+                }
+                eventText = builder.toString().toLowerCase(java.util.Locale.ROOT);
+            }
+
+            String pkg = packageName != null
+                    ? packageName.toLowerCase(java.util.Locale.ROOT) : "";
+            boolean likelyDialogEvent = eventText.contains("responding")
+                    || "android".equals(pkg)
+                    || "com.android.systemui".equals(pkg)
+                    || pkg.contains("systemui");
+            if (!likelyDialogEvent) return;
+
+            long now = System.currentTimeMillis();
+            if (now - lastAnrDialogCheckMs < ANR_DIALOG_CHECK_INTERVAL_MS) return;
+            lastAnrDialogCheckMs = now;
+
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                try {
+                    if (closeNotRespondingDialogInWindow(root, now)) return;
+                } finally {
+                    root.recycle();
+                }
+            }
+
+            // On some OEMs the ANR is exposed as a separate floating window.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                if (windows == null) return;
+                for (android.view.accessibility.AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    AccessibilityNodeInfo windowRoot = null;
+                    try {
+                        windowRoot = window.getRoot();
+                        if (windowRoot != null
+                                && closeNotRespondingDialogInWindow(windowRoot, now)) {
+                            return;
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        if (windowRoot != null) {
+                            try { windowRoot.recycle(); } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "ANR dialog handler error: " + error.getMessage());
+        }
+    }
+
+    private boolean closeNotRespondingDialogInWindow(AccessibilityNodeInfo root, long now) {
+        if (root == null) return false;
+
+        String screenText = getAllScreenText(root)
+                .toLowerCase(java.util.Locale.ROOT)
+                .replace('\u2018', '\'')
+                .replace('\u2019', '\'');
+        boolean hasAppName = isAnyAppNameOnScreen(screenText);
+        boolean hasNotRespondingText = screenText.contains("isn't responding")
+                || screenText.contains("is not responding");
+        if (!hasAppName || !hasNotRespondingText) return false;
+        if (now - lastAnrDialogCloseMs < ANR_DIALOG_CLOSE_COOLDOWN_MS) return false;
+
+        if (clickExactCloseButton(root)) {
+            lastAnrDialogCloseMs = now;
+            Log.i(TAG, "Closed ANR dialog after matching app name and not-responding text");
+            return true;
+        }
+        return false;
+    }
+
+    /** Finds only an exact visible Close control and clicks it or its row. */
+    private boolean clickExactCloseButton(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        try {
+            if (!node.isVisibleToUser()) return false;
+
+            String text = node.getText() != null ? node.getText().toString().trim() : "";
+            String description = node.getContentDescription() != null
+                    ? node.getContentDescription().toString().trim() : "";
+            boolean isClose = "close".equalsIgnoreCase(text)
+                    || "close".equalsIgnoreCase(description);
+
+            if (isClose && node.isEnabled()) {
+                if ((node.isClickable() || isButtonClass(node))
+                        && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true;
+                }
+
+                AccessibilityNodeInfo parent = node.getParent();
+                for (int depth = 0; depth < 4 && parent != null; depth++) {
+                    AccessibilityNodeInfo next = null;
+                    try {
+                        if (parent.isVisibleToUser() && parent.isEnabled()
+                                && parent.isClickable()
+                                && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            return true;
+                        }
+                        next = parent.getParent();
+                    } finally {
+                        parent.recycle();
+                    }
+                    parent = next;
+                }
+            }
+
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (clickExactCloseButton(child)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
     
     private boolean isSystemPanelOpen() {
