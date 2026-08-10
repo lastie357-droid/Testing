@@ -24,10 +24,9 @@ function TaskRunnerModal({ device, results, onClose }) {
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
-    // Users: backend ignores accessId and enforces their own from JWT.
-    // Admin: pass accessId so admin sees tasks for this device's owner.
-    const url = accessId ? `/api/tasks?accessId=${encodeURIComponent(accessId)}` : '/api/tasks';
-    fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
+    // Users are scoped by JWT. Admins can run any saved task, so request the
+    // complete task library rather than only the selected device owner's tasks.
+    fetch('/api/tasks', { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
       .then(r => r.json())
       .then(d => { if (d.success) setTasks(d.tasks || []); })
       .catch(() => {})

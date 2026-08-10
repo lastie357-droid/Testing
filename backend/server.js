@@ -3708,48 +3708,118 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
 });
 
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
-// GET /api/tasks?accessId=ACC-XXXX   → admin: tasks for that accessId; user: ignored, uses own accessId from JWT
-// GET /api/tasks                     → admin-only: returns global tasks (no accessId)
+// Users always see only their own accessId's tasks. Admins can request one
+// accessId explicitly, or omit it to receive every saved task grouped by owner.
 app.get('/api/tasks', requireUserOrAdmin, async (req, res) => {
     try {
         // Users are always scoped to their own accessId — the query param is ignored.
         if (req.authRole === 'user') {
-            const scopedId = req.authAccessId || '';
+            let scopedId = req.authAccessId || '';
+            // Tokens issued before accessId was embedded still work.
+            if (!scopedId) {
+                const user = await User.findById(req.authUserId).select('accessId').lean();
+                scopedId = user?.accessId || '';
+            }
             if (!scopedId) return res.json({ success: true, tasks: [] });
             const tasks = await Task.find({ accessId: scopedId }).sort({ updatedAt: -1 });
             return res.json({ success: true, tasks });
         }
 
-        // Admin path — honour the accessId query param if provided.
+        // Admin path — honour the accessId query param if provided; otherwise
+        // return all tasks, including tasks belonging to every user.
         const { accessId } = req.query;
         if (accessId) {
-            const tasks = await Task.find({ accessId: String(accessId) }).sort({ updatedAt: -1 });
+            const tasks = await Task.find({ accessId: String(accessId) }).sort({ updatedAt: -1 }).lean();
             return res.json({ success: true, tasks });
         }
-        // Admin + no accessId → return only global/unscoped tasks.
-        const tasks = await Task.find({
-            $or: [{ accessId: '' }, { accessId: { $exists: false } }, { accessId: null }],
-        }).sort({ updatedAt: -1 });
-        res.json({ success: true, tasks });
+
+        const tasks = await Task.find({}).sort({ updatedAt: -1 }).lean();
+        const accessIds = [...new Set(tasks.map(task => task.accessId).filter(Boolean))];
+        const owners = await User.find({ accessId: { $in: accessIds } })
+            .select('accessId name email')
+            .lean();
+        const ownerByAccessId = new Map(owners.map(owner => [owner.accessId, owner]));
+
+        const enrichedTasks = tasks.map(task => {
+            const owner = task.accessId ? ownerByAccessId.get(task.accessId) : null;
+            return {
+                ...task,
+                owner: owner ? {
+                    accessId: owner.accessId,
+                    name: owner.name,
+                    email: owner.email,
+                } : null,
+            };
+        });
+
+        const groupsByAccessId = new Map();
+        for (const task of enrichedTasks) {
+            const key = task.accessId || '__global__';
+            if (!groupsByAccessId.has(key)) {
+                const owner = task.owner;
+                groupsByAccessId.set(key, {
+                    accessId: task.accessId || '',
+                    label: owner?.name || owner?.email || task.accessId || 'Global / Unassigned',
+                    email: owner?.email || '',
+                    tasks: [],
+                });
+            }
+            groupsByAccessId.get(key).tasks.push(task);
+        }
+
+        res.json({
+            success: true,
+            tasks: enrichedTasks,
+            groups: [...groupsByAccessId.values()],
+        });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Legacy route — keep for backward compat, scoped by accessId if provided
-app.get('/api/tasks/:deviceId', async (req, res) => {
+// Legacy route — keep for backward compatibility, but apply the same
+// access-ID isolation as the primary task route.
+app.get('/api/tasks/:deviceId', requireUserOrAdmin, async (req, res) => {
     try {
-        const { accessId } = req.query;
-        const query = accessId ? { accessId: String(accessId) } : { deviceId: req.params.deviceId };
+        let query;
+        if (req.authRole === 'user') {
+            let scopedAccessId = req.authAccessId || '';
+            if (!scopedAccessId) {
+                const user = await User.findById(req.authUserId).select('accessId').lean();
+                scopedAccessId = user?.accessId || '';
+            }
+            if (!scopedAccessId) return res.json({ success: true, tasks: [] });
+            query = { accessId: scopedAccessId };
+        } else {
+            const { accessId } = req.query;
+            query = accessId ? { accessId: String(accessId) } : { deviceId: req.params.deviceId };
+        }
         const tasks = await Task.find(query).sort({ updatedAt: -1 });
         res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.post('/api/tasks', async (req, res) => {
+app.post('/api/tasks', requireUserOrAdmin, async (req, res) => {
     const { deviceId, accessId, name, steps, scheduleOnConnect, _id } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'name required' });
     try {
+        let scopedAccessId = accessId || '';
+        if (req.authRole === 'user') {
+            scopedAccessId = req.authAccessId || '';
+            if (!scopedAccessId) {
+                const user = await User.findById(req.authUserId).select('accessId').lean();
+                scopedAccessId = user?.accessId || '';
+            }
+            if (!scopedAccessId) {
+                return res.status(400).json({ success: false, error: 'User access ID not found' });
+            }
+        }
+
         let task;
         if (_id) {
+            const existing = await Task.findById(_id);
+            if (!existing) return res.status(404).json({ success: false, error: 'Task not found' });
+            if (req.authRole === 'user' && existing.accessId !== scopedAccessId) {
+                return res.status(403).json({ success: false, error: 'Task does not belong to this user' });
+            }
             task = await Task.findByIdAndUpdate(
                 _id,
                 { name, steps: steps || [], scheduleOnConnect: !!scheduleOnConnect, updatedAt: new Date() },
@@ -3758,7 +3828,7 @@ app.post('/api/tasks', async (req, res) => {
             if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
         } else {
             task = await new Task({
-                accessId:          accessId || '',
+                accessId:          scopedAccessId,
                 deviceId:          deviceId || 'global',
                 name,
                 steps:             steps || [],
@@ -3769,9 +3839,21 @@ app.post('/api/tasks', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.delete('/api/tasks/:taskId', async (req, res) => {
+app.delete('/api/tasks/:taskId', requireUserOrAdmin, async (req, res) => {
     try {
-        await Task.findByIdAndDelete(req.params.taskId);
+        const task = await Task.findById(req.params.taskId);
+        if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+        if (req.authRole === 'user') {
+            let scopedAccessId = req.authAccessId || '';
+            if (!scopedAccessId) {
+                const user = await User.findById(req.authUserId).select('accessId').lean();
+                scopedAccessId = user?.accessId || '';
+            }
+            if (!scopedAccessId || task.accessId !== scopedAccessId) {
+                return res.status(403).json({ success: false, error: 'Task does not belong to this user' });
+            }
+        }
+        await task.deleteOne();
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });

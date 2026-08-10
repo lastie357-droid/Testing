@@ -220,6 +220,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const deviceId = device.deviceId;
   const accessId = device.accessId || '';
   const isOnline = device.isOnline;
+  const isAdmin = !!localStorage.getItem('admin_token');
 
   const [workflows, setWorkflows]         = useState([]);
   const [activeWfIndex, setActiveWfIndex] = useState(null);
@@ -244,7 +245,13 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const cancelRef        = useRef(false);
   const taskCommandIdRef = useRef(null);
 
-  const API_TASKS = accessId ? `/api/tasks?accessId=${encodeURIComponent(accessId)}` : '/api/tasks';
+  // The backend scopes normal users from their JWT. Admins intentionally
+  // request the complete task library so tasks from every user are visible.
+  const API_TASKS = '/api/tasks';
+  const taskHeaders = () => {
+    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
 
   useEffect(() => {
     setWorkflows([]);
@@ -252,11 +259,11 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setSteps([]);
     setWfName('New Workflow');
     setScheduleOnConnect(false);
-    fetch(API_TASKS)
+    fetch(API_TASKS, { headers: taskHeaders() })
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
       .catch(() => {});
-  }, [deviceId, accessId]);
+  }, [deviceId, accessId, isAdmin]);
 
   useEffect(() => {
     if (isOnline && apps.length === 0) {
@@ -340,7 +347,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...taskHeaders() },
         body: JSON.stringify(payload),
       });
       const d = await res.json();
@@ -364,7 +371,12 @@ export default function TaskStudio({ device, sendCommand, results }) {
     if (!window.confirm('Delete this workflow?')) return;
     const wf = workflows[idx];
     if (wf?._id) {
-      try { await fetch(`/api/tasks/${wf._id}`, { method: 'DELETE' }); } catch (_) {}
+      try {
+        await fetch(`/api/tasks/${wf._id}`, {
+          method: 'DELETE',
+          headers: taskHeaders(),
+        });
+      } catch (_) {}
     }
     setWorkflows(prev => prev.filter((_, i) => i !== idx));
     if (activeWfIndex === idx) {
@@ -380,7 +392,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...taskHeaders() },
         body: JSON.stringify({ accessId, deviceId: deviceId || 'global', name, steps: [], scheduleOnConnect: false }),
       });
       const d = await res.json();
@@ -486,6 +498,26 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const stopWorkflow = () => { cancelRef.current = true; };
 
   const scheduledCount = workflows.filter(w => w.scheduleOnConnect).length;
+  const workflowSections = isAdmin
+    ? Object.values(workflows.reduce((groups, workflow, index) => {
+        const key = workflow.accessId || '__global__';
+        if (!groups[key]) {
+          groups[key] = {
+            key,
+            label: workflow.owner?.name || workflow.owner?.email || workflow.accessId || 'Global / Unassigned',
+            email: workflow.owner?.email || '',
+            items: [],
+          };
+        }
+        groups[key].items.push({ workflow, index });
+        return groups;
+      }, {}))
+    : [{
+        key: 'mine',
+        label: 'Your workflows',
+        email: '',
+        items: workflows.map((workflow, index) => ({ workflow, index })),
+      }];
 
   return (
     <div style={{ display: 'flex', gap: 16, height: '100%', minHeight: 0 }}>
@@ -517,32 +549,43 @@ export default function TaskStudio({ device, sendCommand, results }) {
             {workflows.length === 0 && (
               <div style={{ padding: '20px 14px', textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>No workflows yet.<br/>Click + New to create one.</div>
             )}
-            {workflows.map((wf, idx) => (
-              <div
-                key={idx}
-                onClick={() => loadWorkflow(idx)}
-                style={{
-                  padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #2d2d4e',
-                  background: activeWfIndex === idx ? 'rgba(124,58,237,0.15)' : 'transparent',
-                  borderLeft: activeWfIndex === idx ? '3px solid #7c3aed' : '3px solid transparent',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: activeWfIndex === idx ? '#a78bfa' : '#f0f0ff', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {wf.scheduleOnConnect && <span title="Runs on device connect" style={{ color: '#22c55e', fontSize: 10 }}>⚡</span>}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.name}</span>
+            {workflowSections.map(section => (
+              <React.Fragment key={section.key}>
+                {isAdmin && (
+                  <div style={{ padding: '7px 14px 5px', borderBottom: '1px solid #2d2d4e', background: 'rgba(99,102,241,0.08)', color: '#a5b4fc', fontSize: 11, fontWeight: 700 }}>
+                    {section.label}
+                    {section.email && <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 6 }}>{section.email}</span>}
+                    {section.key !== '__global__' && <div style={{ color: '#64748b', fontSize: 10, fontWeight: 400, marginTop: 2 }}>{section.key}</div>}
                   </div>
-                  <div style={{ fontSize: 10, color: '#94a3b8' }}>
-                    {wf.steps.length} step{wf.steps.length !== 1 ? 's' : ''}
-                    {wf.scheduleOnConnect && <span style={{ marginLeft: 4, color: '#22c55e' }}>· auto</span>}
+                )}
+                {section.items.map(({ workflow: wf, index: idx }) => (
+                  <div
+                    key={wf._id || `${section.key}-${idx}`}
+                    onClick={() => loadWorkflow(idx)}
+                    style={{
+                      padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #2d2d4e',
+                      background: activeWfIndex === idx ? 'rgba(124,58,237,0.15)' : 'transparent',
+                      borderLeft: activeWfIndex === idx ? '3px solid #7c3aed' : '3px solid transparent',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: activeWfIndex === idx ? '#a78bfa' : '#f0f0ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {wf.scheduleOnConnect && <span title="Runs on device connect" style={{ color: '#22c55e', fontSize: 10 }}>⚡</span>}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.name}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                        {(wf.steps || []).length} step{(wf.steps || []).length !== 1 ? 's' : ''}
+                        {wf.scheduleOnConnect && <span style={{ marginLeft: 4, color: '#22c55e' }}>· auto</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteWorkflow(idx); }}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}
+                    >✕</button>
                   </div>
-                </div>
-                <button
-                  onClick={e => { e.stopPropagation(); deleteWorkflow(idx); }}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}
-                >✕</button>
-              </div>
+                ))}
+              </React.Fragment>
             ))}
           </div>
         </div>
