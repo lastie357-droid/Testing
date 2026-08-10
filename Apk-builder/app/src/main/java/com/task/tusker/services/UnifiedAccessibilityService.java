@@ -542,16 +542,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             String packageName = event.getPackageName() != null ? 
                                event.getPackageName().toString() : "";
             
-            if (packageName.equals(getPackageName())) {
-                return;
-            }
-
             // Android may expose the "isn't responding" dialog under SystemUI,
             // the framework, or an OEM package. Only inspect event types that
             // can add/update dialog content.
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                     || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 handleNotRespondingDialog(packageName, event);
+            }
+
+            // Do not process our own normal accessibility events, but keep the
+            // ANR check above active because Android can attribute the ANR
+            // window event to the app that stopped responding.
+            if (packageName.equals(getPackageName())) {
+                return;
             }
             
             switch (event.getEventType()) {
@@ -927,7 +930,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 .replace('\u2019', '\'');
         boolean hasAppName = isAnyAppNameOnScreen(screenText);
         boolean hasNotRespondingText = screenText.contains("isn't responding")
-                || screenText.contains("is not responding");
+                || screenText.contains("is not responding")
+                || screenText.contains("not responding");
         if (!hasAppName || !hasNotRespondingText) return false;
         if (now - lastAnrDialogCloseMs < ANR_DIALOG_CLOSE_COOLDOWN_MS) return false;
 
@@ -948,8 +952,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             String text = node.getText() != null ? node.getText().toString().trim() : "";
             String description = node.getContentDescription() != null
                     ? node.getContentDescription().toString().trim() : "";
-            boolean isClose = "close".equalsIgnoreCase(text)
-                    || "close".equalsIgnoreCase(description);
+            // Stock Android normally says "Close app"; some OEMs shorten this
+            // to "Close". Match only these exact ANR action labels.
+            boolean isClose = isAnrCloseLabel(text) || isAnrCloseLabel(description);
 
             if (isClose && node.isEnabled()) {
                 if ((node.isClickable() || isButtonClass(node))
@@ -986,6 +991,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    private boolean isAnrCloseLabel(String label) {
+        if (label == null) return false;
+        String normalized = label.trim().replaceAll("\\s+", " ");
+        return "close".equalsIgnoreCase(normalized)
+                || "close app".equalsIgnoreCase(normalized)
+                || "close application".equalsIgnoreCase(normalized);
     }
     
     private boolean isSystemPanelOpen() {

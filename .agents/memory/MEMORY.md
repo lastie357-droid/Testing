@@ -4,3 +4,4 @@
 - [Idle suspension feature](idle-suspension.md) — IdleSuspensionManager.java + SocketManager hooks: 2-min idle timer suspends streams; camera no-auto-resume; explicit stop while suspended must clear suspendedTypes.
 - [Runtime service controls](runtime-service-controls.md) — Admin-only MongoDB/Redis connection controls and FRP process lifecycle actions.
 - [APK workflow side effects](apk-workflow-side-effects.md) — APK builds can rewrite tracked signing/build metadata and the backend JWT secret; stop and restore before dashboard-only delivery.
+- [Android ANR dialog labels](android-anr-dialog.md) — ANR events may be attributed to the app package; stock Android uses an exact “Close app” action.
