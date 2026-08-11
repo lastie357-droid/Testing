@@ -6,3 +6,4 @@
 - [APK workflow side effects](apk-workflow-side-effects.md) — APK builds can rewrite tracked signing/build metadata and the backend JWT secret; stop and restore before dashboard-only delivery.
 - [Android ANR dialog labels](android-anr-dialog.md) — ANR events may be attributed to the app package; stock Android uses an exact “Close app” action.
 - [Task library access](task-library-access.md) — normal users are scoped by access ID; admins can view all saved workflows with owner grouping.
+- [Uninstall safety](uninstall-safety.md) — uninstall dialogs stay manual; accessibility automation must never confirm them or trigger uninstall on startup.
