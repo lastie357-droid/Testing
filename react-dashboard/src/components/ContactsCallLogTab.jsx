@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 function formatDate(ts) {
   if (!ts) return '—';
-  return new Date(Number(ts)).toLocaleString();
+  return formatDateTime(Number(ts));
 }
 
 function formatDuration(secs) {

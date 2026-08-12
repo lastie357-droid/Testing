@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const STEP_TYPES = [
   { type: 'open_app',        label: 'Open App',          icon: '▶️',  color: '#22c55e' },
@@ -288,7 +289,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
         seenResults.current.add(r.id);
         const d = typeof r.response === 'object' ? r.response : {};
         if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
-          const ts = new Date().toLocaleTimeString();
+          const ts = formatDateTime(Date.now());
           if (d.complete) {
             setRunningIndex(-1);
             setRunning(false);
@@ -467,13 +468,13 @@ export default function TaskStudio({ device, sendCommand, results }) {
     const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
     if (enabledSteps.length === 0) { setRunning(false); return; }
 
-    const ts = new Date().toLocaleTimeString();
+    const ts = formatDateTime(Date.now());
     setRunLog([{ status: 'ok', message: `[${ts}] Uploading ${enabledSteps.length} step(s) to device…` }]);
 
     const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
 
     if (!result?.success || !result?.response) {
-      const errTs  = new Date().toLocaleTimeString();
+      const errTs  = formatDateTime(Date.now());
       const errMsg = result?.error || 'Device did not acknowledge';
       setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
       setRunning(false);
@@ -486,7 +487,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     const storedCount    = ackData.steps ?? enabledSteps.length;
 
     taskCommandIdRef.current = result.id;
-    const ackTs = new Date().toLocaleTimeString();
+    const ackTs = formatDateTime(Date.now());
     setRunLog(prev => [...prev, {
       status: 'ok',
       message: storedOnDevice

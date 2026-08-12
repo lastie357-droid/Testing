@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const PHONE_W = 280;
 const PHONE_H = 560;
@@ -155,7 +156,7 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
     const pkg = selectedAppRef.current;
     const rec = {
       id: Date.now(),
-      label: `${(pkg || 'App').split('.').pop()} — ${new Date().toLocaleTimeString()}`,
+      label: `${(pkg || 'App').split('.').pop()} — ${formatDateTime(Date.now())}`,
       frames,
       duration: frames.length * 1000,
       frameCount: frames.length,

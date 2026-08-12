@@ -1,3 +1,5 @@
+import { formatDateTime } from './dateTime.js';
+
 export function generateReport(result) {
   const { command, response, time, deviceId, success } = result;
 
@@ -8,7 +10,7 @@ export function generateReport(result) {
     parsedData = response;
   }
 
-  const ts = time ? new Date(time).toLocaleString() : new Date().toLocaleString();
+  const ts = formatDateTime(time || Date.now());
 
   const html = `<!DOCTYPE html>
 <html lang="en">

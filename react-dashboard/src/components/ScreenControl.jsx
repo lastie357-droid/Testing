@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected }) {
   const deviceId = device.deviceId;
@@ -368,7 +369,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   .frame-info { font-size:12px; color:#94a3b8; }
 </style></head><body>
 <h2>📹 ${filename}</h2>
-<div class="meta">Frames: ${frames.length} | Start: ${data.startTime ? new Date(data.startTime).toLocaleString() : '—'}</div>
+<div class="meta">Frames: ${frames.length} | Start: ${data.startTime ? formatDateTime(data.startTime, '—') : '—'}</div>
 <img id="viewer" src="data:image/jpeg;base64,${frames[0]?.frameData || ''}" />
 <div class="controls">
   <button onclick="prevFrame()">◀ Prev</button>
@@ -672,7 +673,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
                     <div className="sc-rec-meta">
                       {rec.frameCount != null && <span>{rec.frameCount} frames</span>}
                       {rec.size && <span>{formatFileSize(rec.size)}</span>}
-                      {rec.startTime && <span>{new Date(rec.startTime).toLocaleTimeString()}</span>}
+                      {rec.startTime && <span>{formatDateTime(rec.startTime)}</span>}
                     </div>
                   </div>
                   <div className="sc-rec-actions">

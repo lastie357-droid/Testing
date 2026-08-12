@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { formatDateTime, formatDate as formatDashboardDate, formatTime as formatDashboardTime } from '../utils/dateTime.js';
 
 const PHONE_W = 320;
 const PHONE_H = 680;
@@ -14,18 +15,12 @@ function formatDuration(ms) {
 
 function formatTime(ts) {
   if (!ts) return '';
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return formatDashboardTime(ts, '');
 }
 
 function formatDate(ts) {
   if (!ts) return '';
-  const d = new Date(ts);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return formatDashboardDate(ts, '');
 }
 
 function renderFrameElements(screenData, devW, devH) {
@@ -588,7 +583,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             <div style={{ display: 'flex', gap: 10, fontSize: 10, color: '#7c3aed', flexWrap: 'wrap' }}>
               <span>⏱ {formatDuration(playing.duration || playing.frameCount * playSpeed)}</span>
               <span>📋 {playing.frameCount} frames</span>
-              {playing.startTime && <span>📅 {formatDate(playing.startTime)} {formatTime(playing.startTime)}</span>}
+              {playing.startTime && <span>📅 {formatDateTime(playing.startTime)}</span>}
             </div>
           </div>
         )}

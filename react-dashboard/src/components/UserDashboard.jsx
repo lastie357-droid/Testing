@@ -226,7 +226,14 @@ export default function UserDashboard({ user, onLogout }) {
           setDevices(prev => {
             const exists = prev.find(d => d.deviceId === data.deviceId);
             if (exists) return prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: true, deviceInfo: { ...(d.deviceInfo || {}), ...data.deviceInfo } } : d);
-            return [...prev, { deviceId: data.deviceId, deviceName: data.deviceInfo.name || data.deviceId, deviceInfo: data.deviceInfo, isOnline: true }];
+            return [...prev, {
+              deviceId: data.deviceId,
+              deviceName: data.deviceInfo.name || data.deviceId,
+              deviceInfo: data.deviceInfo,
+              registeredAt: data.timestamp || new Date().toISOString(),
+              lastSeen: data.timestamp || new Date().toISOString(),
+              isOnline: true,
+            }];
           });
         }
         break;

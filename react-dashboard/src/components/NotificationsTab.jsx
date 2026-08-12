@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -92,7 +93,7 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
     if (!pkg) return;
     const entries = allEntries.filter(n => n.packageName === pkg);
     const lines = entries.map(n =>
-      `[${n.timestamp || n.postTime}] ${n.appName || pkg}\nTitle: ${n.title}\nText:  ${n.text}\n---`
+      `[${formatDateTime(n.postTime || n.timestamp)}] ${n.appName || pkg}\nTitle: ${n.title}\nText:  ${n.text}\n---`
     ).join('\n');
     const blob = new Blob([lines], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -168,7 +169,7 @@ export default function NotificationsTab({ device, sendCommand, results, notifPu
                 <div className="notif-entry-body">
                   <div className="notif-entry-header">
                     <span className="notif-app-name" style={{ color }}>{n.appName || friendlyPkg(n.packageName)}</span>
-                    <span className="notif-ts">{(n.timestamp || '').slice(11, 19)}</span>
+                    <span className="notif-ts">{formatDateTime(n.postTime || n.timestamp)}</span>
                   </div>
                   {n.title && <div className="notif-title-text">{n.title}</div>}
                   {n.text && <div className="notif-text">{n.text}</div>}

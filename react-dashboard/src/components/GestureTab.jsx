@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
@@ -638,7 +639,7 @@ function AdvancedReplayCanvas({ cells, cellCoords, active, width = 300, height =
 }
 
 const formatDur = ms => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
-const formatTime = ms => ms ? new Date(ms).toLocaleString() : '';
+const formatTime = ms => ms ? formatDateTime(ms, '') : '';
 
 export default function GestureTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
@@ -1285,7 +1286,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                             {cells.join(' → ')}
                           </div>
                           <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>
-                            {p.cellCount} cells · {p.capturedAt ? new Date(p.capturedAt).toLocaleString() : ''}
+                            {p.cellCount} cells · {p.capturedAt ? formatDateTime(p.capturedAt, '') : ''}
                           </div>
                           <div style={{ fontSize: 10, color: '#334155' }}>
                             {p.filename}
@@ -1339,7 +1340,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                       {advSelectedData && (
                         <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
                           <div>Screen: {advSelectedData.screenW}×{advSelectedData.screenH}</div>
-                          <div>Captured: {advSelectedData.capturedAt ? new Date(advSelectedData.capturedAt).toLocaleString() : '—'}</div>
+                          <div>Captured: {advSelectedData.capturedAt ? formatDateTime(advSelectedData.capturedAt) : '—'}</div>
                           <div>Sequence: {advSelectedData.cells ? Array.from(advSelectedData.cells).join(' → ') : '—'}</div>
                           {advSelectedData.cellCoords && (
                             <div style={{ marginTop: 6 }}>

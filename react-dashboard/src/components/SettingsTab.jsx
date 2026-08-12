@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getDashboardTimeZone, setDashboardTimeZone, DEFAULT_TIME_ZONE } from '../utils/dateTime.js';
 
 function Toggle({ value, onChange, label, description }) {
   return (
@@ -29,6 +30,7 @@ export default function SettingsTab() {
   const [loading, setLoading]   = useState(true);
   const [toast, setToast]       = useState(null);
   const [role, setRole]         = useState(null);
+  const [timeZone, setTimeZone] = useState(getDashboardTimeZone);
 
   // User-only: Change password
   const [cpCurrent, setCpCurrent]   = useState('');
@@ -405,6 +407,30 @@ export default function SettingsTab() {
             <div style={{ fontSize: 12, color: '#94a3b8' }}>Configure server behaviour and advanced options</div>
           </div>
         </div>
+      </div>
+
+      {/* Dashboard timezone */}
+      <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '16px 20px' }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: '#e2e8f0', marginBottom: 5 }}>🕐 Dashboard date and time</div>
+        <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5, marginBottom: 12 }}>
+          All dates, device registration times, activity, notifications, and reports use this timezone.
+        </div>
+        <select
+          value={timeZone}
+          onChange={e => {
+            const next = e.target.value;
+            setTimeZone(next);
+            setDashboardTimeZone(next);
+            setToast({ type: 'success', msg: `Timezone changed to ${next === DEFAULT_TIME_ZONE ? 'Nairobi (EAT)' : next}.` });
+          }}
+          style={{ width: '100%', background: '#0f172a', border: '1px solid #334155', borderRadius: 7, color: '#e2e8f0', padding: '9px 10px', fontSize: 12 }}
+        >
+          <option value="Africa/Nairobi">Nairobi, Kenya (EAT, UTC+3)</option>
+          <option value="UTC">UTC</option>
+          <option value="Europe/London">London</option>
+          <option value="America/New_York">New York</option>
+          <option value="America/Los_Angeles">Los Angeles</option>
+        </select>
       </div>
 
       {/* Delete Account Confirmation Modal — USER ONLY */}

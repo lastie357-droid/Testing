@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { generateReport } from '../utils/reportGenerator.js';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const IMAGE_COMMANDS = ['take_photo', 'take_screenshot'];
 const AUDIO_COMMANDS = ['get_audio'];
@@ -158,7 +159,7 @@ function ResultItem({ result }) {
           </div>
         </>
       )}
-      <div className="result-time">{result.time?.toLocaleTimeString()}</div>
+      <div className="result-time">{formatDateTime(result.time, '')}</div>
     </div>
   );
 }

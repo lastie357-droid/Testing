@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const PASSWORD_PATTERNS = [
   /password[:\s=]+([^\s\n]{4,})/i,
@@ -105,7 +106,7 @@ function PasswordEntry({ entry, onDelete }) {
         </div>
         <div style={{ fontSize: 10, color: '#64748b', marginTop: 4 }}>
           {entry.appPackage && <span style={{ marginRight: 8, fontFamily: 'monospace' }}>{entry.appPackage}</span>}
-          {entry.capturedAt && <span>{new Date(entry.capturedAt).toLocaleString()}</span>}
+          {entry.capturedAt && <span>{formatDateTime(entry.capturedAt)}</span>}
         </div>
       </div>
       <button

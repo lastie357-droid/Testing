@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const formatSize = (bytes) => {
   if (bytes === 0) return '0 B';
@@ -10,7 +11,7 @@ const formatSize = (bytes) => {
 
 const formatDate = (ms) => {
   if (!ms) return '';
-  return new Date(ms).toLocaleString();
+  return formatDateTime(ms, '');
 };
 
 const getFileIcon = (file) => {

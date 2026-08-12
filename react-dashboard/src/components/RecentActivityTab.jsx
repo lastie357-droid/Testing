@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatDateTime, formatDate } from '../utils/dateTime.js';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -47,7 +48,7 @@ export default function RecentActivityTab({ device, activityEntries }) {
   const grouped = [];
   let lastDate = '';
   filtered.forEach(e => {
-    const date = (e.timestamp || '').slice(0, 10);
+    const date = formatDate(e.timestamp, '');
     if (date && date !== lastDate) {
       grouped.push({ type: 'date', date });
       lastDate = date;
@@ -103,7 +104,7 @@ export default function RecentActivityTab({ device, activityEntries }) {
                   <div className="activity-pkg">{item.packageName}</div>
                 </div>
                 <div className="activity-time">
-                  {(item.timestamp || '').slice(11, 19)}
+                  {formatDateTime(item.timestamp)}
                 </div>
               </div>
             );

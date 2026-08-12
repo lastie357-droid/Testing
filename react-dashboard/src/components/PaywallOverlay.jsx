@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatDate } from '../utils/dateTime.js';
 
 const styles = {
   wrap: {
@@ -93,7 +94,7 @@ export default function PaywallOverlay({
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
 
-  const expiredOn = trialEndDate ? new Date(trialEndDate).toLocaleDateString() : null;
+  const expiredOn = trialEndDate ? formatDate(trialEndDate) : null;
 
   return (
     <div style={styles.wrap}>

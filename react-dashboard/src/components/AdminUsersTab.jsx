@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const token = () => localStorage.getItem('admin_token') || localStorage.getItem('user_token');
 const hdrs   = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` });
 
 function fmtDate(d) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatDateTime(d);
 }
 
 function SubBadge({ sub, isActive }) {

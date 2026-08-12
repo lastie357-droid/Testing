@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const ICONS = { connect: '🟢', disconnect: '🔴', success: '✅', error: '❌', info: 'ℹ️' };
 
@@ -59,7 +60,9 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
                 </div>
                 <div style={{ fontSize: 11, color: '#94a3b8' }}>
                   Android {d.deviceInfo?.androidVersion || 'N/A'} &nbsp;·&nbsp;
-                  Last seen: {new Date(d.lastSeen || Date.now()).toLocaleTimeString()}
+                  Last seen: {formatDateTime(d.lastSeen || d.registeredAt)}
+                  <br />
+                  Registered: {formatDateTime(d.registeredAt)}
                 </div>
                 <div style={{ marginTop: 8, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
                   → Open Control Panel
@@ -97,7 +100,9 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
                 </div>
                 <div style={{ fontSize: 11, color: '#475569' }}>
                   Android {d.deviceInfo?.androidVersion || 'N/A'} &nbsp;·&nbsp;
-                  Last seen: {d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString() : 'Unknown'}
+                  Last seen: {formatDateTime(d.lastSeen)}
+                  <br />
+                  Registered: {formatDateTime(d.registeredAt)}
                 </div>
                 <div style={{ marginTop: 8, fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
                   🔴 Offline
@@ -121,7 +126,7 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
             <div key={a.id} className="activity-item">
               <span className="activity-icon">{ICONS[a.type] || 'ℹ️'}</span>
               <span>{a.text}</span>
-              <span className="activity-time">{a.time.toLocaleTimeString()}</span>
+              <span className="activity-time">{formatDateTime(a.time)}</span>
             </div>
           ))}
         </div>

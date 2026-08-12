@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { formatDateTime, formatTime } from '../utils/dateTime.js';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -121,7 +122,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const saveCapture = () => {
     if (!screenData) return;
     const text = buildTextDump(screenData);
-    const cap  = { id: Date.now(), text, packageName: screenData.packageName, timestamp: new Date().toLocaleString(), elementCount: (screenData.elements || []).length };
+    const cap  = { id: Date.now(), text, packageName: screenData.packageName, timestamp: formatDateTime(Date.now()), elementCount: (screenData.elements || []).length };
     setSavedCaptures(prev => [cap, ...prev]);
     sendCommand(deviceId, 'write_file', { filePath: `/sdcard/screen_reader/capture_${Date.now()}.txt`, content: text, isBase64: false });
   };
@@ -290,7 +291,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               {screenData.packageName?.split('.').pop() || 'App'}
             </span>
             <span style={{ fontSize: 9, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
-              {new Date().getHours()}:{String(new Date().getMinutes()).padStart(2, '0')}
+              {formatTime(Date.now(), '')}
             </span>
             <span style={{ fontSize: 9, color: '#94a3b8' }}>📶 🔋</span>
           </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -205,7 +206,7 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                   )}
                   <span className="kl-text">{entry.text}</span>
                 </div>
-                <div className="kl-ts">{entry.timestamp?.slice(11, 19) || ''}</div>
+                <div className="kl-ts">{formatDateTime(entry.timestamp, '')}</div>
               </div>
             ))}
             <div ref={logEndRef} />

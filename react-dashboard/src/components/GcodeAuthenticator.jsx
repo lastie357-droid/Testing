@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { formatDate as formatDashboardDate, formatTime as formatDashboardTime } from '../utils/dateTime.js';
 
 const PHONE_W = 300;
 const PHONE_H = 640;
@@ -6,18 +7,12 @@ const AUTHENTICATOR_PKG = 'com.google.android.apps.authenticator2';
 
 function formatTime(ts) {
   if (!ts) return '';
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return formatDashboardTime(ts, '');
 }
 
 function formatDate(ts) {
   if (!ts) return '';
-  const d = new Date(ts);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return formatDashboardDate(ts, '');
 }
 
 // Extract OTP codes and associated account names from accessibility tree elements

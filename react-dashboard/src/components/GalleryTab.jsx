@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from '../utils/dateTime.js';
 
 const formatSize = (b) => {
   if (!b) return '0 B';
@@ -10,7 +11,7 @@ const formatSize = (b) => {
 
 const formatDate = (ms) => {
   if (!ms) return '';
-  return new Date(ms).toLocaleString();
+  return formatDateTime(ms, '');
 };
 
 const formatDuration = (ms) => {
