@@ -215,15 +215,17 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // not on every parent render or state update (touch hints, paste state, etc.)
   const elements = useMemo(() => screenData?.elements || [], [screenData]);
 
-  const visibleEls = useMemo(
-    () => elements.filter(el => el.text || el.contentDescription || el.hintText || el.clickable || el.editable),
+  // Keep the full tree for the Elements view. The visual phone overlay uses a
+  // separate, lightweight list so it does not alter or hide the reader data.
+  const visualEls = useMemo(
+    () => elements.filter(el => el.bounds && (el.text || el.contentDescription || el.hintText || el.clickable || el.editable)),
     [elements]
   );
 
-  // Elements sorted by area, pre-scaled — only recomputed when visibleEls changes
+  // Elements sorted by area, pre-scaled — only recomputed when visualEls changes
   const sortedVisualEls = useMemo(
     () =>
-      [...visibleEls]
+      [...visualEls]
         .filter(el => el.bounds)
         .sort((a, b) => {
           const areaA = (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top);
@@ -238,10 +240,10 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           top:    (el.bounds.top   * scaleY) + 22,
           width:  (el.bounds.right - el.bounds.left) * scaleX,
           height: (el.bounds.bottom - el.bounds.top) * scaleY,
-          label:  (el.text || el.contentDescription || el.hintText || '').slice(0, 30),
+          label:  (el.text || el.contentDescription || el.hintText || ''),
         }))
         .filter(({ width, height }) => width >= 2 && height >= 2),
-    [visibleEls, scaleX, scaleY]
+    [visualEls, scaleX, scaleY]
   );
 
   // ── Get element display style based on type ─────────────────────────
@@ -347,22 +349,24 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
         <>
           <div className="sr-meta-bar">
             <span className="sr-pkg-badge">{screenData.packageName || '—'}</span>
-            <span style={{ color: '#94a3b8', fontSize: 12 }}>{visibleEls.length} elements</span>
+            <span style={{ color: '#64748b', fontSize: 12 }}>{elements.length} nodes</span>
           </div>
           <div className="sr-elements-list">
-            {visibleEls.map((el, i) => {
+            {elements.map((el, i) => {
               const cls = (el.className || '').split('.').pop();
               return (
                 <div
                   key={i}
                   className="sr-element"
-                  style={{ paddingLeft: Math.min((el.depth || 0), 8) * 10 + 8, cursor: el.clickable && isOnline ? 'pointer' : 'default' }}
+                  style={{ paddingLeft: Math.min((el.depth || 0), 30) * 10 + 8, cursor: el.clickable && isOnline ? 'pointer' : 'default' }}
                   onClick={() => el.clickable && handleElementClick(el)}
                 >
-                  <div className="sr-el-class">{cls}</div>
+                  <div className="sr-el-class">#{i + 1} · {cls || 'AccessibilityNode'}</div>
                   {el.text && <div className="sr-el-text">"{el.text}"</div>}
-                  {!el.text && el.contentDescription && <div className="sr-el-desc">[{el.contentDescription}]</div>}
-                  {!el.text && !el.contentDescription && el.hintText && <div className="sr-el-desc" style={{ color: '#64748b', fontStyle: 'italic' }}>hint: {el.hintText}</div>}
+                  {el.contentDescription && <div className="sr-el-desc">description: {el.contentDescription}</div>}
+                  {el.hintText && <div className="sr-el-desc">hint: {el.hintText}</div>}
+                  {el.viewId && <div className="sr-el-desc">viewId: {el.viewId}</div>}
+                  {el.bounds && <div className="sr-el-desc">bounds: {JSON.stringify(el.bounds)}</div>}
                   <div className="sr-el-tags">
                     {el.clickable && <span className="sr-tag sr-tag-click">clickable</span>}
                     {el.editable  && <span className="sr-tag sr-tag-edit">editable</span>}
@@ -380,7 +384,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   );
 
   return (
-    <div className="screen-control">
+    <div className="screen-control sr-light">
       <div className="sc-layout">
         <div className="sc-viewer-col">
 
@@ -425,8 +429,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           {screenData && (
             <div className="sr-info-bar" style={{ marginTop: 4 }}>
               <span style={{ color: '#7c3aed' }}>{screenData.packageName}</span>
-              <span style={{ color: '#94a3b8' }}>{elements.length} nodes · {visibleEls.length} visible</span>
-              {screenData.truncated && <span style={{ color: '#f59e0b', fontSize: 10 }}>⚠ truncated</span>}
+              <span style={{ color: '#64748b' }}>{elements.length} nodes</span>
             </div>
           )}
 

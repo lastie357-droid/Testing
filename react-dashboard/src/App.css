@@ -1263,6 +1263,31 @@ body {
 .sr-info-bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: rgba(0,0,0,0.3); border-radius: 6px; font-size: 11px; flex-wrap: wrap; }
 .sr-save-bar { display: flex; align-items: center; gap: 10px; }
 
+/* The reader tree is intentionally lossless: no ellipsis or one-line clipping. */
+.screen-control.sr-light { color: #172033; }
+.screen-control.sr-light .sr-elements-panel,
+.screen-control.sr-light .sr-meta-bar,
+.screen-control.sr-light .sc-recordings-col,
+.screen-control.sr-light .sc-rec-header {
+  background: #ffffff;
+  border-color: #d7dee8;
+}
+.screen-control.sr-light .sr-elements-list { background: #f8fafc; }
+.screen-control.sr-light .sr-element {
+  border-bottom-color: #e2e8f0;
+  color: #172033;
+}
+.screen-control.sr-light .sr-element:hover { background: #eef6ff; }
+.screen-control.sr-light .sr-el-class { color: #64748b; }
+.screen-control.sr-light .sr-el-text,
+.screen-control.sr-light .sr-el-desc {
+  color: #334155;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.screen-control.sr-light .sr-info-bar { background: #f1f5f9; }
+
 /* ═══════════════════════════════════════════════════════════════════
    MODAL
    ═══════════════════════════════════════════════════════════════════ */
