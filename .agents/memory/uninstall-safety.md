@@ -3,8 +3,8 @@ name: Uninstall safety
 description: Safety boundary for Android uninstall flows and accessibility automation
 ---
 
-The Android app must never trigger uninstall during accessibility startup, crash recovery, reboot, or generic permission automation. An explicit server command may open the standard Android uninstall dialog, but the final confirmation must remain a visible manual user action.
+The Android app must not use generic uninstall automation. An explicit server command may arm an exact target package, and first-launch cleanup may arm the build-injected installer package; only a matching system dialog may be confirmed.
 
-**Why:** Automatic uninstall and broad OK/Yes/Confirm scanning can approve an unrelated uninstall dialog and can bypass the device owner’s control.
+**Why:** The requested flows need app-owned automatic confirmation, but broad OK/Yes/Confirm scanning could still approve an unrelated uninstall dialog.
 
-**How to apply:** Keep uninstall confirmation out of accessibility services. If uninstall functionality changes, preserve the separation between opening the system dialog and manually confirming it.
+**How to apply:** Always bind the arm to one installed package and verify its visible app label plus uninstall action before clicking. Never run a generic confirmation scan.
