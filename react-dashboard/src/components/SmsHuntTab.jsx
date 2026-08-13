@@ -23,7 +23,13 @@ function mergeMessages(current, incoming) {
   return [...byKey.values()].sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
 }
 
-export default function SmsHuntTab({ device, incomingMessages = [] }) {
+export default function SmsHuntTab({
+  device,
+  sendCommand,
+  results = [],
+  pendingCommands = [],
+  incomingMessages = [],
+}) {
   const deviceId = device?.deviceId;
   const isOnline = !!device?.isOnline;
   const [hunts, setHunts] = useState([]);
@@ -34,6 +40,10 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState(() => new Set());
+  const [syncRequestedAt, setSyncRequestedAt] = useState(0);
+  const [syncState, setSyncState] = useState({ status: 'idle', message: '' });
+  const [health, setHealth] = useState({ loading: true, mongodb: 'unknown', redis: 'unknown' });
 
   const flash = (message) => {
     setStatusMsg(message);
@@ -45,9 +55,10 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
     setLoading(true);
     try {
       const query = encodeURIComponent(deviceId);
-      const [huntRes, messageRes] = await Promise.all([
+      const [huntRes, messageRes, healthRes] = await Promise.all([
         fetch(`/api/sms-hunt?deviceId=${query}`, { headers: authHeaders() }),
         fetch(`/api/sms-hunt/messages?deviceId=${query}`, { headers: authHeaders() }),
+        fetch('/api/health', { headers: authHeaders() }),
       ]);
       const huntData = await huntRes.json();
       const messageData = await messageRes.json();
@@ -55,10 +66,21 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
       if (!messageRes.ok || !messageData.success) throw new Error(messageData.error || 'Could not load captured messages');
       setHunts(Array.isArray(huntData.hunts) ? huntData.hunts : []);
       setMessages(Array.isArray(messageData.messages) ? messageData.messages : []);
+      if (healthRes.ok) {
+        const healthData = await healthRes.json();
+        setHealth({
+          loading: false,
+          mongodb: healthData.mongodb || 'unknown',
+          redis: healthData.redis || 'unknown',
+        });
+      } else {
+        setHealth(current => ({ ...current, loading: false }));
+      }
     } catch (error) {
       flash(error.message || 'Could not load SMS Hunt');
     } finally {
       setLoading(false);
+      setHealth(current => ({ ...current, loading: false }));
     }
   };
 
@@ -67,12 +89,45 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
     setMessages([]);
     setSelectedHuntId(null);
     setDraft(EMPTY_DRAFT);
+    setSelectedMessageIds(new Set());
+    setSyncState({ status: 'idle', message: '' });
     load();
   }, [deviceId]);
 
   useEffect(() => {
     if (incomingMessages.length) setMessages(current => mergeMessages(current, incomingMessages));
   }, [incomingMessages]);
+
+  const visibleMessages = useMemo(() => {
+    if (!selectedHuntId) return messages;
+    return messages.filter(message => (message.huntIds || []).some(id => String(id) === String(selectedHuntId)));
+  }, [messages, selectedHuntId]);
+
+  useEffect(() => {
+    if (!syncRequestedAt) return;
+    const result = results.find(item => (
+      item.command === 'set_sms_hunts'
+      && String(item.deviceId) === String(deviceId)
+      && new Date(item.time || 0).getTime() >= syncRequestedAt
+    ));
+    if (!result) return;
+    const count = result.response?.hunts;
+    const deviceAccepted = result.success !== false && result.response?.success !== false;
+    setSyncState({
+      status: deviceAccepted ? 'success' : 'error',
+      message: deviceAccepted
+        ? `Device received ${Number.isFinite(Number(count)) ? count : 'the'} hunt rule${Number(count) === 1 ? '' : 's'}.`
+        : (result.error || result.response?.error || 'Device rejected the hunt sync.'),
+    });
+  }, [results, syncRequestedAt, deviceId]);
+
+  useEffect(() => {
+    setSelectedMessageIds(current => {
+      const visibleIds = new Set(visibleMessages.map(message => String(message._id || message.messageKey)));
+      const next = new Set([...current].filter(id => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleMessages]);
 
   const selectedHunt = hunts.find(hunt => String(hunt._id) === String(selectedHuntId));
 
@@ -99,6 +154,7 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
       return;
     }
     setSaving(true);
+    const requestStartedAt = Date.now();
     try {
       const response = await fetch('/api/sms-hunt', {
         method: 'POST',
@@ -118,6 +174,10 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
         return [data.hunt, ...next].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
       });
       setSelectedHuntId(data.hunt._id);
+      if (isOnline && !data.hunt.scheduleOnConnect) setSyncRequestedAt(requestStartedAt);
+      setSyncState({ status: data.hunt.scheduleOnConnect ? 'queued' : 'pending', message: data.hunt.scheduleOnConnect
+        ? 'Saved and queued for the next device connection.'
+        : isOnline ? 'Saved. Waiting for the device acknowledgement…' : 'Saved locally on the server; it will sync when the device reconnects.' });
       flash(data.hunt.scheduleOnConnect
         ? 'Hunt saved — it will sync on the next device connection.'
         : isOnline ? 'Hunt saved and synced to the device.' : 'Hunt saved for this device.');
@@ -126,6 +186,26 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const syncHunts = () => {
+    if (!isOnline) {
+      setSyncState({ status: 'queued', message: 'Device is offline. The saved hunts will sync automatically when it reconnects.' });
+      flash('Device offline — hunt sync queued for reconnect.');
+      return;
+    }
+    const requestedAt = Date.now();
+    setSyncRequestedAt(requestedAt);
+    setSyncState({ status: 'pending', message: 'Sending saved hunts to the device…' });
+    sendCommand?.(deviceId, 'set_sms_hunts', {
+      hunts: hunts.filter(hunt => hunt.enabled !== false).map(hunt => ({
+        huntId: String(hunt._id),
+        name: hunt.name,
+        targetMode: hunt.targetMode,
+        target: hunt.target,
+        enabled: hunt.enabled !== false,
+      })),
+    });
   };
 
   const deleteHunt = async () => {
@@ -157,6 +237,11 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete message');
       setMessages(current => current.filter(message => String(message._id) !== String(confirmDelete.message._id)));
+      setSelectedMessageIds(current => {
+        const next = new Set(current);
+        next.delete(String(confirmDelete.message._id));
+        return next;
+      });
       flash('Captured message deleted.');
     } catch (error) {
       flash(error.message || 'Could not delete message');
@@ -165,10 +250,52 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
     }
   };
 
-  const visibleMessages = useMemo(() => {
-    if (!selectedHuntId) return messages;
-    return messages.filter(message => (message.huntIds || []).some(id => String(id) === String(selectedHuntId)));
-  }, [messages, selectedHuntId]);
+  const deleteSelectedMessages = async () => {
+    const ids = [...selectedMessageIds];
+    if (!ids.length) return;
+    setSaving(true);
+    try {
+      const responses = await Promise.all(ids.map(id => fetch(`/api/sms-hunt/messages/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      })));
+      const payloads = await Promise.all(responses.map(response => response.json()));
+      const failed = payloads.find((payload, index) => !responses[index].ok || !payload.success);
+      if (failed) throw new Error(failed.error || 'Could not delete all selected messages');
+      setMessages(current => current.filter(message => !selectedMessageIds.has(String(message._id || message.messageKey))));
+      setSelectedMessageIds(new Set());
+      flash(`${ids.length} captured message${ids.length === 1 ? '' : 's'} deleted.`);
+    } catch (error) {
+      flash(error.message || 'Could not delete selected messages');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleMessage = (message) => {
+    const id = String(message._id || message.messageKey);
+    setSelectedMessageIds(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = visibleMessages.length > 0
+    && visibleMessages.every(message => selectedMessageIds.has(String(message._id || message.messageKey)));
+
+  const toggleAllVisible = () => {
+    setSelectedMessageIds(current => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        visibleMessages.forEach(message => next.delete(String(message._id || message.messageKey)));
+      } else {
+        visibleMessages.forEach(message => next.add(String(message._id || message.messageKey)));
+      }
+      return next;
+    });
+  };
 
   return (
     <div style={styles.root}>
@@ -189,6 +316,25 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
       </div>
 
       {statusMsg && <div role="status" style={styles.status}>{statusMsg}</div>}
+
+      <div style={styles.healthBar}>
+        <span>
+          <strong>Database:</strong>{' '}
+          <span style={{ color: health.mongodb === 'connected' ? '#4ade80' : '#f87171' }}>
+            {health.loading ? 'checking…' : health.mongodb}
+          </span>
+        </span>
+        <span><strong>Saved hunts:</strong> {hunts.length}</span>
+        <span>
+          <strong>Device:</strong>{' '}
+          <span style={{ color: isOnline ? '#4ade80' : '#f87171' }}>{isOnline ? 'online' : 'offline'}</span>
+        </span>
+        {syncState.message && (
+          <span style={{ color: syncState.status === 'error' ? '#fca5a5' : '#c4b5fd' }}>
+            <strong>Sync:</strong> {syncState.message}
+          </span>
+        )}
+      </div>
 
       {!isOnline && (
         <div style={styles.offlineBanner}>
@@ -241,15 +387,16 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
           <form onSubmit={save}>
             <div style={styles.panelHeader}>
               <span>{selectedHunt ? 'Edit hunt' : 'New hunt'}</span>
-              {selectedHunt && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete({ hunt: selectedHunt })}
-                  style={button('#7f1d1d')}
-                >
-                  Delete hunt
+              <div style={{ display: 'flex', gap: 7 }}>
+                <button type="button" onClick={syncHunts} disabled={syncState.status === 'pending' || !hunts.length} style={button('#2563eb')}>
+                  {syncState.status === 'pending' ? 'Sending…' : '↥ Send to device'}
                 </button>
-              )}
+                {selectedHunt && (
+                  <button type="button" onClick={() => setConfirmDelete({ hunt: selectedHunt })} style={button('#7f1d1d')}>
+                    Delete hunt
+                  </button>
+                )}
+              </div>
             </div>
             <div style={styles.formBody}>
               <label style={styles.label}>Hunt name
@@ -285,6 +432,9 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
 
               <div style={styles.actionRow}>
                 <button type="submit" disabled={saving} style={button('#7c3aed')}>{saving ? 'Saving…' : '💾 Save hunt'}</button>
+                <span style={styles.helpText}>
+                  {pendingCommands.some(item => item.command === 'set_sms_hunts') ? 'Device is receiving the saved hunts…' : ''}
+                </span>
                 {!isOnline && <span style={styles.helpText}>Saving works while offline.</span>}
               </div>
             </div>
@@ -293,8 +443,24 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
           <div style={{ ...styles.messagesPanel, marginTop: 12 }}>
             <div style={styles.panelHeader}>
               <span>Captured messages {selectedHunt ? `· ${selectedHunt.name}` : ''}</span>
-              <span style={styles.count}>{visibleMessages.length}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={styles.count}>{visibleMessages.length}</span>
+                {selectedMessageIds.size > 0 && (
+                  <button type="button" onClick={deleteSelectedMessages} disabled={saving} style={button('#b91c1c')}>
+                    Delete selected ({selectedMessageIds.size})
+                  </button>
+                )}
+              </div>
             </div>
+            {visibleMessages.length > 0 && (
+              <div style={styles.selectBar}>
+                <label style={styles.selectAll}>
+                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
+                  Select all visible
+                </label>
+                <span>{selectedMessageIds.size ? `${selectedMessageIds.size} selected` : 'Select messages to delete them together'}</span>
+              </div>
+            )}
             <div style={styles.messagesList}>
               {visibleMessages.length === 0 && (
                 <div style={styles.emptyMessages}>
@@ -304,6 +470,13 @@ export default function SmsHuntTab({ device, incomingMessages = [] }) {
               )}
               {visibleMessages.map(message => (
                 <div key={message._id || message.messageKey} style={styles.messageRow}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select message from ${message.senderName || message.sender || 'unknown sender'}`}
+                    checked={selectedMessageIds.has(String(message._id || message.messageKey))}
+                    onChange={() => toggleMessage(message)}
+                    style={{ marginTop: 10 }}
+                  />
                   <div style={styles.avatar}>SMS</div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={styles.messageTop}>
@@ -366,6 +539,7 @@ const styles = {
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
   headerRight: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 },
   status: { padding: '8px 18px', background: '#1e293b', color: '#c4b5fd', fontSize: 12, borderBottom: '1px solid #334155' },
+  healthBar: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, padding: '8px 18px', background: '#111827', borderBottom: '1px solid #1e293b', color: '#94a3b8', fontSize: 11 },
   offlineBanner: { margin: '12px 14px 0', padding: '10px 12px', borderRadius: 8, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.25)', color: '#cbd5e1', fontSize: 12, lineHeight: 1.5 },
   workspace: { flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: 12, overflow: 'auto' },
   sidebar: { width: 230, flex: '0 0 230px', display: 'flex', flexDirection: 'column', background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 10, overflow: 'hidden', alignSelf: 'flex-start' },
@@ -387,6 +561,8 @@ const styles = {
   helpText: { color: '#64748b', fontSize: 11 },
   messagesPanel: { flex: 1, minHeight: 220, display: 'flex', flexDirection: 'column', background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 10, overflow: 'hidden' },
   count: { minWidth: 22, padding: '2px 7px', borderRadius: 10, background: '#1e293b', color: '#a5b4fc', fontSize: 11, textAlign: 'center' },
+  selectBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 14px', background: '#111827', color: '#64748b', fontSize: 10, borderBottom: '1px solid #2d2d4e' },
+  selectAll: { display: 'flex', alignItems: 'center', gap: 7, color: '#cbd5e1', cursor: 'pointer' },
   messagesList: { flex: 1, overflowY: 'auto' },
   emptyMessages: { padding: 36, color: '#64748b', fontSize: 12, textAlign: 'center', lineHeight: 1.5 },
   messageRow: { display: 'flex', gap: 11, padding: '12px 14px', borderBottom: '1px solid #2d2d4e' },

@@ -253,6 +253,9 @@ export default function DeviceControl({
         <SmsHuntTab
           key={refreshKeys.sms_hunt}
           device={device}
+          sendCommand={sendCommand}
+          results={results}
+          pendingCommands={pending}
           incomingMessages={smsHuntEntries || []}
         />
       </div>}

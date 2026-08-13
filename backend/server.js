@@ -3812,6 +3812,35 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
             })),
         },
     });
+    // Automatic syncs (save/edit and reconnect) must be observable by the
+    // dashboard just like a manually sent command.  Without a pending entry,
+    // the device acknowledgement is persisted but silently dropped before it
+    // can reach an SSE client.
+    const timer = setTimeout(() => {
+        if (!pendingCmds.has(commandId)) return;
+        pendingCmds.delete(commandId);
+        broadcastDash('command:result', {
+            commandId,
+            command: 'set_sms_hunts',
+            deviceId,
+            success: false,
+            error: 'SMS Hunt sync timed out',
+            timestamp: new Date(),
+        });
+    }, CMD_TIMEOUT_MS);
+    pendingCmds.set(commandId, {
+        sseId: null,
+        command: 'set_sms_hunts',
+        deviceId,
+        timer,
+    });
+    new Command({
+        id: commandId,
+        deviceId,
+        command: 'set_sms_hunts',
+        data: { hunts: hunts.map(hunt => String(hunt._id)) },
+        status: 'executing',
+    }).save().catch(() => {});
     if (clearSchedules) {
         await SmsHunt.updateMany(
             { deviceId, scheduleOnConnect: true },
