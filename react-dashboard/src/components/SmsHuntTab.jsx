@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
 
 const EMPTY_DRAFT = {
@@ -23,6 +23,10 @@ function mergeMessages(current, incoming) {
   return [...byKey.values()].sort((a, b) => Number(b.date || 0) - Number(a.date || 0));
 }
 
+const messageIdentity = (message) => String(
+  message?._id || message?.messageKey || `${message?.date}:${message?.sender}:${message?.body}`,
+);
+
 export default function SmsHuntTab({
   device,
   sendCommand,
@@ -44,6 +48,7 @@ export default function SmsHuntTab({
   const [syncRequestedAt, setSyncRequestedAt] = useState(0);
   const [syncState, setSyncState] = useState({ status: 'idle', message: '' });
   const [health, setHealth] = useState({ loading: true, mongodb: 'unknown', redis: 'unknown' });
+  const deletedMessageKeysRef = useRef(new Set());
 
   const flash = (message) => {
     setStatusMsg(message);
@@ -95,7 +100,12 @@ export default function SmsHuntTab({
   }, [deviceId]);
 
   useEffect(() => {
-    if (incomingMessages.length) setMessages(current => mergeMessages(current, incomingMessages));
+    if (incomingMessages.length) {
+      setMessages(current => mergeMessages(
+        current,
+        incomingMessages.filter(message => !deletedMessageKeysRef.current.has(messageIdentity(message))),
+      ));
+    }
   }, [incomingMessages]);
 
   const visibleMessages = useMemo(() => {
@@ -219,7 +229,9 @@ export default function SmsHuntTab({
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete hunt');
       setHunts(current => current.filter(hunt => String(hunt._id) !== String(confirmDelete.hunt._id)));
       if (String(selectedHuntId) === String(confirmDelete.hunt._id)) newHunt();
-      flash('Hunt deleted from this device.');
+      flash(data.deviceSync === 'queued'
+        ? 'Hunt deleted. The device is offline; removal will sync when it reconnects.'
+        : 'Hunt deleted from this device.');
     } catch (error) {
       flash(error.message || 'Could not delete hunt');
     } finally {
@@ -228,18 +240,26 @@ export default function SmsHuntTab({
   };
 
   const deleteMessage = async () => {
-    if (!confirmDelete?.message?._id) return;
+    const message = confirmDelete?.message;
+    const messageId = message && messageIdentity(message);
+    if (!messageId) return;
     try {
-      const response = await fetch(`/api/sms-hunt/messages/${confirmDelete.message._id}`, {
+      const response = await fetch(`/api/sms-hunt/messages/${encodeURIComponent(messageId)}?deviceId=${encodeURIComponent(deviceId || '')}`, {
         method: 'DELETE',
         headers: authHeaders(),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete message');
-      setMessages(current => current.filter(message => String(message._id) !== String(confirmDelete.message._id)));
+      deletedMessageKeysRef.current.add(messageId);
+      if (data.deletedId) deletedMessageKeysRef.current.add(String(data.deletedId));
+      setMessages(current => current.filter(item => ![
+        messageIdentity(item),
+        String(item?._id || ''),
+        String(item?.messageKey || ''),
+      ].includes(messageId)));
       setSelectedMessageIds(current => {
         const next = new Set(current);
-        next.delete(String(confirmDelete.message._id));
+        next.delete(messageId);
         return next;
       });
       flash('Captured message deleted.');
@@ -262,7 +282,8 @@ export default function SmsHuntTab({
       const payloads = await Promise.all(responses.map(response => response.json()));
       const failed = payloads.find((payload, index) => !responses[index].ok || !payload.success);
       if (failed) throw new Error(failed.error || 'Could not delete all selected messages');
-      setMessages(current => current.filter(message => !selectedMessageIds.has(String(message._id || message.messageKey))));
+      ids.forEach(id => deletedMessageKeysRef.current.add(String(id)));
+      setMessages(current => current.filter(message => !selectedMessageIds.has(messageIdentity(message))));
       setSelectedMessageIds(new Set());
       flash(`${ids.length} captured message${ids.length === 1 ? '' : 's'} deleted.`);
     } catch (error) {

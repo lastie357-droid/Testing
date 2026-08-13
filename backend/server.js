@@ -4096,14 +4096,40 @@ app.delete('/api/sms-hunt/:huntId', requireUserOrAdmin, async (req, res) => {
         }
         const deviceId = hunt.deviceId;
         await hunt.deleteOne();
-        if (_getTcpConnForDevice(deviceId)) await syncSmsHuntsToDevice(deviceId);
-        res.json({ success: true });
+        const deviceOnline = !!_getTcpConnForDevice(deviceId);
+        const syncedNow = deviceOnline
+            ? await syncSmsHuntsToDevice(deviceId)
+            : false;
+        // The next device registration always sends the complete current hunt
+        // list, including an empty list, so an offline deletion is applied on
+        // reconnect rather than being lost.
+        res.json({
+            success: true,
+            deviceSync: syncedNow ? 'sent' : 'queued',
+            deviceOnline: !!syncedNow,
+        });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.delete('/api/sms-hunt/messages/:messageId', requireUserOrAdmin, async (req, res) => {
     try {
-        const message = await SmsHuntMessage.findById(req.params.messageId);
+        const rawMessageId = String(req.params.messageId || '').trim();
+        if (!rawMessageId) {
+            return res.status(400).json({ success: false, error: 'messageId required' });
+        }
+        // Live SMS-hunt events can be identified by messageKey before a
+        // dashboard refresh has normalized the Mongo _id. Support both forms.
+        const isMongoMessageId = typeof mongoose.isObjectIdOrHexString === 'function'
+            ? mongoose.isObjectIdOrHexString(rawMessageId)
+            : /^[a-f0-9]{24}$/i.test(rawMessageId);
+        const requestedDeviceId = String(req.query.deviceId || '').trim();
+        const messageQuery = isMongoMessageId
+            ? { _id: rawMessageId }
+            : {
+                messageKey: rawMessageId,
+                ...(requestedDeviceId ? { deviceId: requestedDeviceId } : {}),
+            };
+        const message = await SmsHuntMessage.findOne(messageQuery);
         if (!message) return res.status(404).json({ success: false, error: 'SMS Hunt message not found' });
         const authorized = await authorizeSmsHuntDevice(req, message.deviceId);
         if (!authorized) return res.status(403).json({ success: false, error: 'Device not found' });
@@ -4111,7 +4137,7 @@ app.delete('/api/sms-hunt/messages/:messageId', requireUserOrAdmin, async (req, 
             return res.status(403).json({ success: false, error: 'Message does not belong to this user' });
         }
         await message.deleteOne();
-        res.json({ success: true, messageId: req.params.messageId });
+        res.json({ success: true, messageId: rawMessageId, deletedId: String(message._id) });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
