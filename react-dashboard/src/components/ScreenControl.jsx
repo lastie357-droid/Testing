@@ -30,6 +30,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   const autoStopTimerRef = useRef(null);
   const isStreamingRef   = useRef(false);
   const rafRef           = useRef(null);
+  const paintGenerationRef = useRef(0);
 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
@@ -58,7 +59,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   // instead of accessibility tree data (screen:update events).
   const handleStartStream = useCallback(() => {
     if (isStreamingRef.current) return;
-    sendCommand(deviceId, 'stream_start', { intervalMs: 2000 });
+    sendCommand(deviceId, 'stream_start', { intervalMs: 150 });
     setIsStreaming(true);
     isStreamingRef.current = true;
     frameCountRef.current = 0;
@@ -109,9 +110,12 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
     idleTimerRef.current = setTimeout(() => setStreamIdle(true), 8000);
 
     const img = new window.Image();
+    const generation = ++paintGenerationRef.current;
     img.onload = () => {
+      if (generation !== paintGenerationRef.current) return;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
+        if (generation !== paintGenerationRef.current) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -167,7 +171,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   // duplicate frame traffic and keeps the server/client responsive while healthy.
   useEffect(() => {
     if (!isStreaming || !isOnline || connected) return;
-    const POLL_MS = 2000;
+    const POLL_MS = 150;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');

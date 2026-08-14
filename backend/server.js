@@ -1176,6 +1176,7 @@ const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS
 /** @type {Map<string, Object>} Latest screen reader frame per device — polled by dashboard */
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
 const latestScreenReaderSequence = new Map(); // deviceId → monotonically increasing relay sequence
+const latestStreamSequence = new Map();       // deviceId → monotonically increasing relay sequence
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
@@ -1739,14 +1740,23 @@ async function processMessage(clientId, clientType, event, data) {
         // Always use the server's relay time (now) as the timestamp so the dashboard's
         // staleness check (Date.now() - timestamp) compares server-clock to server-clock
         // instead of device-clock to server-clock (which differ due to timezone / NTP drift).
-        const frameMsg = { deviceId, frameData, timestamp: now };
+        const sequence = (latestStreamSequence.get(deviceId) || 0) + 1;
+        latestStreamSequence.set(deviceId, sequence);
+        const frameMsg = {
+            deviceId,
+            frameData,
+            timestamp: now,
+            capturedAt: data.timestamp || null,
+            receivedAt: now,
+            sequence,
+        };
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
 
         // Cache the latest JPEG frame so the dashboard can poll it even if SSE is unreliable.
         latestStreamFrame.set(deviceId, { ...frameMsg, _ts: now });
 
-        broadcastDash('stream:frame', frameMsg);
+        broadcastLatestDash('stream:frame', frameMsg);
         // Send ack back to stream channel — device uses this for ack-based pacing on 3G/4G.
         // The device only sends the next frame after receiving this ack, so frames never
         // pile up in the TCP buffer and the dashboard always shows the freshest screen.

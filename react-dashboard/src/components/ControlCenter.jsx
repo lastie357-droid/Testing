@@ -94,6 +94,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const screenAreaRef   = useRef(null);
   const rafRef          = useRef(null);
   const idleTimerRef    = useRef(null);
+  const paintGenerationRef = useRef(0);
   const lastPollTs      = useRef(0);
   const screenshotHandledRef = useRef(new Set());
   const [screenshotLoading, setScreenshotLoading] = useState(false);
@@ -117,9 +118,12 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     idleTimerRef.current = setTimeout(() => setStreamIdle(true), 8000);
 
     const img = new window.Image();
+    const generation = ++paintGenerationRef.current;
     img.onload = () => {
+      if (generation !== paintGenerationRef.current) return;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
+        if (generation !== paintGenerationRef.current) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -173,7 +177,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   // ── Polling fallback — only while SSE is disconnected ─────────────────
   useEffect(() => {
     if (!streaming || !isOnline || connected) return;
-    const POLL_MS = 2000;
+    const POLL_MS = 150;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');
@@ -195,7 +199,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     if (streamingRef.current) return;
     // Use stream_start (JPEG frames via stream:frame events) — same intervalMs pattern
     // as screen_reader_stream_start but produces JPEG data polled at /api/stream/latest.
-    sendCommand(deviceId, 'stream_start', { intervalMs: 2000 });
+    sendCommand(deviceId, 'stream_start', { intervalMs: 150 });
     setStreaming(true);
     frameCountRef.current = 0;
     lastPollTs.current = 0;
