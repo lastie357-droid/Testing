@@ -166,17 +166,20 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
     paintFrame(streamFrame);
   }, [streamFrame, paintFrame]);
 
-  // ── Polling fallback — only while SSE is disconnected ──
-  // SSE is the primary delivery path. Polling only during a reconnect avoids
-  // duplicate frame traffic and keeps the server/client responsive while healthy.
+  // ── Async latest-frame watcher ───────────────────────────────────────
+  // SSE paints immediately when a push arrives. This watcher also checks the
+  // latest server frame during the active session so a delayed/reconnecting
+  // EventSource cannot leave the canvas behind the device.
   useEffect(() => {
-    if (!isStreaming || !isOnline || connected) return;
-    const POLL_MS = 150;
+    if (!isStreaming || !isOnline) return;
+    let stopped = false;
+    let timer = null;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');
         const r = await fetch(
-          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`
+          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`,
+          { cache: 'no-store' }
         );
         if (!r.ok) return;
         const d = await r.json();
@@ -188,11 +191,16 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
           }
         }
       } catch (_) {}
+      finally {
+        if (!stopped) timer = setTimeout(poll, 75);
+      }
     };
     poll();
-    const id = setInterval(poll, POLL_MS);
-    return () => clearInterval(id);
-  }, [isStreaming, isOnline, connected, deviceId, paintFrame]);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isStreaming, isOnline, deviceId, paintFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);

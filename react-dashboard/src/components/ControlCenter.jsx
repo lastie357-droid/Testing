@@ -174,14 +174,20 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     sendCommand(deviceId, 'take_screenshot');
   }, [deviceId, isOnline, screenshotLoading, sendCommand]);
 
-  // ── Polling fallback — only while SSE is disconnected ─────────────────
+  // ── Async latest-frame watcher ───────────────────────────────────────
+  // Keep checking the latest server frame while the stream is active. The
+  // timestamp guard below prevents repainting the same JPEG repeatedly.
   useEffect(() => {
-    if (!streaming || !isOnline || connected) return;
-    const POLL_MS = 150;
+    if (!streaming || !isOnline) return;
+    let stopped = false;
+    let timer = null;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');
-        const r = await fetch(`/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`);
+        const r = await fetch(
+          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`,
+          { cache: 'no-store' }
+        );
         if (!r.ok) return;
         const d = await r.json();
         if (d.success && d.frameData && (d._ts || 0) > lastPollTs.current) {
@@ -189,11 +195,16 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           paintFrame(d.frameData);
         }
       } catch (_) {}
+      finally {
+        if (!stopped) timer = setTimeout(poll, 75);
+      }
     };
     poll();
-    const id = setInterval(poll, POLL_MS);
-    return () => clearInterval(id);
-  }, [streaming, isOnline, connected, deviceId, paintFrame]);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [streaming, isOnline, deviceId, paintFrame]);
 
   const startStream = useCallback(() => {
     if (streamingRef.current) return;

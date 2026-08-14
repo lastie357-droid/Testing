@@ -11,7 +11,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const info     = device.deviceInfo || {};
 
   const [streaming, setStreaming]           = useState(false);
-  const [streamInterval, setStreamInterval] = useState(150);
+  const [streamInterval, setStreamInterval] = useState(100);
   const [savedCaptures, setSavedCaptures]   = useState([]);
   const [viewCapture, setViewCapture]       = useState(null);
   const [activeView, setActiveView]         = useState('visual');
@@ -80,16 +80,20 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // being listed as a dep (which would cause a spurious extra stop on every toggle).
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
-  // ── Polling fallback — only while SSE is disconnected ──
-  // SSE is the primary path. Poll only during reconnects so healthy streams do not
-  // create a second request path for every frame interval.
+  // ── Async latest-frame watcher ───────────────────────────────────────
+  // SSE paints immediately when a push arrives. This watcher also checks the
+  // latest server frame during the active session so a delayed/reconnecting
+  // EventSource cannot leave the view behind the device.
   useEffect(() => {
-    if (!streaming || !isOnline || connected) return;
+    if (!streaming || !isOnline) return;
+    let stopped = false;
+    let timer = null;
     const poll = async () => {
       try {
         const token = localStorage.getItem('admin_token');
         const r = await fetch(
-          `/api/screen-reader/latest/${deviceId}?token=${encodeURIComponent(token)}`
+          `/api/screen-reader/latest/${deviceId}?token=${encodeURIComponent(token)}`,
+          { cache: 'no-store' }
         );
         if (!r.ok) return;
         const d = await r.json();
@@ -100,11 +104,18 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           ));
         }
       } catch (_) {}
+      finally {
+        // Do not overlap requests: immediately look again after the previous
+        // request completes at a realtime 75 ms watcher cadence.
+        if (!stopped) timer = setTimeout(poll, 75);
+      }
     };
     poll(); // immediate first poll on start
-    const id = setInterval(poll, streamInterval);
-    return () => clearInterval(id);
-  }, [streaming, isOnline, connected, deviceId, streamInterval]);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [streaming, isOnline, deviceId]);
 
   // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
   // Using a ref instead of `streaming` in deps prevents this from firing a stop command
@@ -456,10 +467,10 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
               disabled={!isOnline}
             >
-              <option value={1000}>1s</option>
-              <option value={2000}>2s</option>
-              <option value={3000}>3s</option>
-              <option value={5000}>5s</option>
+              <option value={100}>100ms</option>
+              <option value={150}>150ms</option>
+              <option value={250}>250ms</option>
+              <option value={500}>500ms</option>
             </select>
             <button
               className="sc-btn"

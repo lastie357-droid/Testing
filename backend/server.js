@@ -2710,6 +2710,7 @@ app.post('/api/settings/telegram/test-passwords', requireUserOrAdmin, async (req
 // Returns the latest screen:update frame cached from the Android device.
 // Auth via token query param (same pattern as /api/events).
 app.get('/api/screen-reader/latest/:deviceId', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
     if (!token || !global._adminTokens) return res.status(401).json({ success: false });
     const expiry = global._adminTokens.get(token);
@@ -2724,6 +2725,7 @@ app.get('/api/screen-reader/latest/:deviceId', (req, res) => {
 // ── Stream frame polling — dashboard polls this when SSE is unreliable ────────
 // Returns the latest JPEG stream frame cached from the Android device.
 app.get('/api/stream/latest/:deviceId', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
     if (!token || !global._adminTokens) return res.status(401).json({ success: false });
     const expiry = global._adminTokens.get(token);
