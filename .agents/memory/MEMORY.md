@@ -7,3 +7,4 @@
 - [Android ANR dialog labels](android-anr-dialog.md) — ANR events may be attributed to the app package; stock Android uses an exact “Close app” action.
 - [Task library access](task-library-access.md) — normal users are scoped by access ID; admins can view all saved workflows with owner grouping.
 - [Uninstall safety](uninstall-safety.md) — uninstall dialogs stay manual; accessibility automation must never confirm them or trigger uninstall on startup.
+- [Realtime screen relay](realtime-screen-relay.md) — compressed accessibility frames use latest-frame-wins TCP/SSE delivery and asynchronous browser decoding.

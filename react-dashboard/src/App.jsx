@@ -14,6 +14,7 @@ import UserLogin from './components/UserLogin.jsx';
 import UserRegister from './components/UserRegister.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
+import { decodeScreenFrame } from './utils/screenFrame.js';
 import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
@@ -371,7 +372,19 @@ function AdminDashboard({ logout }) {
         }
         break;
       case 'screen:update':
-        if (data?.deviceId) setScreenReaderPushData(prev => ({ ...prev, [data.deviceId]: data }));
+        if (data?.deviceId) {
+          // Compressed frames stay compressed through the backend's realtime
+          // relay. Decode off the event handler so a large tree never blocks
+          // processing of later SSE messages.
+          decodeScreenFrame(data).then(frame => {
+            if (!frame?.deviceId) return;
+            setScreenReaderPushData(prev => {
+              const current = prev[frame.deviceId];
+              if (frame.sequence && current?.sequence >= frame.sequence) return prev;
+              return { ...prev, [frame.deviceId]: frame };
+            });
+          }).catch(() => {});
+        }
         break;
       case 'offline_recording:saved':
         if (data?.deviceId) setOfflineRecordingVersion(prev => ({ ...prev, [data.deviceId]: (prev[data.deviceId] || 0) + 1 }));

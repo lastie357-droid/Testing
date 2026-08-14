@@ -1175,6 +1175,8 @@ const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relay
 const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS to SSE clients
 /** @type {Map<string, Object>} Latest screen reader frame per device — polled by dashboard */
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
+const latestScreenReaderSequence = new Map(); // deviceId → monotonically increasing relay sequence
+const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
 /** @type {Map<string, Object>} Latest camera JPEG frame per device — polled by CameraMonitorTab */
@@ -1224,6 +1226,51 @@ function broadcastDash(event, data) {
             client.res.write(payload);
             if (typeof client.res.flush === 'function') client.res.flush();
         }
+    }
+}
+
+/**
+ * Broadcast a high-frequency event without allowing a slow dashboard to
+ * accumulate stale accessibility trees. Each client gets only its newest
+ * pending frame, and backpressure is drained before the next one is written.
+ */
+function broadcastLatestDash(event, data) {
+    if (sseClients.size === 0) return;
+    const payload = `data: ${JSON.stringify({ event, data })}\n\n`;
+
+    for (const [id, client] of sseClients) {
+        if (client.res.writableEnded) continue;
+        let state = realtimeSseState.get(id);
+        if (!state) {
+            state = { sending: false, latestPayload: null };
+            realtimeSseState.set(id, state);
+        }
+        state.latestPayload = payload;
+        if (state.sending) continue;
+
+        const drain = () => {
+            if (client.res.writableEnded) {
+                state.sending = false;
+                state.latestPayload = null;
+                return;
+            }
+            const next = state.latestPayload;
+            state.latestPayload = null;
+            if (!next) {
+                state.sending = false;
+                return;
+            }
+            const writable = client.res.write(next);
+            if (typeof client.res.flush === 'function') client.res.flush();
+            if (!writable) {
+                client.res.once('drain', drain);
+            } else {
+                setImmediate(drain);
+            }
+        };
+
+        state.sending = true;
+        drain();
     }
 }
 
@@ -1633,24 +1680,23 @@ async function processMessage(clientId, clientType, event, data) {
         const deviceId = conn?.deviceId || data?.deviceId;
         if (!deviceId) return;
 
-        let relayData = data;
+        const receivedAt = Date.now();
+        const sequence = (latestScreenReaderSequence.get(deviceId) || 0) + 1;
+        latestScreenReaderSequence.set(deviceId, sequence);
 
-        // Android compresses the accessibility-tree JSON with GZIP to save 3G bandwidth.
-        // Detect the compressed envelope, decompress, then relay the original payload.
-        if (data?.compressed === true && typeof data?.data === 'string') {
-            try {
-                const buf   = Buffer.from(data.data, 'base64');
-                const plain = zlib.gunzipSync(buf).toString('utf8');
-                relayData   = { ...JSON.parse(plain), deviceId };
-            } catch (e) {
-                // Decompression failed — drop this frame rather than relay garbage
-                return;
-            }
-        }
+        // Keep compressed frames compressed on the realtime path. Synchronous
+        // gunzip/JSON.parse here used to block Node's event loop for every tree.
+        // The dashboard decodes asynchronously after receiving the SSE frame.
+        const relayData = {
+            ...data,
+            deviceId,
+            sequence,
+            receivedAt,
+        };
 
         // Cache the latest frame so the dashboard can poll it even if SSE is unreliable
         latestScreenReaderData.set(deviceId, { ...relayData, deviceId, _ts: Date.now() });
-        broadcastDash('screen:update', { ...relayData, deviceId });
+        broadcastLatestDash('screen:update', relayData);
         return;
     }
 
@@ -2172,6 +2218,7 @@ app.get('/api/events', async (req, res) => {
     req.on('close', () => {
         clearInterval(keepAlive);
         sseClients.delete(clientId);
+        realtimeSseState.delete(clientId);
         log('SSE', `Dashboard disconnected ${clientId}`);
         // Do NOT cancel pending commands when SSE disconnects — the dashboard reconnects
         // within 3 s (see useTcpStream.js retry) and results are now broadcast to all

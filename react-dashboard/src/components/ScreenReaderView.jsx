@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { formatDateTime, formatTime } from '../utils/dateTime.js';
+import { decodeScreenFrame } from '../utils/screenFrame.js';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -10,7 +11,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const info     = device.deviceInfo || {};
 
   const [streaming, setStreaming]           = useState(false);
-  const [streamInterval, setStreamInterval] = useState(2000);
+  const [streamInterval, setStreamInterval] = useState(150);
   const [savedCaptures, setSavedCaptures]   = useState([]);
   const [viewCapture, setViewCapture]       = useState(null);
   const [activeView, setActiveView]         = useState('visual');
@@ -92,7 +93,12 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
         );
         if (!r.ok) return;
         const d = await r.json();
-        if (d.success && d.screen) setPolledData(d);
+        const frame = await decodeScreenFrame(d);
+        if (frame.success && frame.screen) {
+          setPolledData(prev => (
+            frame.sequence && prev?.sequence >= frame.sequence ? prev : frame
+          ));
+        }
       } catch (_) {}
     };
     poll(); // immediate first poll on start
