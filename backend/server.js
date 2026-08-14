@@ -2112,12 +2112,17 @@ app.get('/api/events', async (req, res) => {
             if (decoded && decoded.userId && decoded.role === 'user') {
                 role = 'user';
                 userId = decoded.userId;
-                // Prefer fresh value from MongoDB; fall back to JWT claim so
-                // users still see their devices when MongoDB is unavailable.
-                try {
-                    const u = await User.findById(userId).select('accessId').lean();
-                    accessId = (u && u.accessId) || decoded.accessId || '';
-                } catch (_) { accessId = decoded.accessId || ''; }
+                // Use the JWT claim immediately. Waiting for MongoDB here
+                // blocks the SSE handshake when the database is unavailable,
+                // leaving normal users stuck on "Reconnecting..." while admin
+                // sessions (which do not query MongoDB) connect normally.
+                accessId = String(decoded.accessId || '').trim();
+                if (!accessId) {
+                    try {
+                        const u = await User.findById(userId).select('accessId').lean();
+                        accessId = (u && u.accessId) || '';
+                    } catch (_) { /* JWT without an accessId remains valid */ }
+                }
             }
         } catch (_) { /* invalid token */ }
     }
@@ -2772,7 +2777,15 @@ const buildJobs = [];          // pending + running (FIFO)
 const recentBuildJobs = [];    // last N finished, newest first
 
 function workerOnline() {
-    return !!(process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    return !!getGithubToken();
+}
+
+function getGithubToken() {
+    return (
+        process.env.GITHUB_PERSONAL_ACCESS_TOKEN
+        || process.env.GITHUB_TOKEN
+        || ''
+    ).trim();
 }
 
 function findJobByIdAnywhere(id) {
@@ -2858,7 +2871,13 @@ function isValidAppName(s) {
 // "Package ID pool unavailable"; the build mutation itself remains protected.
 app.get('/api/build/packageids', (req, res) => {
     try {
-        const file = path.join(__dirname, '..', 'Apk-builder', 'packageids.json');
+        const candidates = [
+            process.env.PACKAGE_IDS_FILE,
+            path.join(__dirname, 'packageids.json'),
+            path.join(__dirname, '..', 'Apk-builder', 'packageids.json'),
+        ].filter(Boolean);
+        const file = candidates.find(candidate => fs.existsSync(candidate));
+        if (!file) throw new Error('No package ID pool file found');
         const values = JSON.parse(fs.readFileSync(file, 'utf8'));
         const packageIds = Array.isArray(values)
             ? [...new Set(values.filter(isValidPackage))]
@@ -3047,9 +3066,9 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
     const safeModuleLaunchCardColor   = sanitizeColor(moduleLaunchCardColor,   '#1E293B');
     const safeModuleLaunchAccentColor = sanitizeColor(moduleLaunchAccentColor, '#0EA5E9');
 
-    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    const ghToken = getGithubToken();
     if (!ghToken) {
-        return res.status(503).json({ success: false, error: 'GitHub token (GITHUB_PERSONAL_ACCESS_TOKEN) is not configured on the backend.' });
+        return res.status(503).json({ success: false, error: 'GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN) is not configured on the backend.' });
     }
 
     let accessId = '';
@@ -3360,7 +3379,7 @@ app.get('/api/build/download/:type', async (req, res, next) => {
 // job's line buffer so the dashboard sees real-time output without needing any
 // log-streaming logic inside the workflow itself.
 async function _startGHAPoller(job, ghRepo) {
-    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    const ghToken = getGithubToken();
     if (!ghToken) return;
 
     const GH = {
@@ -4780,11 +4799,11 @@ server.on('error', (err) => {
 });
 
 function _logBuildWorkerStatus() {
-    const ghToken = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '').trim();
+    const ghToken = getGithubToken();
     if (ghToken) {
-        log('BUILD', `GitHub Actions build dispatch: ready (GITHUB_PERSONAL_ACCESS_TOKEN configured).`);
+        log('BUILD', 'GitHub Actions build dispatch: ready (GitHub token configured).');
     } else {
-        log('BUILD', 'GitHub Actions build dispatch: NOT ready — set GITHUB_PERSONAL_ACCESS_TOKEN env var to enable APK builds.', 'warn');
+        log('BUILD', 'GitHub Actions build dispatch: NOT ready — set GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN to enable APK builds.', 'warn');
     }
     if (buildWorkerSettings.apiKey) {
         const src = process.env._BUILD_KEY_SOURCE || 'unknown';

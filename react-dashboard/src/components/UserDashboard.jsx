@@ -192,7 +192,7 @@ export default function UserDashboard({ user, onLogout }) {
   const [paywall, setPaywall] = useState(null);
 
   const refreshSubscription = useCallback(async () => {
-    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    const token = localStorage.getItem('user_token');
     if (!token) return;
     try {
       const r = await fetch('/api/payment/me', { headers: { Authorization: `Bearer ${token}` } });
@@ -389,7 +389,7 @@ export default function UserDashboard({ user, onLogout }) {
     }
   }, []);
 
-  const { connected, reconnecting, send } = useTcpStream(handleMessage);
+  const { connected, reconnecting, send } = useTcpStream(handleMessage, 'user_token');
 
   const sendCommand = useCallback((deviceId, command, params = null) => {
     send('command:send', { deviceId, command, params });

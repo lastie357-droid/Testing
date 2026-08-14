@@ -12,7 +12,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
  * The hook exposes the same { connected, reconnecting, send } API as the old
  * useWebSocket hook so no component needs to change.
  */
-export function useTcpStream(onMessage) {
+export function useTcpStream(onMessage, tokenStorageKey = null) {
   const [connected, setConnected]     = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -27,9 +27,11 @@ export function useTcpStream(onMessage) {
 
   const connect = useCallback(() => {
     if (disposedRef.current) return;
-    // Admin token takes precedence (admin dashboard); otherwise fall back to
-    // the user JWT so the user dashboard can also stream events.
-    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    // Each dashboard uses its own token. Do not let an old admin token in the
+    // same browser override a user's JWT and cause an endless SSE reconnect.
+    const token = tokenStorageKey
+      ? localStorage.getItem(tokenStorageKey)
+      : (localStorage.getItem('admin_token') || localStorage.getItem('user_token'));
     if (!token) return;
 
     // Never allow two EventSource instances to survive a reconnect race.
@@ -93,7 +95,9 @@ export function useTcpStream(onMessage) {
    * (browser connection pool), so multiple commands are truly parallel.
    */
   const send = useCallback((event, data) => {
-    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    const token = tokenStorageKey
+      ? localStorage.getItem(tokenStorageKey)
+      : (localStorage.getItem('admin_token') || localStorage.getItem('user_token'));
 
     // ── command:send → POST /api/commands ────────────────────────────
     if (event === 'command:send') {

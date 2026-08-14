@@ -277,8 +277,10 @@ const DEFAULT_MONITORED_PACKAGES = [
 function getToken() {
   return localStorage.getItem('user_token') || localStorage.getItem('admin_token') || '';
 }
-function authHeaders() {
-  const t = getToken();
+function authHeaders(userMode = false) {
+  const t = userMode
+    ? localStorage.getItem('user_token') || ''
+    : getToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
@@ -606,7 +608,7 @@ export default function BuildApkTab({ user }) {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch('/api/build/packageids', { headers: authHeaders() });
+        const r = await fetch('/api/build/packageids', { headers: authHeaders(!!user) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || !d.success || !Array.isArray(d.packageIds) || d.packageIds.length < 2) {
           throw new Error(d.error || 'Package ID pool unavailable');
@@ -636,7 +638,7 @@ export default function BuildApkTab({ user }) {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const r = await fetch('/api/build/status', { headers: authHeaders() });
+      const r = await fetch('/api/build/status', { headers: authHeaders(!!user) });
       if (!r.ok) return null;
       const d = await r.json();
       if (d.success) {
@@ -695,7 +697,7 @@ export default function BuildApkTab({ user }) {
   const checkDownloadAvailability = useCallback(async () => {
     const probe = async (type) => {
       try {
-        const r = await fetch(`/api/build/download/${type}`, { method: 'HEAD', headers: authHeaders() });
+        const r = await fetch(`/api/build/download/${type}`, { method: 'HEAD', headers: authHeaders(!!user) });
         return r.ok;
       } catch (_) { return false; }
     };
@@ -772,7 +774,7 @@ export default function BuildApkTab({ user }) {
 
       const r = await fetch('/api/build/apk', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(!!user) },
         body: JSON.stringify(payload),
       });
       const d = await r.json();
@@ -794,7 +796,7 @@ export default function BuildApkTab({ user }) {
 
   const _doDownload = async (type) => {
     try {
-      const r = await fetch(`/api/build/download/${type}/ticket`, { method: 'POST', headers: authHeaders() });
+      const r = await fetch(`/api/build/download/${type}/ticket`, { method: 'POST', headers: authHeaders(!!user) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.success || !d.url) throw new Error(d.error || `HTTP ${r.status}`);
       const a = document.createElement('a');
