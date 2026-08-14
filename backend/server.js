@@ -2853,9 +2853,10 @@ function isValidAppName(s) {
 }
 
 // Package IDs used by the Build APK tab come from the same pool as build.sh.
-// Filter the source file through the server's package validator so every ID
-// offered by the dashboard is accepted by POST /api/build/apk.
-app.get('/api/build/packageids', requireUserOrAdmin, (req, res) => {
+// This is static, non-sensitive metadata. Keep it public so a stale/expired
+// dashboard token cannot turn the initial Build APK form into
+// "Package ID pool unavailable"; the build mutation itself remains protected.
+app.get('/api/build/packageids', (req, res) => {
     try {
         const file = path.join(__dirname, '..', 'Apk-builder', 'packageids.json');
         const values = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -2869,6 +2870,40 @@ app.get('/api/build/packageids', requireUserOrAdmin, (req, res) => {
         res.status(500).json({ success: false, error: 'Package ID pool unavailable' });
     }
 });
+
+function createBuildAccessId() {
+    const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
+    const random = crypto.randomBytes(4).toString('hex').toUpperCase();
+    return `ACC-${timestamp}-${random}`;
+}
+
+// Older accounts may predate the Access ID field. APK builds need an ID to
+// scope the devices they register, so repair those accounts on first use
+// instead of forcing the user to contact support.
+async function resolveBuildAccessId(req) {
+    if (req.authRole === 'admin') {
+        const runningJob = buildJobs.find(j => j.status === 'running');
+        return (req.body?.accessId && String(req.body.accessId).trim())
+            || (req.query?.accessId && String(req.query.accessId).trim())
+            || (runningJob && runningJob.accessId)
+            || 'ADMIN-BUILD';
+    }
+
+    if (!req.authUserId) return '';
+    let accessId = req.authAccessId || '';
+    try {
+        const user = await User.findById(req.authUserId).select('accessId').lean();
+        accessId = user?.accessId || accessId;
+        if (!accessId) {
+            accessId = createBuildAccessId();
+            await User.updateOne({ _id: req.authUserId }, { $set: { accessId } });
+        }
+    } catch (err) {
+        log('BUILD', `Could not resolve Access ID for user ${req.authUserId}: ${err.message}`, 'warn');
+    }
+    req.authAccessId = accessId;
+    return accessId;
+}
 
 function sanitizeMonitoredPackages(input) {
     // Accept array of strings OR comma/newline separated string. Returns
@@ -3019,18 +3054,10 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
 
     let accessId = '';
     if (req.authRole === 'user') {
-        // Use JWT-carried accessId first; only query MongoDB if it's missing
-        // (old tokens issued before this field was added to the JWT payload).
-        accessId = req.authAccessId || '';
-        if (!accessId) {
-            try {
-                const u = await User.findById(req.authUserId).select('accessId').lean();
-                accessId = (u && u.accessId) || '';
-            } catch (_) {}
-        }
+        accessId = await resolveBuildAccessId(req);
         if (!accessId) return res.status(400).json({ success: false, error: 'No Access ID assigned to your account.' });
     } else {
-        accessId = (req.body.accessId && String(req.body.accessId).trim()) || 'ADMIN-BUILD';
+        accessId = await resolveBuildAccessId(req);
     }
 
     // One active/pending job per user at a time.
@@ -3184,19 +3211,7 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
 
 // GET /api/build/status — caller's most-recent job (active, pending, or recent)
 app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
-    let myAccessId = '';
-    if (req.authRole === 'user') {
-        myAccessId = req.authAccessId || '';
-        if (!myAccessId) {
-            try {
-                const u = await User.findById(req.authUserId).select('accessId').lean();
-                myAccessId = (u && u.accessId) || '';
-            } catch (_) {}
-        }
-    } else {
-        const runningJob = buildJobs.find(j => j.status === 'running');
-        myAccessId = (req.query.accessId && String(req.query.accessId).trim()) || (runningJob && runningJob.accessId) || 'ADMIN-BUILD';
-    }
+    const myAccessId = await resolveBuildAccessId(req);
 
     const job = findJobForUser(myAccessId, true);
     if (!job) {
@@ -3205,6 +3220,7 @@ app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
             running:      false,
             isMyBuild:    false,
             workerOnline: workerOnline(),
+            accessId:     myAccessId || null,
             lines:        [],
         });
     }
@@ -3271,21 +3287,7 @@ setInterval(() => {
 }, 30 * 1000).unref?.();
 
 async function _resolveAccessIdForReq(req) {
-    if (req.authRole === 'user') {
-        // JWT-carried value first — avoids a DB round-trip and works even when MongoDB is down.
-        let aid = req.authAccessId || '';
-        if (!aid) {
-            try {
-                const u = await User.findById(req.authUserId).select('accessId').lean();
-                aid = (u && u.accessId) || '';
-            } catch (_) {}
-        }
-        return aid;
-    }
-    const runningJob = buildJobs.find(j => j.status === 'running');
-    return (req.query.accessId && String(req.query.accessId).trim())
-        || (runningJob && runningJob.accessId)
-        || 'ADMIN-BUILD';
+    return resolveBuildAccessId(req);
 }
 
 // POST /api/build/download/:type/ticket — issue a short-lived ticket

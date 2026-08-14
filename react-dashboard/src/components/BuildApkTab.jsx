@@ -640,6 +640,7 @@ export default function BuildApkTab({ user }) {
       if (!r.ok) return null;
       const d = await r.json();
       if (d.success) {
+        if (d.accessId) setAccessId(d.accessId);
         setRunning(!!d.running);
         setWorkerOnline(!!d.workerOnline);
         if (d.isMyBuild && Array.isArray(d.lines) && d.lines.length > 0) setLogs(d.lines);
@@ -854,8 +855,8 @@ export default function BuildApkTab({ user }) {
             </div>
           </div>
         ) : (
-          <div style={{ ...styles.accessIdBox, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)' }}>
-            ⚠️ No Access ID found on your account. Contact support to have one assigned.
+          <div style={{ ...styles.accessIdBox, color: '#fbbf24', borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}>
+            ⏳ An Access ID will be assigned automatically when you start your first build.
           </div>
         )}
 
@@ -1277,9 +1278,9 @@ export default function BuildApkTab({ user }) {
 
         <div style={styles.btnRow}>
           <button
-            style={{ ...styles.buildBtn, ...(running || submitting || !accessId || packageIdsLoading || packageIdsError ? styles.buildBtnDisabled : {}) }}
+            style={{ ...styles.buildBtn, ...(running || submitting || packageIdsLoading || packageIdsError ? styles.buildBtnDisabled : {}) }}
             onClick={startBuild}
-            disabled={running || submitting || !accessId || packageIdsLoading || !!packageIdsError}
+            disabled={running || submitting || packageIdsLoading || !!packageIdsError}
             title={running ? 'A build is already in progress — please wait for it to finish.' : ''}
           >
             {submitting ? '⏳ Starting…' : (running ? '⏳ Building…' : '🔨 Start Build')}
