@@ -1,6 +1,5 @@
 import React, { Suspense, lazy, useState, useRef, useEffect, useCallback } from 'react';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
-import { useReadScreenPolling } from '../hooks/useReadScreenPolling.js';
 
 const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
 
@@ -96,24 +95,10 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const rafRef          = useRef(null);
   const idleTimerRef    = useRef(null);
   const paintGenerationRef = useRef(0);
+  const lastPollTs      = useRef(0);
   const screenshotHandledRef = useRef(new Set());
   const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [screenshotStatus, setScreenshotStatus] = useState('');
-
-  const {
-    screenData,
-    reading: screenReadPending,
-    active: screenReading,
-    start: startScreenReading,
-    stop: stopScreenReading,
-    readOnce: readScreenOnce,
-  } = useReadScreenPolling({
-    deviceId,
-    isOnline,
-    results,
-    sendCommand,
-    intervalMs: 150,
-  });
 
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
@@ -152,8 +137,14 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     img.src = `data:image/jpeg;base64,${base64}`;
   }, []);
 
+  // ── SSE frame — paint immediately when SSE delivers a frame ──────────
+  useEffect(() => {
+    if (!streamFrame) return;
+    paintFrame(streamFrame);
+  }, [streamFrame, paintFrame]);
+
   // A single screenshot is returned as a normal command result. Paint it in
-  // the same phone canvas used by the live accessibility-tree view.
+  // the same phone canvas used by the live stream.
   useEffect(() => {
     const latest = (results || []).find(result =>
       result.command === 'take_screenshot' &&
@@ -183,12 +174,43 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     sendCommand(deviceId, 'take_screenshot');
   }, [deviceId, isOnline, screenshotLoading, sendCommand]);
 
+  // ── Async latest-frame watcher ───────────────────────────────────────
+  // Keep checking the latest server frame while the stream is active. The
+  // timestamp guard below prevents repainting the same JPEG repeatedly.
+  useEffect(() => {
+    if (!streaming || !isOnline) return;
+    let stopped = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const r = await fetch(
+          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`,
+          { cache: 'no-store' }
+        );
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.success && d.frameData && (d._ts || 0) > lastPollTs.current) {
+          lastPollTs.current = d._ts || Date.now();
+          paintFrame(d.frameData);
+        }
+      } catch (_) {}
+      finally {
+        if (!stopped) timer = setTimeout(poll, 75);
+      }
+    };
+    poll();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [streaming, isOnline, deviceId, paintFrame]);
+
   const startStream = useCallback(() => {
     if (streamingRef.current) return;
-    // Control-center screen control uses the same immediate accessibility-tree
-    // command as Read Screen. There is no JPEG stream, compression, chunking,
-    // or screen:update event path involved.
-    startScreenReading();
+    // Use stream_start (JPEG frames via stream:frame events) — same intervalMs pattern
+    // as screen_reader_stream_start but produces JPEG data polled at /api/stream/latest.
+    sendCommand(deviceId, 'stream_start', { intervalMs: 150 });
     setStreaming(true);
     frameCountRef.current = 0;
     lastPollTs.current = 0;
@@ -198,26 +220,26 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     autoStopRef.current = setTimeout(() => {
       if (streamingRef.current) {
-        stopScreenReading();
+        sendCommand(deviceId, 'stream_stop');
         setStreaming(false);
         setFps(0);
       }
     }, 5 * 60 * 1000);
-  }, [startScreenReading, stopScreenReading]);
+  }, [deviceId, sendCommand]);
 
   const stopStream = useCallback(() => {
-    stopScreenReading();
+    sendCommand(deviceId, 'stream_stop');
     setStreaming(false);
     setFps(0);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
-  }, [stopScreenReading]);
+  }, [deviceId, sendCommand]);
 
   useEffect(() => () => {
-    if (streamingRef.current) stopScreenReading();
+    if (streamingRef.current) sendCommand(deviceId, 'stream_stop');
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-  }, [stopScreenReading]);
+  }, []);
 
   // ── Screen touch on stream ────────────────────────────────────────────
   const handleStreamClick = useCallback((e) => {
@@ -302,9 +324,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   // ── Stream display size — match ScreenReader for consistent look ─────
   const STREAM_W = 360;
   const STREAM_H = devW && devH ? Math.min(780, Math.round(STREAM_W * devH / devW)) : 640;
-  const treeElements = (screenData?.elements || [])
-    .filter(el => el?.bounds && (el.text || el.contentDescription || el.hintText || el.clickable || el.editable))
-    .slice(0, 120);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 16 }}>
@@ -379,8 +398,8 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               }}
               onClick={handleStreamClick}
             >
-              {/* Kept for the one-shot screenshot button. Live control uses
-                  the accessibility tree below, not a JPEG frame stream. */}
+              {/* Canvas stays mounted once we have a frame — keeps previous frame visible
+                  while the next one decodes, eliminating blank flashes */}
               <canvas
                 ref={canvasRef}
                 style={{
@@ -389,57 +408,21 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
                   objectFit: 'fill', borderRadius: 8, pointerEvents: 'none',
                 }}
               />
-              {screenData && (
-                <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-                  {treeElements.map((el, index) => {
-                    const b = el.bounds;
-                    const left = Math.max(0, (b.left / devW) * 100);
-                    const top = Math.max(0, (b.top / devH) * 100);
-                    const width = Math.max(1, ((b.right - b.left) / devW) * 100);
-                    const height = Math.max(1, ((b.bottom - b.top) / devH) * 100);
-                    const label = el.text || el.contentDescription || el.hintText || '';
-                    return (
-                      <div
-                        key={`${el.nodeId || index}-${b.left}-${b.top}`}
-                        title={label}
-                        style={{
-                          position: 'absolute', left: `${left}%`, top: `${top}%`,
-                          width: `${width}%`, height: `${height}%`,
-                          border: el.clickable ? '1px solid rgba(56,189,248,0.8)' : '1px solid rgba(148,163,184,0.28)',
-                          background: el.clickable ? 'rgba(14,116,144,0.12)' : 'rgba(15,23,42,0.08)',
-                          color: '#e2e8f0', fontSize: 8, lineHeight: 1.1,
-                          overflow: 'hidden', padding: 2, boxSizing: 'border-box',
-                        }}
-                      >
-                        {label}
-                      </div>
-                    );
-                  })}
-                  <div style={{
-                    position: 'absolute', left: 6, top: 6, right: 6,
-                    display: 'flex', justifyContent: 'space-between',
-                    color: '#7dd3fc', fontSize: 9, textShadow: '0 1px 3px #020617',
-                  }}>
-                    <span>{screenData.packageName || 'Accessibility tree'}</span>
-                    <span>{screenReadPending ? 'reading…' : `${treeElements.length} elements`}</span>
-                  </div>
-                </div>
-              )}
-              {!hasFrame && !screenData && (
+              {!hasFrame && (
                 <div style={{ textAlign: 'center', color: '#334155' }}>
                   <div style={{ fontSize: 28 }}>📱</div>
                   <div style={{ fontSize: 11, marginTop: 6 }}>
-                    {streaming ? 'Waiting for read_screen…' : 'Start screen read to view'}
+                    {streaming ? 'Waiting for frame…' : 'Start stream to view'}
                   </div>
                 </div>
               )}
-              {(hasFrame || screenData) && (
+              {hasFrame && (
                 <div style={{
                   position: 'absolute', top: 4, right: 6,
-                  fontSize: 10, color: screenReadPending ? '#f59e0b' : '#22c55e',
+                  fontSize: 10, color: streamIdle ? '#94a3b8' : '#22c55e',
                   background: 'rgba(0,0,0,0.5)', borderRadius: 4, padding: '1px 5px',
                 }}>
-                  {screenReadPending ? '◌ READING' : '● READY'}
+                  {streamIdle ? '⏸ IDLE' : '● LIVE'}
                 </div>
               )}
               {blockActive && (
@@ -456,11 +439,11 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
                 disabled={!isOnline}
                 style={{ ...smallBtn(streaming ? '#7f1d1d' : '#166534'), fontSize: 11 }}
               >
-                {streaming ? '⏹ Stop' : '▶ Start Read'}
+                {streaming ? '⏹ Stop' : '▶ Start'}
               </button>
               {streaming && (
                 <span style={{ fontSize: 11, color: streamIdle ? '#94a3b8' : '#22c55e', alignSelf: 'center' }}>
-                  {screenReadPending ? '◌ reading…' : '● read_screen'}
+                  {streamIdle ? '⏸ idle' : `● ${fps}fps`}
                 </span>
               )}
               <button
@@ -511,14 +494,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               results={results}
               screenPushData={screenReaderPushData}
               connected={connected}
-              sharedPolling={{
-                screenData,
-                reading: screenReadPending,
-                active: screenReading,
-                start: startScreenReading,
-                stop: stopScreenReading,
-                readOnce: readScreenOnce,
-              }}
             />
           </Suspense>
         </div>
