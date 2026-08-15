@@ -4855,7 +4855,71 @@ function _portPlatform() {
     return 'Container / self-hosted';
 }
 
-app.get('/api/admin/ports/status', requireAdmin, (req, res) => {
+async function _zeaburTcpForwardingStatus() {
+    const apiKey = process.env.ZEABUR_API_KEY;
+    const serviceId = process.env.ZEABUR_SERVICE_ID || '698e34fd67b6b3d512131359';
+    const host = process.env.ZEABUR_TCP_HOST || 'sjc1.clusters.zeabur.com';
+    const targetPort = Number(process.env.ZEABUR_TARGET_PORT || 6000);
+    if (!apiKey) {
+        return {
+            configured: false,
+            serviceId,
+            host,
+            targetPort,
+            error: 'ZEABUR_API_KEY secret is not configured',
+        };
+    }
+
+    const query = `query { service(id: "${serviceId}") { id name tcpForwarding { sourcePort targetPort } } }`;
+    try {
+        const response = await fetch('https://api.zeabur.com/graphql', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({ query }),
+            signal: AbortSignal.timeout(8000),
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.errors?.length) {
+            return {
+                configured: true,
+                serviceId,
+                host,
+                targetPort,
+                error: payload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${response.status}`,
+            };
+        }
+        const service = payload.data?.service;
+        if (!service) {
+            return { configured: true, serviceId, host, targetPort, error: 'Zeabur service was not found' };
+        }
+        const rules = Array.isArray(service.tcpForwarding) ? service.tcpForwarding : [];
+        const matchingRule = rules.find(rule => Number(rule.targetPort) === targetPort) || null;
+        return {
+            configured: true,
+            serviceId: service.id || serviceId,
+            serviceName: service.name || serviceId,
+            host,
+            targetPort,
+            rules,
+            matchingRule,
+            endpoint: matchingRule ? `${host}:${matchingRule.sourcePort}` : null,
+            refreshedAt: new Date().toISOString(),
+        };
+    } catch (error) {
+        return {
+            configured: true,
+            serviceId,
+            host,
+            targetPort,
+            error: error.name === 'TimeoutError' ? 'Zeabur request timed out' : error.message,
+        };
+    }
+}
+
+app.get('/api/admin/ports/status', requireAdmin, async (req, res) => {
     try {
         const publicBaseUrl = _derivePublicUrl();
         const mappings = _explicitPortMappings();
@@ -4896,6 +4960,7 @@ app.get('/api/admin/ports/status', requireAdmin, (req, res) => {
             publicBaseUrl,
             refreshedAt: new Date().toISOString(),
             ports,
+            zeabur: await _zeaburTcpForwardingStatus(),
             notes: [
                 'Listening ports are read from the container network namespace.',
                 'HTTP reverse proxies usually publish port 443 externally.',

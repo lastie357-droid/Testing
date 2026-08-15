@@ -52,6 +52,7 @@ export default function PortViewTab() {
             <Badge label="Public base" value={data.publicBaseUrl || 'Not detected'} />
             <Badge label="Updated" value={new Date(data.refreshedAt).toLocaleTimeString()} />
           </div>
+          <ZeaburForwardingCard data={data.zeabur} />
           <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, overflow: 'hidden' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr .7fr .7fr 1.6fr 1fr', gap: 10, padding: '11px 14px', color: '#64748b', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #1e293b' }}>
               <span>Listener</span><span>Internal</span><span>Status</span><span>Public endpoint</span><span>Exposure</span>
@@ -79,6 +80,58 @@ export default function PortViewTab() {
     </div>
   );
 }
+
+function ZeaburForwardingCard({ data }) {
+  if (!data) return null;
+  const hasError = !!data.error;
+  const matchingRule = data.matchingRule;
+  return (
+    <section style={{
+      marginBottom: 14, padding: 14, borderRadius: 10,
+      background: matchingRule ? 'rgba(34,197,94,.08)' : '#111827',
+      border: `1px solid ${matchingRule ? 'rgba(34,197,94,.35)' : '#1e293b'}`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <div>
+          <div style={{ color: '#f8fafc', fontSize: 14, fontWeight: 700 }}>Zeabur TCP forwarding</div>
+          <div style={{ color: '#64748b', fontSize: 11, marginTop: 4 }}>
+            Service {data.serviceName || data.serviceId} · target port {data.targetPort}
+          </div>
+        </div>
+        <span style={{ color: hasError ? '#fca5a5' : matchingRule ? '#86efac' : '#fbbf24', fontSize: 11, fontWeight: 700 }}>
+          {hasError ? 'Lookup failed' : matchingRule ? 'Forwarded' : 'No matching rule'}
+        </span>
+      </div>
+      {hasError ? (
+        <div style={{ marginTop: 10, color: '#fca5a5', fontSize: 12 }}>{data.error}</div>
+      ) : matchingRule ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center', marginTop: 13 }}>
+          <div>
+            <div style={labelStyle}>Connect to Android TCP</div>
+            <code style={{ color: '#86efac', fontSize: 16, fontWeight: 800 }}>{data.endpoint}</code>
+          </div>
+          <div>
+            <div style={labelStyle}>Forwarded source port</div>
+            <code style={{ color: '#c4b5fd' }}>{matchingRule.sourcePort}</code>
+          </div>
+          <div>
+            <div style={labelStyle}>Target port</div>
+            <code style={{ color: '#c4b5fd' }}>{matchingRule.targetPort}</code>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, color: '#94a3b8', fontSize: 12 }}>
+          No Zeabur rule currently forwards target port {data.targetPort}. The API returned {data.rules?.length || 0} rule(s).
+        </div>
+      )}
+      <div style={{ marginTop: 10, color: '#64748b', fontSize: 10, wordBreak: 'break-all' }}>
+        {data.host} · service ID {data.serviceId}
+      </div>
+    </section>
+  );
+}
+
+const labelStyle = { color: '#64748b', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 };
 
 function Badge({ label, value }) {
   return <div style={{ background: '#111827', border: '1px solid #1e293b', borderRadius: 8, padding: '8px 11px', minWidth: 150 }}>
