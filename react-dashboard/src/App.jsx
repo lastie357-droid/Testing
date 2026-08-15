@@ -252,11 +252,24 @@ function AdminDashboard({ logout }) {
           delete pingPendingRef.current[data.commandId];
           setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
+        // The server emits a result for discarded duplicate commands so the
+        // UI can remove their waiters.  Do not show those internal coalescing
+        // acknowledgements as command failures.
+        if (data.superseded) break;
         const result = { id: data.commandId || Date.now(), command: data.command, deviceId: data.deviceId, success: data.success, response: data.response, error: data.error, time: new Date() };
         setCommandResults(prev => [result, ...prev].slice(0, 200));
         setActivityLog(prev => [{ id: Date.now(), type: data.success ? 'success' : 'error', text: `${data.command} → ${data.success ? 'OK' : data.error}`, time: new Date() }, ...prev].slice(0, 100));
         break;
       }
+      case 'queue:reset':
+        setPendingCommands(prev => {
+          const next = { ...prev };
+          for (const [commandId, pending] of Object.entries(next)) {
+            if (!data?.deviceId || pending.deviceId === data.deviceId) delete next[commandId];
+          }
+          return next;
+        });
+        break;
       case 'data:chunk': {
         const { commandId, command, fieldName, chunk, done, error, deviceId } = data;
         if (!commandId) break;

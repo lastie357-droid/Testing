@@ -8,3 +8,4 @@
 - [Task library access](task-library-access.md) — normal users are scoped by access ID; admins can view all saved workflows with owner grouping.
 - [Uninstall safety](uninstall-safety.md) — uninstall dialogs stay manual; accessibility automation must never confirm them or trigger uninstall on startup.
 - [Screen reader command polling](realtime-screen-relay.md) — the dashboard repeats plain screen-read commands; Android returns normal `{ success, screen }` responses with no stream encoding.
+- [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
