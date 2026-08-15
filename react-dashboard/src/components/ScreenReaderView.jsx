@@ -4,6 +4,16 @@ import { decodeScreenFrame } from '../utils/screenFrame.js';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
+const SCREEN_READER_INTERVAL_OPTIONS = [
+  { value: 500,  label: '500ms' },
+  { value: 850,  label: '850ms' },
+  { value: 1000, label: '1 sec' },
+  { value: 1500, label: '1.5 sec' },
+  { value: 2000, label: '2 sec' },
+  { value: 3000, label: '3 sec' },
+  { value: 5000, label: '5 sec' },
+  { value: 10000, label: '10 sec' },
+];
 
 export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected }) {
   const deviceId = device.deviceId;
@@ -11,7 +21,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const info     = device.deviceInfo || {};
 
   const [streaming, setStreaming]           = useState(false);
-  const [streamInterval, setStreamInterval] = useState(100);
+  const [streamInterval, setStreamInterval] = useState(1000);
   const [savedCaptures, setSavedCaptures]   = useState([]);
   const [viewCapture, setViewCapture]       = useState(null);
   const [activeView, setActiveView]         = useState('visual');
@@ -28,22 +38,39 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  // Prefer the most recent of: polled data, SSE push data, or last read_screen result.
+  // Prefer the most recent of: decoded SSE push data, polled data, or the
+  // latest read_screen / stream-start result.
   // Polling runs on a timer so it reliably updates even when SSE is unreliable.
   let screenData = null;
-  const ssePushOk  = screenPushData && screenPushData.success && screenPushData.screen;
+  const [decodedPushData, setDecodedPushData] = useState(null);
+  useEffect(() => {
+    let active = true;
+    if (!screenPushData) {
+      setDecodedPushData(null);
+      return () => { active = false; };
+    }
+    decodeScreenFrame(screenPushData)
+      .then(frame => { if (active) setDecodedPushData(frame); })
+      .catch(() => { if (active) setDecodedPushData(null); });
+    return () => { active = false; };
+  }, [screenPushData]);
+
+  const ssePushOk  = decodedPushData && decodedPushData.success && decodedPushData.screen;
   const pollOk     = polledData && polledData.success && polledData.screen;
   if (ssePushOk && pollOk) {
     // Both available — use whichever arrived more recently
-    screenData = ((polledData._ts || 0) >= (screenPushData._ts || 0))
-      ? polledData.screen : screenPushData.screen;
+    screenData = ((polledData._ts || 0) >= (decodedPushData._ts || decodedPushData.receivedAt || decodedPushData.ts || 0))
+      ? polledData.screen : decodedPushData.screen;
   } else if (pollOk) {
     screenData = polledData.screen;
   } else if (ssePushOk) {
-    screenData = screenPushData.screen;
+    screenData = decodedPushData.screen;
   } else {
     const latestScreenResult = results
-      .filter(r => r.command === 'read_screen' && r.success && r.response)
+      .filter(r => (
+        (r.command === 'read_screen' || r.command === 'screen_reader_stream_start')
+        && r.success && r.response
+      ))
       .slice(0, 1)[0];
     try {
       const parsed = typeof latestScreenResult?.response === 'string'
@@ -467,10 +494,9 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
               disabled={!isOnline}
             >
-              <option value={100}>100ms</option>
-              <option value={150}>150ms</option>
-              <option value={250}>250ms</option>
-              <option value={500}>500ms</option>
+              {SCREEN_READER_INTERVAL_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
             <button
               className="sc-btn"
