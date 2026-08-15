@@ -252,7 +252,6 @@ function AdminDashboard({ logout }) {
           delete pingPendingRef.current[data.commandId];
           setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
-        if (data.response?.streaming === true) break;
         const result = { id: data.commandId || Date.now(), command: data.command, deviceId: data.deviceId, success: data.success, response: data.response, error: data.error, time: new Date() };
         setCommandResults(prev => [result, ...prev].slice(0, 200));
         setActivityLog(prev => [{ id: Date.now(), type: data.success ? 'success' : 'error', text: `${data.command} → ${data.success ? 'OK' : data.error}`, time: new Date() }, ...prev].slice(0, 100));

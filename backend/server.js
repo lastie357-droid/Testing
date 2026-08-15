@@ -846,18 +846,6 @@ const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
 const PING_INTERVAL  = 20000;   // ms – ping every 20 s (was 30 s); faster detection of 3G drops
 const PONG_TIMEOUT   = 90000;   // ms – drop if no pong in 90 s (3 missed pings); was 120 s
 const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
-const SCREEN_READER_INTERVAL_MIN_MS = 500;
-const SCREEN_READER_INTERVAL_MAX_MS = 10000;
-const SCREEN_READER_INTERVAL_DEFAULT_MS = 1000;
-
-function normalizeScreenReaderInterval(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return SCREEN_READER_INTERVAL_DEFAULT_MS;
-    return Math.max(
-        SCREEN_READER_INTERVAL_MIN_MS,
-        Math.min(SCREEN_READER_INTERVAL_MAX_MS, Math.round(parsed))
-    );
-}
 
 // ============================================
 // RECORDINGS STORAGE
@@ -3779,14 +3767,11 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
     if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
 
-    // Keep this contract consistent with the Android app and dashboard. Older
-    // clients may still send 100/150/250ms; normalize those requests instead
-    // of allowing an accidental high-frequency accessibility stream.
+    // Screen-reader streaming is dashboard-timed command polling. Never pass
+    // an interval/push setting to Android; every request is one plain screen
+    // read and the device returns its normal command response.
     if (command === 'screen_reader_stream_start') {
-        params = {
-            ...(params && typeof params === 'object' ? params : {}),
-            intervalMs: normalizeScreenReaderInterval(params?.intervalMs),
-        };
+        params = null;
     }
 
     // ── All commands (including list_screen_recordings / get_screen_recording / delete_screen_recording)

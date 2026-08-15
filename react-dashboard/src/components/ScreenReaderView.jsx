@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { formatDateTime, formatTime } from '../utils/dateTime.js';
-import { decodeScreenFrame } from '../utils/screenFrame.js';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -28,7 +27,6 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
-  const [polledData, setPolledData]         = useState(null);
   const screenRef      = useRef(null);
   const touchStartRef  = useRef(null);
   const streamingRef   = useRef(false);
@@ -38,47 +36,22 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  // Prefer the most recent of: decoded SSE push data, polled data, or the
-  // latest read_screen / stream-start result.
-  // Polling runs on a timer so it reliably updates even when SSE is unreliable.
+  // Screen-reader streaming uses plain command responses only. Every tick is
+  // a screen_reader_stream_start command with the same { success, screen }
+  // response shape as read_screen.
   let screenData = null;
-  const [decodedPushData, setDecodedPushData] = useState(null);
-  useEffect(() => {
-    let active = true;
-    if (!screenPushData) {
-      setDecodedPushData(null);
-      return () => { active = false; };
-    }
-    decodeScreenFrame(screenPushData)
-      .then(frame => { if (active) setDecodedPushData(frame); })
-      .catch(() => { if (active) setDecodedPushData(null); });
-    return () => { active = false; };
-  }, [screenPushData]);
-
-  const ssePushOk  = decodedPushData && decodedPushData.success && decodedPushData.screen;
-  const pollOk     = polledData && polledData.success && polledData.screen;
-  if (ssePushOk && pollOk) {
-    // Both available — use whichever arrived more recently
-    screenData = ((polledData._ts || 0) >= (decodedPushData._ts || decodedPushData.receivedAt || decodedPushData.ts || 0))
-      ? polledData.screen : decodedPushData.screen;
-  } else if (pollOk) {
-    screenData = polledData.screen;
-  } else if (ssePushOk) {
-    screenData = decodedPushData.screen;
-  } else {
-    const latestScreenResult = results
-      .filter(r => (
-        (r.command === 'read_screen' || r.command === 'screen_reader_stream_start')
-        && r.success && r.response
-      ))
-      .slice(0, 1)[0];
-    try {
-      const parsed = typeof latestScreenResult?.response === 'string'
-        ? JSON.parse(latestScreenResult.response)
-        : latestScreenResult?.response;
-      screenData = parsed?.screen || null;
-    } catch (_) {}
-  }
+  const latestScreenResult = results
+    .filter(r => (
+      (r.command === 'read_screen' || r.command === 'screen_reader_stream_start')
+      && r.success && r.response
+    ))
+    .slice(0, 1)[0];
+  try {
+    const parsed = typeof latestScreenResult?.response === 'string'
+      ? JSON.parse(latestScreenResult.response)
+      : latestScreenResult?.response;
+    screenData = parsed?.screen || null;
+  } catch (_) {}
 
   // ── Session reset on mount / device change ──
   // Clears stale pending commands, streaming state, frame throttle, and all
@@ -87,17 +60,18 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
   }, [deviceId]);
 
-  // ── Start: tell device to push screen:update frames to dashboard ────
-  // Uses screen_reader_stream_start which enables streaming WITHOUT stopping
-  // the underlying screen reader loop that runs continuously on the device.
-  const startStreaming = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
-    setStreaming(true);
-  }, [deviceId, sendCommand, streamInterval]);
+  // ── Start: begin dashboard-side repeated command requests ────────────
+  // No interval is sent to Android. Each tick is one normal screen read.
+  const requestScreen = useCallback(() => {
+    sendCommand(deviceId, 'screen_reader_stream_start');
+  }, [deviceId, sendCommand]);
 
-  // ── Stop: stop sending frames to dashboard (loop keeps running on device) ─
-  // Uses screen_reader_stream_stop which only pauses the frame push; the device
-  // accessibility screen reader process is NOT stopped.
+  const startStreaming = useCallback(() => {
+    requestScreen();
+    setStreaming(true);
+  }, [requestScreen]);
+
+  // ── Stop: stop the dashboard-side request timer ──────────────────────
   const stopStreaming = useCallback(() => {
     sendCommand(deviceId, 'screen_reader_stream_stop', {});
     setStreaming(false);
@@ -107,59 +81,19 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // being listed as a dep (which would cause a spurious extra stop on every toggle).
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
-  // ── Async latest-frame watcher ───────────────────────────────────────
-  // SSE paints immediately when a push arrives. This watcher also checks the
-  // latest server frame during the active session so a delayed/reconnecting
-  // EventSource cannot leave the view behind the device.
+  // ── Dashboard-side request timer ──────────────────────────────────────
   useEffect(() => {
     if (!streaming || !isOnline) return;
-    let stopped = false;
-    let timer = null;
-    const poll = async () => {
-      try {
-        const token = localStorage.getItem('admin_token');
-        const r = await fetch(
-          `/api/screen-reader/latest/${deviceId}?token=${encodeURIComponent(token)}`,
-          { cache: 'no-store' }
-        );
-        if (!r.ok) return;
-        const d = await r.json();
-        const frame = await decodeScreenFrame(d);
-        if (frame.success && frame.screen) {
-          setPolledData(prev => (
-            frame.sequence && prev?.sequence >= frame.sequence ? prev : frame
-          ));
-        }
-      } catch (_) {}
-      finally {
-        // Do not overlap requests: immediately look again after the previous
-        // request completes at a realtime 75 ms watcher cadence.
-        if (!stopped) timer = setTimeout(poll, 75);
-      }
-    };
-    poll(); // immediate first poll on start
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [streaming, isOnline, deviceId]);
+    const timer = window.setInterval(requestScreen, streamInterval);
+    return () => window.clearInterval(timer);
+  }, [streaming, isOnline, streamInterval, requestScreen]);
 
-  // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
-  // Using a ref instead of `streaming` in deps prevents this from firing a stop command
-  // every time the user clicks the Stop button (which already sends its own stop).
+  // Stop the dashboard request session when leaving the tab/device.
   useEffect(() => {
     return () => {
       if (streamingRef.current) sendCommand(deviceId, 'screen_reader_stream_stop', {});
     };
   }, [deviceId, sendCommand]);
-
-  // If interval changes while streaming, re-start the stream (loop stays alive)
-  useEffect(() => {
-    if (streaming) {
-      sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streamInterval]);
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
 
