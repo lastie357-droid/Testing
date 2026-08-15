@@ -4870,9 +4870,8 @@ async function _zeaburTcpForwardingStatus() {
         };
     }
 
-    const query = `query { service(id: "${serviceId}") { id name tcpForwarding { sourcePort targetPort } } }`;
     try {
-        const response = await fetch('https://api.zeabur.com/graphql', {
+        const request = (query) => fetch('https://api.zeabur.com/graphql', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -4881,31 +4880,68 @@ async function _zeaburTcpForwardingStatus() {
             body: JSON.stringify({ query }),
             signal: AbortSignal.timeout(8000),
         });
-        const payload = await response.json();
-        if (!response.ok || payload.errors?.length) {
+
+        // Zeabur's current schema requires resolving the service environment
+        // before querying Service.ports(environmentID: ...). The older
+        // tcpForwarding field and service(id: ...) query are not supported.
+        const serviceResponse = await request(
+            `query { service(_id: "${serviceId}") { _id name portForwardedHost project { environments { _id name } } } }`
+        );
+        const servicePayload = await serviceResponse.json();
+        if (!serviceResponse.ok || servicePayload.errors?.length) {
             return {
                 configured: true,
                 serviceId,
                 host,
                 targetPort,
-                error: payload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${response.status}`,
+                error: servicePayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${serviceResponse.status}`,
             };
         }
-        const service = payload.data?.service;
+        const service = servicePayload.data?.service;
         if (!service) {
             return { configured: true, serviceId, host, targetPort, error: 'Zeabur service was not found' };
         }
-        const rules = Array.isArray(service.tcpForwarding) ? service.tcpForwarding : [];
-        const matchingRule = rules.find(rule => Number(rule.targetPort) === targetPort) || null;
+        const environments = service.project?.environments || [];
+        const environment = environments.find(item => item.name === 'production') || environments[0];
+        if (!environment?._id) {
+            return { configured: true, serviceId, host, targetPort, error: 'Zeabur service has no environment' };
+        }
+
+        const portsResponse = await request(
+            `query { service(_id: "${serviceId}") { ports(environmentID: "${environment._id}") { port forwardedPort type } } }`
+        );
+        const portsPayload = await portsResponse.json();
+        if (!portsResponse.ok || portsPayload.errors?.length) {
+            return {
+                configured: true,
+                serviceId,
+                host,
+                targetPort,
+                environmentId: environment._id,
+                environmentName: environment.name,
+                error: portsPayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${portsResponse.status}`,
+            };
+        }
+        const serviceHost = service.portForwardedHost || host;
+        const rules = Array.isArray(portsPayload.data?.service?.ports)
+            ? portsPayload.data.service.ports.map(rule => ({
+                targetPort: Number(rule.port),
+                sourcePort: rule.forwardedPort == null ? null : Number(rule.forwardedPort),
+                type: rule.type || null,
+            }))
+            : [];
+        const matchingRule = rules.find(rule => rule.targetPort === targetPort) || null;
         return {
             configured: true,
-            serviceId: service.id || serviceId,
+            serviceId: service._id || serviceId,
             serviceName: service.name || serviceId,
-            host,
+            host: serviceHost,
             targetPort,
+            environmentId: environment._id,
+            environmentName: environment.name,
             rules,
             matchingRule,
-            endpoint: matchingRule ? `${host}:${matchingRule.sourcePort}` : null,
+            endpoint: matchingRule?.sourcePort ? `${serviceHost}:${matchingRule.sourcePort}` : null,
             refreshedAt: new Date().toISOString(),
         };
     } catch (error) {
