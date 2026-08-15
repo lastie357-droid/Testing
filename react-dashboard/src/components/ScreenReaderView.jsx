@@ -1,16 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { formatDateTime, formatTime } from '../utils/dateTime.js';
-import { decodeScreenFrame } from '../utils/screenFrame.js';
+import { useReadScreenPolling } from '../hooks/useReadScreenPolling.js';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
 
-export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected }) {
+export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected, sharedPolling }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
 
-  const [streaming, setStreaming]           = useState(false);
   const [streamInterval, setStreamInterval] = useState(100);
   const [savedCaptures, setSavedCaptures]   = useState([]);
   const [viewCapture, setViewCapture]       = useState(null);
@@ -18,123 +17,29 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
-  const [polledData, setPolledData]         = useState(null);
   const screenRef      = useRef(null);
   const touchStartRef  = useRef(null);
-  const streamingRef   = useRef(false);
 
   const devW   = info.screenWidth  || 1080;
   const devH   = info.screenHeight || 2340;
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  // Prefer the most recent of: polled data, SSE push data, or last read_screen result.
-  // Polling runs on a timer so it reliably updates even when SSE is unreliable.
-  let screenData = null;
-  const ssePushOk  = screenPushData && screenPushData.success && screenPushData.screen;
-  const pollOk     = polledData && polledData.success && polledData.screen;
-  if (ssePushOk && pollOk) {
-    // Both available — use whichever arrived more recently
-    screenData = ((polledData._ts || 0) >= (screenPushData._ts || 0))
-      ? polledData.screen : screenPushData.screen;
-  } else if (pollOk) {
-    screenData = polledData.screen;
-  } else if (ssePushOk) {
-    screenData = screenPushData.screen;
-  } else {
-    const latestScreenResult = results
-      .filter(r => r.command === 'read_screen' && r.success && r.response)
-      .slice(0, 1)[0];
-    try {
-      const parsed = typeof latestScreenResult?.response === 'string'
-        ? JSON.parse(latestScreenResult.response)
-        : latestScreenResult?.response;
-      screenData = parsed?.screen || null;
-    } catch (_) {}
-  }
-
-  // ── Session reset on mount / device change ──
-  // Clears stale pending commands, streaming state, frame throttle, and all
-  // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
-  useEffect(() => {
-    fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
-  }, [deviceId]);
-
-  // ── Start: tell device to push screen:update frames to dashboard ────
-  // Uses screen_reader_stream_start which enables streaming WITHOUT stopping
-  // the underlying screen reader loop that runs continuously on the device.
-  const startStreaming = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
-    setStreaming(true);
-  }, [deviceId, sendCommand, streamInterval]);
-
-  // ── Stop: stop sending frames to dashboard (loop keeps running on device) ─
-  // Uses screen_reader_stream_stop which only pauses the frame push; the device
-  // accessibility screen reader process is NOT stopped.
-  const stopStreaming = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_stream_stop', {});
-    setStreaming(false);
-  }, [deviceId, sendCommand]);
-
-  // Keep ref in sync so the unmount cleanup can read the latest value without
-  // being listed as a dep (which would cause a spurious extra stop on every toggle).
-  useEffect(() => { streamingRef.current = streaming; }, [streaming]);
-
-  // ── Async latest-frame watcher ───────────────────────────────────────
-  // SSE paints immediately when a push arrives. This watcher also checks the
-  // latest server frame during the active session so a delayed/reconnecting
-  // EventSource cannot leave the view behind the device.
-  useEffect(() => {
-    if (!streaming || !isOnline) return;
-    let stopped = false;
-    let timer = null;
-    const poll = async () => {
-      try {
-        const token = localStorage.getItem('admin_token');
-        const r = await fetch(
-          `/api/screen-reader/latest/${deviceId}?token=${encodeURIComponent(token)}`,
-          { cache: 'no-store' }
-        );
-        if (!r.ok) return;
-        const d = await r.json();
-        const frame = await decodeScreenFrame(d);
-        if (frame.success && frame.screen) {
-          setPolledData(prev => (
-            frame.sequence && prev?.sequence >= frame.sequence ? prev : frame
-          ));
-        }
-      } catch (_) {}
-      finally {
-        // Do not overlap requests: immediately look again after the previous
-        // request completes at a realtime 75 ms watcher cadence.
-        if (!stopped) timer = setTimeout(poll, 75);
-      }
-    };
-    poll(); // immediate first poll on start
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [streaming, isOnline, deviceId]);
-
-  // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
-  // Using a ref instead of `streaming` in deps prevents this from firing a stop command
-  // every time the user clicks the Stop button (which already sends its own stop).
-  useEffect(() => {
-    return () => {
-      if (streamingRef.current) sendCommand(deviceId, 'screen_reader_stream_stop', {});
-    };
-  }, [deviceId, sendCommand]);
-
-  // If interval changes while streaming, re-start the stream (loop stays alive)
-  useEffect(() => {
-    if (streaming) {
-      sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streamInterval]);
-
-  const captureOnce = () => sendCommand(deviceId, 'read_screen');
+  const localPolling = useReadScreenPolling({
+    deviceId,
+    isOnline,
+    results,
+    sendCommand,
+    intervalMs: streamInterval,
+  });
+  const {
+    screenData,
+    reading,
+    active: streaming,
+    start: startStreaming,
+    stop: stopStreaming,
+    readOnce: captureOnce,
+  } = sharedPolling || localPolling;
 
   const saveCapture = () => {
     if (!screenData) return;
@@ -292,7 +197,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           <div style={{ fontSize: 40 }}>📱</div>
           <div style={{ fontSize: 13, fontWeight: 600 }}>No Screen Data</div>
           <div style={{ fontSize: 11, color: '#475569', textAlign: 'center', lineHeight: 1.5 }}>
-            {streaming ? '⏳ Waiting for push…' : 'Press Start to begin live streaming\nor Read Once for a snapshot'}
+            {streaming ? '⏳ Waiting for read_screen…' : 'Press Start to begin repeated reads\nor Read Once for a snapshot'}
           </div>
         </div>
       )}
@@ -416,7 +321,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
             {screenData && (
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b', alignSelf: 'center' }}>
                 {screenData.packageName?.split('.').pop()}
-                {streaming && <span style={{ color: '#22c55e', marginLeft: 6 }}>● live</span>}
+                {streaming && <span style={{ color: '#22c55e', marginLeft: 6 }}>● reading</span>}
               </span>
             )}
           </div>
@@ -454,7 +359,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           <div className="sc-controls" style={{ marginTop: 8 }}>
             {!streaming ? (
               <button className="sc-btn sc-btn-start" onClick={startStreaming} disabled={!isOnline}>
-                ▶ Start
+                ▶ Start Reads
               </button>
             ) : (
               <button className="sc-btn sc-btn-stop" onClick={stopStreaming}>
