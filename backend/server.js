@@ -4856,12 +4856,8 @@ function _portPlatform() {
 }
 
 function _configuredZeaburForwarding({ serviceId, host, targetPort, lookupError = null }) {
-    const serviceName = process.env.ZEABUR_SERVICE_NAME || 'wabot-trekker-ses';
-    const sourcePort = Number(
-        process.env.ZEABUR_TCP_SOURCE_PORT ||
-        process.env.ZEABUR_FORWARDED_PORT ||
-        20185
-    );
+    const serviceName = 'wabot-trekker-ses';
+    const sourcePort = 20185;
     const matchingRule = Number.isInteger(sourcePort) && sourcePort > 0
         ? { targetPort, sourcePort, type: 'tcp' }
         : null;
