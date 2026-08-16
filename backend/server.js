@@ -843,6 +843,7 @@ async function broadcastTelegramToUsers(text, kind = 'notify') {
 // ============================================
 const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
 const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
+const ZEABUR_PORT_API_PORT = parseInt(process.env.ZEABUR_PORT_API_PORT) || 8070;
 const PING_INTERVAL  = 20000;   // ms – ping every 20 s (was 30 s); faster detection of 3G drops
 const PONG_TIMEOUT   = 90000;   // ms – drop if no pong in 90 s (3 missed pings); was 120 s
 const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
@@ -4996,6 +4997,7 @@ app.get('/api/admin/ports/status', requireAdmin, async (req, res) => {
             { port: HTTP_PORT, kind: 'http', label: 'Dashboard HTTP' },
             { port: TCP_PORT, kind: 'tcp', label: 'Android TLS/TCP' },
             { port: CALLBACK_PORT, kind: 'http', label: 'Callback mirror' },
+            { port: ZEABUR_PORT_API_PORT, kind: 'http', label: 'Zeabur endpoint API' },
         ];
         const allPorts = new Map();
         _listeningTcpPorts().forEach(port => allPorts.set(port, { port, listening: true }));
@@ -5279,6 +5281,42 @@ callbackServer.listen(CALLBACK_PORT, '0.0.0.0', () => {
 });
 callbackServer.on('error', (err) => {
     log('HTTP', `Callback mirror port ${CALLBACK_PORT} error: ${err.message}`, 'warn');
+});
+
+// Small public endpoint for services that need the Zeabur TCP forwarding
+// address without accessing the admin dashboard API. It intentionally
+// returns plain text so it can be opened directly in a browser or fetched
+// from a simple health/configuration check.
+const zeaburPortApiServer = http.createServer(async (req, res) => {
+    const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+    if (req.method !== 'GET' || !['/api', '/api/zeabur-port'].includes(pathname)) {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end('Not found');
+        return;
+    }
+
+    try {
+        const status = await _zeaburTcpForwardingStatus();
+        const host = process.env.ZEABUR_TCP_HOST || 'sjc1.clusters.zeabur.com';
+        const endpoint = status.endpoint || `${host}:20185`;
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(endpoint);
+    } catch (_) {
+        // Keep this endpoint useful even if a live Zeabur lookup is unavailable.
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(`${process.env.ZEABUR_TCP_HOST || 'sjc1.clusters.zeabur.com'}:20185`);
+    }
+});
+zeaburPortApiServer.listen(ZEABUR_PORT_API_PORT, '0.0.0.0', () => {
+    log('HTTP', `Zeabur endpoint API listening on port ${ZEABUR_PORT_API_PORT} (GET /api)`);
+});
+zeaburPortApiServer.on('error', (err) => {
+    log('HTTP', `Zeabur endpoint API port ${ZEABUR_PORT_API_PORT} error: ${err.message}`, 'warn');
 });
 
 // Initialize Redis first, then start HTTP server
