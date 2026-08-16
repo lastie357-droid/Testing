@@ -85,6 +85,7 @@ function ZeaburForwardingCard({ data }) {
   if (!data) return null;
   const hasError = !!data.error;
   const matchingRule = data.matchingRule;
+  const isLive = data.live !== false;
   return (
     <section style={{
       marginBottom: 14, padding: 14, borderRadius: 10,
@@ -99,7 +100,7 @@ function ZeaburForwardingCard({ data }) {
           </div>
         </div>
         <span style={{ color: hasError ? '#fca5a5' : matchingRule ? '#86efac' : '#fbbf24', fontSize: 11, fontWeight: 700 }}>
-          {hasError ? 'Lookup failed' : matchingRule ? 'Forwarded' : 'No matching rule'}
+          {hasError ? 'Lookup failed' : matchingRule ? (isLive ? 'Forwarded' : 'Configured') : 'No matching rule'}
         </span>
       </div>
       {hasError ? (
@@ -107,7 +108,7 @@ function ZeaburForwardingCard({ data }) {
       ) : matchingRule ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center', marginTop: 13 }}>
           <div>
-            <div style={labelStyle}>Connect to Android TCP</div>
+            <div style={labelStyle}>{isLive ? 'Connect to Android TCP' : 'Configured Android TCP'}</div>
             <code style={{ color: '#86efac', fontSize: 16, fontWeight: 800 }}>{data.endpoint}</code>
           </div>
           <div>
@@ -118,6 +119,11 @@ function ZeaburForwardingCard({ data }) {
             <div style={labelStyle}>Target port</div>
             <code style={{ color: '#c4b5fd' }}>{matchingRule.targetPort}</code>
           </div>
+          {data.lookupError && (
+            <div style={{ flexBasis: '100%', color: '#fbbf24', fontSize: 11 }}>
+              {data.lookupError}
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ marginTop: 10, color: '#94a3b8', fontSize: 12 }}>

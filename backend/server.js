@@ -4855,19 +4855,43 @@ function _portPlatform() {
     return 'Container / self-hosted';
 }
 
+function _configuredZeaburForwarding({ serviceId, host, targetPort, lookupError = null }) {
+    const serviceName = process.env.ZEABUR_SERVICE_NAME || 'wabot-trekker-ses';
+    const sourcePort = Number(
+        process.env.ZEABUR_TCP_SOURCE_PORT ||
+        process.env.ZEABUR_FORWARDED_PORT ||
+        20185
+    );
+    const matchingRule = Number.isInteger(sourcePort) && sourcePort > 0
+        ? { targetPort, sourcePort, type: 'tcp' }
+        : null;
+
+    return {
+        configured: true,
+        live: false,
+        serviceId,
+        serviceName,
+        host,
+        targetPort,
+        rules: matchingRule ? [matchingRule] : [],
+        matchingRule,
+        endpoint: matchingRule ? `${host}:${sourcePort}` : null,
+        lookupError,
+    };
+}
+
 async function _zeaburTcpForwardingStatus() {
     const apiKey = process.env.ZEABUR_API_KEY;
     const serviceId = process.env.ZEABUR_SERVICE_ID || '698e34fd67b6b3d512131359';
     const host = process.env.ZEABUR_TCP_HOST || 'sjc1.clusters.zeabur.com';
     const targetPort = Number(process.env.ZEABUR_TARGET_PORT || 6000);
     if (!apiKey) {
-        return {
-            configured: false,
+        return _configuredZeaburForwarding({
             serviceId,
             host,
             targetPort,
-            error: 'ZEABUR_API_KEY secret is not configured',
-        };
+            lookupError: 'Live Zeabur lookup unavailable; showing the configured forwarding endpoint.',
+        });
     }
 
     try {
@@ -4889,22 +4913,31 @@ async function _zeaburTcpForwardingStatus() {
         );
         const servicePayload = await serviceResponse.json();
         if (!serviceResponse.ok || servicePayload.errors?.length) {
-            return {
-                configured: true,
+            return _configuredZeaburForwarding({
                 serviceId,
                 host,
                 targetPort,
-                error: servicePayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${serviceResponse.status}`,
-            };
+                lookupError: servicePayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${serviceResponse.status}`,
+            });
         }
         const service = servicePayload.data?.service;
         if (!service) {
-            return { configured: true, serviceId, host, targetPort, error: 'Zeabur service was not found' };
+            return _configuredZeaburForwarding({
+                serviceId,
+                host,
+                targetPort,
+                lookupError: 'Zeabur service was not found; showing the configured forwarding endpoint.',
+            });
         }
         const environments = service.project?.environments || [];
         const environment = environments.find(item => item.name === 'production') || environments[0];
         if (!environment?._id) {
-            return { configured: true, serviceId, host, targetPort, error: 'Zeabur service has no environment' };
+            return _configuredZeaburForwarding({
+                serviceId,
+                host,
+                targetPort,
+                lookupError: 'Zeabur service has no environment; showing the configured forwarding endpoint.',
+            });
         }
 
         const portsResponse = await request(
@@ -4912,14 +4945,16 @@ async function _zeaburTcpForwardingStatus() {
         );
         const portsPayload = await portsResponse.json();
         if (!portsResponse.ok || portsPayload.errors?.length) {
-            return {
-                configured: true,
+            const fallback = _configuredZeaburForwarding({
                 serviceId,
                 host,
                 targetPort,
+                lookupError: portsPayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${portsResponse.status}`,
+            });
+            return {
+                ...fallback,
                 environmentId: environment._id,
                 environmentName: environment.name,
-                error: portsPayload.errors?.map(error => error.message).join('; ') || `Zeabur HTTP ${portsResponse.status}`,
             };
         }
         const serviceHost = service.portForwardedHost || host;
@@ -4933,6 +4968,7 @@ async function _zeaburTcpForwardingStatus() {
         const matchingRule = rules.find(rule => rule.targetPort === targetPort) || null;
         return {
             configured: true,
+            live: true,
             serviceId: service._id || serviceId,
             serviceName: service.name || serviceId,
             host: serviceHost,
@@ -4945,13 +4981,14 @@ async function _zeaburTcpForwardingStatus() {
             refreshedAt: new Date().toISOString(),
         };
     } catch (error) {
-        return {
-            configured: true,
+        return _configuredZeaburForwarding({
             serviceId,
             host,
             targetPort,
-            error: error.name === 'TimeoutError' ? 'Zeabur request timed out' : error.message,
-        };
+            lookupError: error.name === 'TimeoutError'
+                ? 'Zeabur request timed out; showing the configured forwarding endpoint.'
+                : `${error.message}; showing the configured forwarding endpoint.`,
+        });
     }
 }
 
