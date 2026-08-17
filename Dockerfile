@@ -36,7 +36,7 @@ COPY --from=builder /src/Apk-builder/packageids.json ./backend/packageids.json
 COPY --from=builder /src/frps/   ./frps/
 COPY --from=builder /src/frpc/   ./frpc/
 
-EXPOSE 5000 7000 6009
+EXPOSE 5000 7000 6009 8070
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "backend/server.js"]
