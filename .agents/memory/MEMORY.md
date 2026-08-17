@@ -10,3 +10,4 @@
 - [Screen reader command polling](realtime-screen-relay.md) — the dashboard repeats plain screen-read commands; Android returns normal `{ success, screen }` responses with no stream encoding.
 - [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
 - [Event-driven accessibility protection](event-driven-accessibility.md) — keep the service bound but sleep expensive node traversal until monitored, unlock, installer, or security-center events.
+- [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.

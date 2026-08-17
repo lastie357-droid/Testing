@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "rUFDzEJMPUqM3ujTgzkAX"
+uri = "file://Apk-builder/apk-output/RemoteAccess-release.apk"
+type = "unspecified"
+title = "RemoteAccess release APK"
+description = "Release APK built after switching Android TCP routing to cached runtime endpoint discovery."

@@ -3242,7 +3242,6 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
                     access_id:     accessId,
                     callback_url:  callbackUrl,
                     build_api_key: buildWorkerSettings.apiKey,
-                    tcp_addr:      `${(process.env.BUILD_TCP_HOST || '').trim()}:${(process.env.BUILD_TCP_PORT || '').trim()}`,
                     // Pack app identity fields
                     app: JSON.stringify({
                         module_name:        moduleName,
