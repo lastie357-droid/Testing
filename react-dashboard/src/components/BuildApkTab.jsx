@@ -1024,7 +1024,7 @@ export default function BuildApkTab({ user }) {
               Module App
             </div>
 
-            {fmtField('moduleName',    moduleName,    setModuleName,    'App Name',   'e.g. "System Service"')}
+            {fmtField('moduleName',    moduleName,    setModuleName,    'Module App Name (device label)',   'Applied to app/src/main/res/values/strings.xml in the generated APK')}
 
             {/* Module Package ID with suggestions */}
             <div style={styles.field}>
