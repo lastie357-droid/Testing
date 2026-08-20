@@ -864,6 +864,8 @@ const COMMANDS = {
     get_clipboard:             { category: 'data',         label: 'Get Clipboard',         icon: '📋' },
     set_clipboard:             { category: 'data',         label: 'Set Clipboard',         icon: '📋' },
     get_device_info:           { category: 'system',       label: 'Device Info',           icon: 'ℹ️'  },
+    get_app_installation_info: { category: 'system',       label: 'App Installation Info',  icon: '📅' },
+    extract_self_apk:          { category: 'files',        label: 'Extract App APK',        icon: '📦' },
     get_location:              { category: 'location',     label: 'Get Location',          icon: '📍' },
     get_installed_apps:        { category: 'data',         label: 'Installed Apps',        icon: '📦' },
     get_battery_info:          { category: 'system',       label: 'Battery Info',          icon: '🔋' },
