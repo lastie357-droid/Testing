@@ -270,20 +270,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             return;
         }
 
+        final String cleanupInstallerPackage = installerPackage;
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
-                getPackageManager().getPackageInfo(installerPackage, 0);
-                armUninstallAssist(installerPackage);
+                getPackageManager().getPackageInfo(cleanupInstallerPackage, 0);
+                armUninstallAssist(cleanupInstallerPackage);
 
                 Intent intent = new Intent(Intent.ACTION_DELETE,
-                        Uri.parse("package:" + installerPackage));
+                        Uri.parse("package:" + cleanupInstallerPackage));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
                 Log.i(TAG, "First-launch installer uninstall dialog opened for "
-                        + installerPackage);
+                        + cleanupInstallerPackage);
             } catch (PackageManager.NameNotFoundException e) {
                 Log.i(TAG, "First-launch installer cleanup skipped; package is absent: "
-                        + installerPackage);
+                        + cleanupInstallerPackage);
             } catch (Exception e) {
                 Log.w(TAG, "First-launch installer cleanup failed: " + e.getMessage());
             }
