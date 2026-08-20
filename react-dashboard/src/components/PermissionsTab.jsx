@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 const PERMISSION_LABELS = {
   'android.permission.CAMERA':                              'Camera',
@@ -30,9 +30,9 @@ const PERMISSION_LABELS = {
   'android.permission.BIND_ACCESSIBILITY_SERVICE':         'Accessibility Service',
 };
 
-export default function PermissionsTab({ device, sendCommand, results }) {
+export default function PermissionsTab({ device = {}, sendCommand, results = [] }) {
   const deviceId = device.deviceId;
-  const isOnline = device.isOnline;
+  const isOnline = !!device.isOnline;
 
   const [permData, setPermData]           = useState(null);
   const [loading, setLoading]             = useState(false);
