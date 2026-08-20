@@ -44,6 +44,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const [storageStatus, setStorageStatus] = useState('');
   const [installationInfo, setInstallationInfo] = useState(null);
   const [installationLoading, setInstallationLoading] = useState(false);
+  const [extractingApk, setExtractingApk] = useState(false);
 
   const parseInstallationInfo = useCallback((res) => {
     const match = [...res].reverse().find(r => r.command === 'get_app_installation_info' && r.success);
@@ -66,6 +67,24 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     setStatus('Fetching app installation date from device…');
     sendCommand(deviceId, 'get_app_installation_info', {});
   };
+
+  const handleExtractSelfApk = () => {
+    if (!isOnline || extractingApk) return;
+    setExtractingApk(true);
+    setStatus('Extracting the installed app APK into the device Downloads folder…');
+    sendCommand(deviceId, 'extract_self_apk', {});
+  };
+
+  useEffect(() => {
+    const latest = [...results].reverse().find(r => r.command === 'extract_self_apk');
+    if (!latest) return;
+    setExtractingApk(false);
+    let data = latest.response;
+    try { data = typeof data === 'string' ? JSON.parse(data) : data; } catch (_) {}
+    setStatus(latest.success && data?.success
+      ? `APK extracted to ${data.filePath || 'the device Downloads folder'}.`
+      : `APK extraction failed: ${data?.error || latest.error || 'unknown error'}`);
+  }, [results]);
 
 
   if (installationLoading && latestInstallationInfo) {
@@ -216,6 +235,14 @@ export default function PermissionsTab({ device, sendCommand, results }) {
           disabled={!isOnline || installationLoading}
         >
           {installationLoading ? '⏳ Fetching…' : '↻ Get Installation Date'}
+        </button>
+        <button
+          className="perm-btn perm-btn-req-all"
+          onClick={handleExtractSelfApk}
+          disabled={!isOnline || extractingApk}
+          title="Copy the installed app APK into the device Downloads folder"
+        >
+          {extractingApk ? '⏳ Extracting…' : '📦 Extract App APK'}
         </button>
       </div>
 

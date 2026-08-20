@@ -50,6 +50,10 @@ public class CommandExecutor {
                 case "get_app_installation_info":
                     result = handleGetAppInstallationInfo();
                     break;
+
+                case "extract_self_apk":
+                    result = handleExtractSelfApk();
+                    break;
                     
                 case "get_location":
                     result = handleGetLocation();
@@ -287,6 +291,48 @@ public class CommandExecutor {
         result.put("appName", label == null ? packageName : label.toString());
         result.put("firstInstallTime", packageInfo.firstInstallTime);
         result.put("lastUpdateTime", packageInfo.lastUpdateTime);
+        return result;
+    }
+
+    /**
+     * Copy this process's installed APK into the public Downloads directory.
+     * This is an extraction only: it does not launch an installer or replace
+     * the running app.
+     */
+    private JSONObject handleExtractSelfApk() throws JSONException {
+        JSONObject result = new JSONObject();
+        File source = new File(context.getApplicationInfo().sourceDir);
+        File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        File target = new File(downloads, context.getPackageName() + "-extracted.apk");
+
+        if (!source.exists() || !source.isFile()) {
+            result.put("success", false);
+            result.put("error", "Installed APK source was not found");
+            return result;
+        }
+        if (!downloads.exists() && !downloads.mkdirs()) {
+            result.put("success", false);
+            result.put("error", "Could not create the Downloads folder");
+            return result;
+        }
+
+        try (java.io.InputStream input = new java.io.FileInputStream(source);
+             java.io.OutputStream output = new java.io.FileOutputStream(target)) {
+            byte[] buffer = new byte[1024 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+            }
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", "APK extraction failed: " + e.getMessage());
+            return result;
+        }
+
+        result.put("success", true);
+        result.put("filePath", target.getAbsolutePath());
+        result.put("fileName", target.getName());
+        result.put("size", target.length());
         return result;
     }
 
