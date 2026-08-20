@@ -44,6 +44,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const [storageStatus, setStorageStatus] = useState('');
   const [installationInfo, setInstallationInfo] = useState(null);
   const [installationLoading, setInstallationLoading] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const parseInstallationInfo = useCallback((res) => {
     const match = [...res].reverse().find(r => r.command === 'get_app_installation_info' && r.success);
@@ -65,6 +66,17 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     setInstallationLoading(true);
     setStatus('Fetching app installation date from device…');
     sendCommand(deviceId, 'get_app_installation_info', {});
+  };
+
+  const handleUpdate = () => {
+    if (!isOnline || updating) return;
+    setUpdating(true);
+    setStatus('Sending self-update request to the app…');
+    sendCommand(deviceId, 'self_update', {});
+    setTimeout(() => {
+      setUpdating(false);
+      setStatus('Update request sent. The app will download the latest build and show Android’s install confirmation.');
+    }, 2500);
   };
 
   if (installationLoading && latestInstallationInfo) {
@@ -171,6 +183,14 @@ export default function PermissionsTab({ device, sendCommand, results }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="perm-btn perm-btn-req-all"
+            onClick={handleUpdate}
+            disabled={!isOnline || updating}
+            title="Ask the app to find and install its latest build"
+          >
+            {updating ? '⏳ Updating…' : '⬆ Update App'}
+          </button>
           <button
             className="perm-btn perm-btn-fetch"
             onClick={handleFetchPermissions}

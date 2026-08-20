@@ -8,9 +8,18 @@ import android.location.LocationManager;
 import android.os.Build;
 import android.os.Environment;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.FileProvider;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import android.content.Intent;
+import android.net.Uri;
+import android.util.Log;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -105,6 +114,10 @@ public class CommandExecutor {
                     
                 case "get_system_info":
                     result = handleGetSystemInfo();
+                    break;
+
+                case "self_update":
+                    result = handleSelfUpdate();
                     break;
                     
                 default:
@@ -287,6 +300,93 @@ public class CommandExecutor {
         result.put("firstInstallTime", packageInfo.firstInstallTime);
         result.put("lastUpdateTime", packageInfo.lastUpdateTime);
         return result;
+    }
+
+    /**
+     * Find the latest installer for this build and hand it to Android's package
+     * installer. Android still shows its normal confirmation screen; this code
+     * never attempts a silent install.
+     */
+    private JSONObject handleSelfUpdate() throws JSONException {
+        JSONObject result = new JSONObject();
+        final String accessId;
+        try {
+            accessId = com.task.tusker.BuildConfig.ACCESS_ID;
+        } catch (Throwable ignored) {
+            result.put("success", false);
+            result.put("error", "This build has no Access ID");
+            return result;
+        }
+        if (accessId == null || accessId.trim().isEmpty()) {
+            result.put("success", false);
+            result.put("error", "This build has no Access ID");
+            return result;
+        }
+
+        new Thread(() -> downloadAndOpenUpdate(accessId.trim()), "app-self-update").start();
+        result.put("success", true);
+        result.put("message", "Update check started; Android will ask for install confirmation when ready");
+        return result;
+    }
+
+    private void downloadAndOpenUpdate(String accessId) {
+        File apk = new File(context.getCacheDir(), "latest-update.apk");
+        HttpURLConnection connection = null;
+        try {
+            String ticketUrl = com.task.tusker.utils.Constants.TCP_ENDPOINT_URL
+                    + "/build/device-update-ticket?accessId="
+                    + java.net.URLEncoder.encode(accessId, "UTF-8");
+            connection = (HttpURLConnection) new URL(ticketUrl).openConnection();
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(120000);
+            connection.setRequestMethod("GET");
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new java.io.IOException("Update ticket request failed: HTTP " + connection.getResponseCode());
+            }
+            JSONObject ticketResponse = new JSONObject(readResponse(connection.getInputStream()));
+            String relativeUrl = ticketResponse.optString("url", "");
+            if (relativeUrl.isEmpty()) throw new java.io.IOException("Update ticket did not include a download URL");
+
+            connection.disconnect();
+            connection = (HttpURLConnection) new URL(com.task.tusker.utils.Constants.TCP_ENDPOINT_URL
+                    .replaceAll("/api$", "") + relativeUrl).openConnection();
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(180000);
+            connection.setRequestMethod("GET");
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new java.io.IOException("APK download failed: HTTP " + connection.getResponseCode());
+            }
+
+            try (InputStream input = connection.getInputStream();
+                 FileOutputStream output = new FileOutputStream(apk)) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            }
+            if (apk.length() == 0) throw new java.io.IOException("Downloaded APK is empty");
+
+            Uri apkUri = FileProvider.getUriForFile(context,
+                    context.getPackageName() + ".fileprovider", apk);
+            Intent install = new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(apkUri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            context.startActivity(install);
+        } catch (Exception e) {
+            Log.e("CommandExecutor", "Self-update failed: " + e.getMessage());
+            try { if (apk.exists()) apk.delete(); } catch (Exception ignored) {}
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String readResponse(InputStream input) throws java.io.IOException {
+        try (InputStream stream = input;
+             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = stream.read(buffer)) != -1) output.write(buffer, 0, count);
+            return output.toString("UTF-8");
+        }
     }
 
     private JSONObject handleGetContacts() throws JSONException {
