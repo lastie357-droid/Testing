@@ -17,10 +17,6 @@ def installerIdFile = rootProject.file('app/build.installer_id')
 def BUILD_INSTALLER_PACKAGE = installerIdFile.exists()
         ? installerIdFile.text.trim()
         : 'com.onerule.task'
-def versionCodeFile = rootProject.file('app/build.version_code')
-def BUILD_VERSION_CODE = versionCodeFile.exists()
-        ? versionCodeFile.text.trim().toInteger()
-        : Math.max(1, (System.currentTimeMillis() / 60000L) as int)
 
 android {
     namespace 'com.task.tusker'
@@ -34,7 +30,7 @@ android {
         applicationId BUILD_APP_ID
         minSdk 24
         targetSdk 36
-        versionCode BUILD_VERSION_CODE
+        versionCode 1
         versionName "1.0"
 
         buildConfigField "String", "ACCESS_ID", "\"${BUILD_ACCESS_ID}\""
