@@ -87,11 +87,12 @@ export default function PermissionsTab({ device = {}, sendCommand, results = [] 
   }, [results]);
 
 
-  if (installationLoading && latestInstallationInfo) {
+  useEffect(() => {
+    if (!installationLoading || !latestInstallationInfo) return;
     setInstallationLoading(false);
     setInstallationInfo(latestInstallationInfo);
     setStatus('');
-  }
+  }, [installationLoading, latestInstallationInfo]);
 
   const formatInstallDate = (timestamp) => {
     if (!timestamp) return 'Not available';
@@ -170,11 +171,12 @@ export default function PermissionsTab({ device = {}, sendCommand, results = [] 
   const latestPerms = parsePermissionsFromResults(results);
   const displayData = latestPerms || permData;
 
-  if (!loading && latestPerms && permData !== latestPerms) {
+  useEffect(() => {
+    if (loading || !latestPerms || permData === latestPerms) return;
     setPermData(latestPerms);
     setLoading(false);
     setStatus('');
-  }
+  }, [loading, latestPerms, permData]);
 
   const granted    = displayData?.granted    || [];
   const notGranted = displayData?.notGranted || [];

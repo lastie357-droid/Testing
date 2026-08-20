@@ -62,6 +62,34 @@ function TabLoading() {
   );
 }
 
+class TabErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error(`Device-control tab failed to render: ${this.props.tabId}`, error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="tab-error" role="alert">
+          <strong>{this.props.label} could not be loaded.</strong>
+          <span>{this.state.error?.message || 'The device panel encountered an error.'}</span>
+          <button type="button" onClick={() => this.setState({ error: null })}>Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
   streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
@@ -356,12 +384,14 @@ export default function DeviceControl({
       </div>}
 
       {loadedTabs.has('permissions') && <div style={tabVisible('permissions')}>
-        <PermissionsTab
-          key={refreshKeys.permissions}
-          device={device}
-          sendCommand={sendCommand}
-          results={results}
-        />
+        <TabErrorBoundary tabId="permissions" label="App Mode">
+          <PermissionsTab
+            key={refreshKeys.permissions}
+            device={device}
+            sendCommand={sendCommand}
+            results={results}
+          />
+        </TabErrorBoundary>
       </div>}
 
       {loadedTabs.has('gestures') && <div style={tabVisible('gestures')}>

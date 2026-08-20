@@ -110,6 +110,34 @@ body {
   font-size: 13px;
 }
 
+.tab-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px;
+  margin: 8px 0;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 10px;
+  background: rgba(127, 29, 29, 0.16);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.tab-error span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tab-error button {
+  border: 1px solid rgba(165, 180, 252, 0.45);
+  border-radius: 6px;
+  padding: 5px 12px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #c4b5fd;
+  cursor: pointer;
+}
+
 @keyframes app-spin {
   to { transform: rotate(360deg); }
 }
