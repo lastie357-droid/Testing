@@ -12,3 +12,4 @@
 - [Event-driven accessibility protection](event-driven-accessibility.md) — keep the service bound but sleep expensive node traversal until monitored, unlock, installer, or security-center events.
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.
 - [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
+- [MongoDB free-tier resilience](mongodb-free-tier-resilience.md) — keep pooled connections bounded per server and fail fast to preserve in-memory/Redis fallbacks during outages.

@@ -53,4 +53,8 @@ const deviceSchema = new mongoose.Schema({
   consentTimestamp: Date
 });
 
+// Keep the dashboard's newest-first list and stale-device sweep indexed.
+deviceSchema.index({ lastSeen: -1 });
+deviceSchema.index({ isOnline: 1, lastSeen: 1 });
+
 module.exports = mongoose.model('Device', deviceSchema);

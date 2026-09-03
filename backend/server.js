@@ -24,6 +24,14 @@ const mongoose       = require('mongoose');
 const jwt            = require('jsonwebtoken');
 const { spawn }      = require('child_process');
 require('dotenv').config();
+
+// Never let MongoDB operations queue indefinitely while the cluster is
+// unavailable.  The in-memory/Redis fallbacks in this server are designed to
+// handle that state, so failing fast is safer than accumulating work until the
+// Node process becomes slow or runs out of memory.
+mongoose.set('bufferCommands', false);
+mongoose.set('bufferTimeoutMS', 5000);
+
 const { getJwtSecret } = require('./jwtSecret');
 const { formatDateTime } = require('./utils/dateTime');
 
@@ -1067,6 +1075,25 @@ let runtimeDbSettings = {};
 })();
 
 let activeMongoUri = runtimeDbSettings.mongodbUri || MONGO_URI;
+const MONGO_OPERATION_TIMEOUT_MS = Math.max(
+    1000,
+    Math.min(30000, Number.parseInt(process.env.MONGO_OPERATION_TIMEOUT_MS, 10) || 8000),
+);
+// Apply a server-side execution limit to every Mongoose query, including
+// routes added later, so one slow operation cannot occupy a pool slot forever.
+mongoose.set('maxTimeMS', MONGO_OPERATION_TIMEOUT_MS);
+// maxPoolSize is per MongoDB server.  Eight connections across a three-node
+// replica set means at most 24 pooled sockets, leaving ample room below a
+// free-tier cluster's 100-connection ceiling for monitoring and other tools.
+const MONGO_MAX_POOL_SIZE = Math.max(
+    2,
+    Math.min(12, Number.parseInt(process.env.MONGO_MAX_POOL_SIZE, 10) || 8),
+);
+const MONGO_WAIT_QUEUE_TIMEOUT_MS = Math.max(
+    1000,
+    Math.min(15000, Number.parseInt(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS, 10) || 5000),
+);
+const MONGO_RECONNECT_MAX_DELAY_MS = 60000;
 const _mongoKey = runtimeDbSettings.mongodbUri ? 'dashboard setting'
     : process.env.MONGO_URI              ? 'MONGO_URI'
     : process.env.MONGODB_URI            ? 'MONGODB_URI'
@@ -1121,32 +1148,113 @@ function persistRuntimeDbSettings() {
 }
 
 let mongoOperation = Promise.resolve();
+let mongoDesiredRevision = 0;
+let mongoWantsConnection = Boolean(activeMongoUri);
+let mongoReconnectTimer = null;
+let mongoReconnectDelayMs = 5000;
+let connectedMongoUri = null;
+
+function queueMongoOperation(operation) {
+    // Keep the queue usable after a failed connection attempt.  The previous
+    // implementation chained directly from a rejected promise, so every
+    // later start/restart silently skipped its work.
+    const run = mongoOperation.catch(() => {}).then(operation);
+    mongoOperation = run.catch(() => {});
+    return run;
+}
+
+function scheduleMongoReconnect() {
+    if (!mongoWantsConnection || !activeMongoUri || mongoReconnectTimer) return;
+    const revision = mongoDesiredRevision;
+    const delay = mongoReconnectDelayMs;
+    mongoReconnectDelayMs = Math.min(MONGO_RECONNECT_MAX_DELAY_MS, mongoReconnectDelayMs * 2);
+    mongoReconnectTimer = setTimeout(() => {
+        mongoReconnectTimer = null;
+        if (!mongoWantsConnection || revision !== mongoDesiredRevision) return;
+        connectMongo(activeMongoUri).catch(() => {});
+    }, delay);
+    mongoReconnectTimer.unref?.();
+    log('DB', `MongoDB reconnect scheduled in ${Math.ceil(delay / 1000)}s`, 'warn');
+}
+
+mongoose.connection.on('connected', () => {
+    log('DB', 'MongoDB connection ready');
+});
+mongoose.connection.on('disconnected', () => {
+    connectedMongoUri = null;
+    if (mongoWantsConnection) scheduleMongoReconnect();
+});
+mongoose.connection.on('error', (error) => {
+    log('DB', `MongoDB connection error: ${error.message}`, 'warn');
+});
+
 function connectMongo(uri = activeMongoUri) {
     activeMongoUri = uri;
-    mongoOperation = mongoOperation.then(async () => {
+    mongoWantsConnection = Boolean(uri);
+    const revision = ++mongoDesiredRevision;
+    if (mongoReconnectTimer) {
+        clearTimeout(mongoReconnectTimer);
+        mongoReconnectTimer = null;
+    }
+    return queueMongoOperation(async () => {
+        // If several dashboard requests arrive together, only the newest
+        // requested target is allowed to run.
+        if (!mongoWantsConnection || revision !== mongoDesiredRevision) return;
+        if (mongoose.connection.readyState === 1 && connectedMongoUri === uri) return;
+
         if (mongoose.connection.readyState !== 0) {
             try { await mongoose.disconnect(); } catch (_) {}
+            connectedMongoUri = null;
         }
-        log('DB', `Connecting via ${runtimeDbSettings.mongodbUri ? 'dashboard setting' : _mongoKey}, protocol: ${uri.split('://')[0]}, host: ${mongoHostForLog(uri)}`);
-        await mongoose.connect(uri, {
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
-        });
-        log('DB', 'MongoDB connected');
+
+        log('DB', `Connecting via ${runtimeDbSettings.mongodbUri ? 'dashboard setting' : _mongoKey}, protocol: ${uri.split('://')[0]}, host: ${mongoHostForLog(uri)}, pool: ${MONGO_MAX_POOL_SIZE}/server`);
         try {
-            const r = await Device.updateMany({ isOnline: true }, { isOnline: false, lastSeen: new Date() });
-            if (r.modifiedCount > 0) log('DB', `Startup: marked ${r.modifiedCount} stale device(s) offline`);
-        } catch (e) { log('DB', 'Startup offline-mark failed: ' + e.message, 'warn'); }
-    }).catch(e => {
-        log('DB', 'MongoDB unavailable: ' + e.message, 'warn');
-        throw e;
+            await mongoose.connect(uri, {
+                maxPoolSize: MONGO_MAX_POOL_SIZE,
+                minPoolSize: 0,
+                maxConnecting: 2,
+                maxIdleTimeMS: 60000,
+                waitQueueTimeoutMS: MONGO_WAIT_QUEUE_TIMEOUT_MS,
+                serverSelectionTimeoutMS: 5000,
+                connectTimeoutMS: 10000,
+                socketTimeoutMS: 30000,
+                heartbeatFrequencyMS: 10000,
+                retryReads: true,
+                retryWrites: true,
+            });
+            connectedMongoUri = uri;
+            mongoReconnectDelayMs = 5000;
+            log('DB', 'MongoDB connected');
+            try {
+                const r = await Device.updateMany(
+                    { isOnline: true },
+                    { $set: { isOnline: false, lastSeen: new Date() } },
+                ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec();
+                if (r.modifiedCount > 0) log('DB', `Startup: marked ${r.modifiedCount} stale device(s) offline`);
+            } catch (e) { log('DB', 'Startup offline-mark failed: ' + e.message, 'warn'); }
+        } catch (e) {
+            connectedMongoUri = null;
+            log('DB', 'MongoDB unavailable: ' + e.message, 'warn');
+            scheduleMongoReconnect();
+            throw e;
+        }
     });
-    return mongoOperation;
 }
 
 function stopMongo() {
-    mongoOperation = mongoOperation.then(() => mongoose.disconnect().catch(() => {}));
-    return mongoOperation;
+    mongoWantsConnection = false;
+    ++mongoDesiredRevision;
+    if (mongoReconnectTimer) {
+        clearTimeout(mongoReconnectTimer);
+        mongoReconnectTimer = null;
+    }
+    return queueMongoOperation(async () => {
+        if (mongoose.connection.readyState !== 0) {
+            try { await mongoose.disconnect(); } catch (_) {}
+        }
+        connectedMongoUri = null;
+        log('DB', 'MongoDB connection stopped');
+    });
 }
 
 connectMongo(activeMongoUri).catch(() => {});
@@ -1181,6 +1289,20 @@ const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
 const latestScreenReaderSequence = new Map(); // deviceId → monotonically increasing relay sequence
 const latestStreamSequence = new Map();       // deviceId → monotonically increasing relay sequence
+const heartbeatPersistedAt = new Map();
+const HEARTBEAT_DB_INTERVAL_MS = 15000;
+
+function persistDeviceHeartbeat(deviceId) {
+    if (mongoose.connection.readyState !== 1) return;
+    const now = Date.now();
+    const lastPersisted = heartbeatPersistedAt.get(deviceId) || 0;
+    if (now - lastPersisted < HEARTBEAT_DB_INTERVAL_MS) return;
+    heartbeatPersistedAt.set(deviceId, now);
+    Device.findOneAndUpdate(
+        { deviceId },
+        { $set: { lastSeen: new Date(now), isOnline: true } },
+    ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
+}
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
@@ -1586,7 +1708,10 @@ async function processMessage(clientId, clientType, event, data) {
         // Broadcast to dashboards immediately, then persist async
         broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
         R.markDeviceOnline(deviceId).catch(() => {});
-        Device.findOneAndUpdate({ deviceId }, { lastSeen: new Date(), isOnline: true }).catch(() => {});
+        // Heartbeats are frequent; the live socket/in-memory state is updated
+        // immediately, while MongoDB receives at most one write per device
+        // every 15 seconds.
+        persistDeviceHeartbeat(deviceId);
         return;
     }
 
@@ -2299,6 +2424,9 @@ function getManagedServiceStatus() {
                 managed: true,
                 url: maskConnectionUrl(activeMongoUri),
                 configured: !!activeMongoUri,
+                maxPoolSizePerServer: MONGO_MAX_POOL_SIZE,
+                maxThreeNodePool: MONGO_MAX_POOL_SIZE * 3,
+                waitQueueTimeoutMs: MONGO_WAIT_QUEUE_TIMEOUT_MS,
                 note: 'Controls this server’s MongoDB connection; it does not power off a remote MongoDB host.',
             },
         ),
@@ -2391,6 +2519,7 @@ app.post('/api/admin/services/config', requireAdmin, async (req, res) => {
     const mongoChanged = nextMongo !== activeMongoUri;
     const redisChanged = nextRedis !== R.getConfiguredUrl();
     const mongoWasReady = mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2;
+    const mongoShouldReconnect = mongoChanged && (mongoWasReady || mongoWantsConnection);
     const redisWasReady = R.isConnected();
 
     runtimeDbSettings.mongodbUri = nextMongo;
@@ -2400,7 +2529,7 @@ app.post('/api/admin/services/config', requireAdmin, async (req, res) => {
     persistRuntimeDbSettings();
 
     try {
-        if (mongoChanged && mongoWasReady) await connectMongo(nextMongo);
+        if (mongoShouldReconnect) await connectMongo(nextMongo);
         if (redisChanged && redisWasReady) await R.restart(nextRedis);
         log('ADMIN', 'Database connection URLs updated from dashboard');
         res.json({ success: true, services: getManagedServiceStatus() });
@@ -4358,6 +4487,12 @@ app.get('/api/health', async (req, res) => {
     res.json({
         status: 'ok',
         mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        mongodbPool: {
+            maxPoolSizePerServer: MONGO_MAX_POOL_SIZE,
+            maxThreeNodePool: MONGO_MAX_POOL_SIZE * 3,
+            waitQueueTimeoutMs: MONGO_WAIT_QUEUE_TIMEOUT_MS,
+            operationTimeoutMs: MONGO_OPERATION_TIMEOUT_MS,
+        },
         redis: redisStats.connected
             ? `connected (${redisStats.onlineDevices} online / ${redisStats.totalDevices} total devices, mem: ${redisStats.memoryUsed})`
             : `disconnected${redisStats.error ? ' — ' + redisStats.error : ''}`,
@@ -5096,7 +5231,10 @@ async function getDeviceList(accessIdFilter) {
 
     // Priority: MongoDB → Redis → in-memory
     try {
-        const dbDevices = await Device.find().sort({ lastSeen: -1 });
+        const dbDevices = await Device.find().sort({ lastSeen: -1 })
+            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+            .lean()
+            .exec();
         if (dbDevices && dbDevices.length > 0) return scope(reconcile(dbDevices));
     } catch (_) {}
     // Fallback: Redis
@@ -5110,23 +5248,32 @@ async function getDeviceList(accessIdFilter) {
 // Admins always receive the full list; users only see devices matching their
 // accessId. Sending one filtered payload per client is a tiny cost compared
 // to the round-trip latency improvement of doing it server-side.
+let deviceListBroadcastInFlight = null;
 async function broadcastDeviceList() {
     if (sseClients.size === 0) return;
-    const adminList = await getDeviceList();
-    const userListCache = new Map();
-    for (const [id, client] of sseClients) {
-        let list = adminList;
-        if (client.role === 'user') {
-            const aid = client.accessId || '';
-            if (!aid) { list = []; }
-            else if (userListCache.has(aid)) { list = userListCache.get(aid); }
-            else {
-                list = adminList.filter(d => (d.accessId || '') === aid);
-                userListCache.set(aid, list);
+    if (deviceListBroadcastInFlight) return deviceListBroadcastInFlight;
+    deviceListBroadcastInFlight = (async () => {
+        const adminList = await getDeviceList();
+        const userListCache = new Map();
+        for (const [id, client] of sseClients) {
+            let list = adminList;
+            if (client.role === 'user') {
+                const aid = client.accessId || '';
+                if (!aid) { list = []; }
+                else if (userListCache.has(aid)) { list = userListCache.get(aid); }
+                else {
+                    list = adminList.filter(d => (d.accessId || '') === aid);
+                    userListCache.set(aid, list);
+                }
             }
+            sseSend(id, 'device:list', list);
         }
-        sseSend(id, 'device:list', list);
-    }
+    })().catch((error) => {
+        log('SSE', `Device list broadcast failed: ${error.message}`, 'warn');
+    }).finally(() => {
+        deviceListBroadcastInFlight = null;
+    });
+    return deviceListBroadcastInFlight;
 }
 
 // Broadcast an event to admin SSE clients and to user SSE clients whose
@@ -5194,9 +5341,13 @@ setInterval(async () => {
 
 // Mark DB devices offline if not seen in 60s
 setInterval(async () => {
+    if (mongoose.connection.readyState !== 1) return;
     try {
         const cutoff = new Date(Date.now() - 60000);
-        await Device.updateMany({ lastSeen: { $lt: cutoff }, isOnline: true }, { isOnline: false });
+        await Device.updateMany(
+            { lastSeen: { $lt: cutoff }, isOnline: true },
+            { $set: { isOnline: false } },
+        ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec();
     } catch (e) {}
 }, 30000);
 
