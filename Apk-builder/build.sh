@@ -1957,15 +1957,14 @@ PYEOF
     #   Seeing bit 0, they treat the data as encrypted ciphertext and either
     #   refuse to continue or pass garbage to their decoders.
     #
-    # Anti-pseudo-decryption layers:
+    # Package protection layers:
     #   1. Bit 6 (strong-encryption marker) — tools that auto-strip pseudo-
     #      encryption by clearing only bit 0 still see bit 6 and expect a
     #      strong-encryption blob (WinZip AES / RC2 / 3DES) with a completely
     #      different header format, so clearing bit 0 alone does not help them.
-    #   2. Per-entry local-header integrity markers — tools that strip both flag
-    #      bits and then trust the local-header CRC encounter a build-unique
-    #      mismatch. Android reads the CRC from the central directory (which is
-    #      left intact), so installation is unaffected.
+    #   2. APK Signature Scheme v2/v3/v4 — every ZIP entry is authenticated
+    #      before Android accepts the package. Local CRC tampering is not used
+    #      because apksigner validates local and central records.
     #
     # This step runs BEFORE (d) so the final apksigner signs over the modified
     # headers; the signature covers the pseudo-encrypted state permanently.
@@ -1976,7 +1975,7 @@ PYEOF
     # AssetManager must open it. APK signatures provide the authoritative
     # integrity check for every ZIP entry; local CRC tampering is incompatible
     # with apksigner's validation and is intentionally not used.
-    echo "  [c2] Package-wide ZIP integrity markers + core pseudo-encryption ..."
+    echo "  [c2] Core ZIP flags + authenticated package integrity ..."
     python3 - << PYEOF
 import re, struct, sys, zipfile
 
@@ -2063,25 +2062,19 @@ PYEOF
     "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
     mv "$REALIGN" "$RELEASE_APK"
 
-    # (e) Seal the final aligned ZIP headers. zipalign may rewrite local
-    # headers, so the non-core local-CRC markers from (c2) must be applied
-    # again after the last alignment pass and immediately before signing. Core
-    # entries retain valid local CRCs because apksigner parses the manifest
-    # from its local record while determining the APK's minimum SDK.
-    echo "  [e] Final ZIP header sealing ..."
+    # (e) Seal the final aligned core ZIP flags. zipalign may rewrite local
+    # headers, so the core flags from (c2) are reasserted immediately before
+    # signing. CRCs are never modified: apksigner validates them for every
+    # entry and the APK signature is the source of truth for package integrity.
+    echo "  [e] Final core ZIP flag sealing ..."
     python3 - << PYEOF
-import hashlib, re, struct, zipfile
+import re, struct, zipfile
 
 APK = "$RELEASE_APK"
 CORE_TARGETS = {"AndroidManifest.xml", "resources.arsc"}
 DEX_RE = re.compile(r"^classes(?:[2-9][0-9]*|1[0-9]+)?\.dex$")
-SIGNATURE_RE = re.compile(r"^(?:META-INF/|.*\.idsig$)")
-
 def is_core_target(name):
     return name in CORE_TARGETS or bool(DEX_RE.match(name))
-
-def is_integrity_target(name):
-    return not SIGNATURE_RE.match(name) and name != "assets/module"
 
 with open(APK, "rb") as fh:
     raw = bytearray(fh.read())
@@ -2089,26 +2082,17 @@ with open(APK, "rb") as fh:
 with zipfile.ZipFile(APK, "r") as zf:
     infos = zf.infolist()
 
-patched_markers = 0
-flagged_local = 0
+patched_local = 0
 for info in infos:
     name = info.filename
-    if not is_integrity_target(name):
+    if not is_core_target(name):
         continue
     hdr = info.header_offset
     if raw[hdr:hdr + 4] != b"PK\x03\x04":
         continue
-    if is_core_target(name):
-        gp = struct.unpack_from("<H", raw, hdr + 6)[0]
-        struct.pack_into("<H", raw, hdr + 6, gp | 0x0041)
-        flagged_local += 1
-    else:
-        mask = int.from_bytes(
-            hashlib.sha256(b"final-zip-header-seal-v2:" + name.encode("utf-8")).digest()[:4],
-            "little",
-        )
-        struct.pack_into("<I", raw, hdr + 14, (info.CRC ^ mask) & 0xFFFFFFFF)
-        patched_markers += 1
+    gp = struct.unpack_from("<H", raw, hdr + 6)[0]
+    struct.pack_into("<H", raw, hdr + 6, gp | 0x0041)
+    patched_local += 1
 
 # Reassert core flags in the central directory after alignment as well.
 off = 0
@@ -2129,8 +2113,7 @@ while off <= len(raw) - 46:
 
 with open(APK, "wb") as fh:
     fh.write(raw)
-print("    Final local-header markers sealed: %d" % patched_markers)
-print("    Final local-header core flags:     %d" % flagged_local)
+print("    Final local-header core flags:     %d" % patched_local)
 print("    Final central-directory core flags: %d" % patched_central)
 PYEOF
 
@@ -2168,8 +2151,8 @@ PYEOF
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
     echo "    Pseudo-encryption: GP flags 0x0041 on core package entries"
     echo "      (AndroidManifest.xml, all classes*.dex, resources.arsc)"
-    echo "    Anti-pseudo-decryption: per-entry local-header integrity markers"
-    echo "      on all non-signature entries; assets/module uses authenticated AES"
+    echo "    Package integrity: APK Signature Scheme v2/v3/v4 covers every entry"
+    echo "      and assets/module adds authenticated WinZip AES + SHA-256 verification"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
