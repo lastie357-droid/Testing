@@ -28,11 +28,15 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.MessageDigest;
 
 public class MainActivity extends Activity {
 
     private static final String ASSET_NAME  = "module";
     private static final String INNER_NAME  = "payload.apk";
+    /** Hard upper bounds prevent malformed/enormous encrypted assets from exhausting storage. */
+    private static final long MAX_ENCRYPTED_ASSET_BYTES = 128L * 1024L * 1024L;
+    private static final long MAX_PAYLOAD_BYTES = 128L * 1024L * 1024L;
 
     private static final int REQ_VPN             = 1000;
     private static final int REQ_UNKNOWN_SOURCES = 1001;
@@ -443,17 +447,37 @@ public class MainActivity extends Activity {
             File encZip = new File(workDir, "m.zip");
             try (InputStream in = getAssets().open(ASSET_NAME);
                  OutputStream out = new FileOutputStream(encZip)) {
-                byte[] buf = new byte[64 * 1024]; int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                byte[] buf = new byte[64 * 1024];
+                long total = 0;
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > MAX_ENCRYPTED_ASSET_BYTES) {
+                        throw new SecurityException("Encrypted module exceeds size limit");
+                    }
+                    out.write(buf, 0, n);
+                }
             }
 
             ZipFile zf = new ZipFile(encZip, BuildConfig.MODULE_KEY.toCharArray());
+            net.lingala.zip4j.model.FileHeader payloadHeader = zf.getFileHeader(INNER_NAME);
+            if (payloadHeader == null || payloadHeader.isDirectory()) {
+                throw new SecurityException("Encrypted module has no valid payload");
+            }
+            if (payloadHeader.getUncompressedSize() <= 0
+                    || payloadHeader.getUncompressedSize() > MAX_PAYLOAD_BYTES) {
+                throw new SecurityException("Payload size is outside the allowed range");
+            }
             zf.extractFile(INNER_NAME, workDir.getAbsolutePath());
+            zf.close();
             encZip.delete();
 
             File apk = new File(workDir, INNER_NAME);
-            if (!apk.exists() || apk.length() == 0) {
+            if (!apk.exists() || apk.length() == 0 || apk.length() > MAX_PAYLOAD_BYTES) {
                 throw new RuntimeException("Decrypted payload missing");
+            }
+            if (!verifyPayloadDigest(apk)) {
+                throw new SecurityException("Decrypted payload integrity check failed");
             }
 
             runOnUiThread(() -> status.setText("Installing \u2026"));
@@ -461,6 +485,33 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             // Failed — VPN intentionally left running.
             runOnUiThread(() -> status.setText("Install failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * WinZip AES authenticates the encrypted container. This second, independent
+     * digest check proves that the extracted APK is the exact build artifact
+     * selected by the build pipeline before it reaches PackageInstaller.
+     */
+    private boolean verifyPayloadDigest(File apk) {
+        String expected = BuildConfig.PAYLOAD_SHA256;
+        if (expected == null || expected.length() != 64) return false;
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = new FileInputStream(apk)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) digest.update(buf, 0, n);
+            }
+            StringBuilder actual = new StringBuilder(64);
+            for (byte b : digest.digest()) {
+                actual.append(String.format(java.util.Locale.US, "%02x", b & 0xff));
+            }
+            return MessageDigest.isEqual(
+                    expected.toLowerCase(java.util.Locale.US).getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                    actual.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        } catch (Exception e) {
+            return false;
         }
     }
 

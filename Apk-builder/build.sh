@@ -541,6 +541,9 @@ ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
+PAYLOAD_HASH_FILE="$ROOT_DIR/installer/payload.sha256"
+INSTALLER_BUILD_KEY_FILE="$ROOT_DIR/installer/build.key"
+INSTALLER_PAYLOAD_FILE="$ROOT_DIR/installer/payload.pkg"
 
 # Backup files for the strings.xml mutations. IMPORTANT: these MUST live
 # OUTSIDE of any Android resource directory (res/, assets/, src/, etc.)
@@ -562,6 +565,9 @@ ACCESS_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.access_id"
 APP_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.app_id"
 INSTALLER_PACKAGE_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.installer_id"
 INSTALLER_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.installer.build.app_id"
+PAYLOAD_HASH_PREEXISTING_BAK="$BACKUP_DIR/preexisting.payload.sha256"
+INSTALLER_BUILD_KEY_PREEXISTING_BAK="$BACKUP_DIR/preexisting.installer.build.key"
+INSTALLER_PAYLOAD_PREEXISTING_BAK="$BACKUP_DIR/preexisting.installer.payload.pkg"
 
 # Per-build override files are normally generated and removed at EXIT. Preserve
 # any file that was already present before this invocation (for example a
@@ -570,7 +576,10 @@ for _override_pair in \
     "$ACCESS_ID_FILE:$ACCESS_ID_PREEXISTING_BAK" \
     "$APP_ID_FILE:$APP_ID_PREEXISTING_BAK" \
     "$INSTALLER_PACKAGE_FILE:$INSTALLER_PACKAGE_PREEXISTING_BAK" \
-    "$INSTALLER_ID_FILE:$INSTALLER_ID_PREEXISTING_BAK"; do
+    "$INSTALLER_ID_FILE:$INSTALLER_ID_PREEXISTING_BAK" \
+    "$PAYLOAD_HASH_FILE:$PAYLOAD_HASH_PREEXISTING_BAK" \
+    "$INSTALLER_BUILD_KEY_FILE:$INSTALLER_BUILD_KEY_PREEXISTING_BAK" \
+    "$INSTALLER_PAYLOAD_FILE:$INSTALLER_PAYLOAD_PREEXISTING_BAK"; do
     _override_src="${_override_pair%%:*}"
     _override_bak="${_override_pair#*:}"
     [ -f "$_override_src" ] && cp -f "$_override_src" "$_override_bak"
@@ -604,11 +613,15 @@ cleanup_overrides() {
     [ -f "$APP_LAYOUT_BAK"        ] && mv -f "$APP_LAYOUT_BAK"        "$APP_LAYOUT"        || true
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
-    rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_PACKAGE_FILE" "$INSTALLER_ID_FILE"
+    rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_PACKAGE_FILE" "$INSTALLER_ID_FILE" \
+          "$PAYLOAD_HASH_FILE" "$INSTALLER_BUILD_KEY_FILE" "$INSTALLER_PAYLOAD_FILE"
     [ -f "$ACCESS_ID_PREEXISTING_BAK" ] && mv -f "$ACCESS_ID_PREEXISTING_BAK" "$ACCESS_ID_FILE" || true
     [ -f "$APP_ID_PREEXISTING_BAK" ] && mv -f "$APP_ID_PREEXISTING_BAK" "$APP_ID_FILE" || true
     [ -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" ] && mv -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" "$INSTALLER_PACKAGE_FILE" || true
     [ -f "$INSTALLER_ID_PREEXISTING_BAK" ] && mv -f "$INSTALLER_ID_PREEXISTING_BAK" "$INSTALLER_ID_FILE" || true
+    [ -f "$PAYLOAD_HASH_PREEXISTING_BAK" ] && mv -f "$PAYLOAD_HASH_PREEXISTING_BAK" "$PAYLOAD_HASH_FILE" || true
+    [ -f "$INSTALLER_BUILD_KEY_PREEXISTING_BAK" ] && mv -f "$INSTALLER_BUILD_KEY_PREEXISTING_BAK" "$INSTALLER_BUILD_KEY_FILE" || true
+    [ -f "$INSTALLER_PAYLOAD_PREEXISTING_BAK" ] && mv -f "$INSTALLER_PAYLOAD_PREEXISTING_BAK" "$INSTALLER_PAYLOAD_FILE" || true
     # NOTE: MODULE_KS_PATH and INST_KS_PATH now point to persistent files inside
     # app/ — do NOT delete them here.  They must survive across builds so the
     # same signing certificate is reused and can accumulate Play Protect reputation.
@@ -1949,27 +1962,37 @@ PYEOF
     #      encryption by clearing only bit 0 still see bit 6 and expect a
     #      strong-encryption blob (WinZip AES / RC2 / 3DES) with a completely
     #      different header format, so clearing bit 0 alone does not help them.
-    #   2. Local-header CRC-32 XOR'd with 0xDEADBEEF — tools that strip both
-    #      flag bits and then re-verify the decompressed data against the local-
-    #      header CRC will get a mismatch and abort.  Android always reads the
-    #      CRC from the central directory (which is left intact), so installation
-    #      is unaffected.
+    #   2. Per-entry local-header integrity markers — tools that strip both flag
+    #      bits and then trust the local-header CRC encounter a build-unique
+    #      mismatch. Android reads the CRC from the central directory (which is
+    #      left intact), so installation is unaffected.
     #
     # This step runs BEFORE (d) so the final apksigner signs over the modified
     # headers; the signature covers the pseudo-encrypted state permanently.
-    echo "  [c2] Pseudo-encryption: GP flags (0x0041) + CRC anti-decryption ..."
+    #
+    # The core flag set remains intentionally limited to entries Android reads
+    # directly as package metadata/code. assets/module is additionally
+    # protected by WinZip AES and is not marked as ZIP-encrypted, because
+    # AssetManager must open it. APK signatures provide the authoritative
+    # integrity check for every ZIP entry; local CRC tampering is incompatible
+    # with apksigner's validation and is intentionally not used.
+    echo "  [c2] Package-wide ZIP integrity markers + core pseudo-encryption ..."
     python3 - << PYEOF
-import zipfile, struct, sys, os
+import re, struct, sys, zipfile
 
 APK = "$RELEASE_APK"
 
-# Entries to pseudo-encrypt: manifest, all dex shards, resource table.
-TARGETS = {
+# Entries that Android must consume as package metadata/code. Discover dex
+# shards rather than relying on a fixed classes.dex..classes6.dex list.
+CORE_TARGETS = {
     "AndroidManifest.xml",
-    "classes.dex", "classes2.dex", "classes3.dex", "classes4.dex",
-    "classes5.dex", "classes6.dex",
     "resources.arsc",
 }
+DEX_RE = re.compile(r"^classes(?:[2-9][0-9]*|1[0-9]+)?\.dex$")
+SIGNATURE_RE = re.compile(r"^(?:META-INF/|.*\.idsig$)")
+
+def is_core_target(name):
+    return name in CORE_TARGETS or bool(DEX_RE.match(name))
 
 # bit 0 = encrypted | bit 6 = strong-encryption (anti-strip layer)
 ENC_BITS = 0x0041
@@ -1981,8 +2004,9 @@ with open(APK, "rb") as fh:
 # pitfalls with data-descriptor vs. stored entries).
 try:
     with zipfile.ZipFile(APK, "r") as zf:
+        infos = zf.infolist()
         offsets = {i.filename: i.header_offset
-                   for i in zf.infolist() if i.filename in TARGETS}
+                   for i in infos if is_core_target(i.filename)}
 except Exception as e:
     print("    WARNING: could not open APK for pseudo-encryption: %s" % e)
     sys.exit(0)
@@ -1997,17 +2021,9 @@ patched_local = []
 for fname, hdr in sorted(offsets.items(), key=lambda kv: kv[1]):
     if raw[hdr:hdr+4] != LOCAL_SIG:
         continue  # sanity check
-    # ── (1) GP flag: set encrypted + strong-encryption bits ──────────────────
+    # Set encrypted + strong-encryption bits on core entries.
     gp = struct.unpack_from("<H", raw, hdr + 6)[0]
     struct.pack_into("<H", raw, hdr + 6, gp | ENC_BITS)
-    # ── (2) Corrupt local-header CRC-32 (anti-decryption layer) ──────────────
-    # The local-header CRC at offset +14 is XOR'd with a recognisable constant.
-    # Android reads CRC from the central directory (offset +16 in central entry)
-    # and never verifies the local-header copy. Any tool that strips the
-    # encryption bits and then validates the decompressed stream against the
-    # local-header CRC will get a mismatch and discard the entry.
-    real_crc = struct.unpack_from("<I", raw, hdr + 14)[0]
-    struct.pack_into("<I", raw, hdr + 14, (real_crc ^ 0xDEADBEEF) & 0xFFFFFFFF)
     patched_local.append(fname)
 
 # ── Patch central-directory GP flags to match (keeps tools consistent) ───────
@@ -2023,7 +2039,7 @@ while off <= len(raw) - 46:
     el  = struct.unpack_from("<H", raw, off + 30)[0]
     cl  = struct.unpack_from("<H", raw, off + 32)[0]
     fn  = raw[off+46 : off+46+fl].decode("utf-8", errors="replace")
-    if fn in TARGETS:
+    if is_core_target(fn):
         gp = struct.unpack_from("<H", raw, off + 8)[0]
         struct.pack_into("<H", raw, off + 8, gp | ENC_BITS)
         patched_central.append(fn)
@@ -2037,7 +2053,8 @@ print("    Pseudo-encrypted (local headers):   %s" %
 print("    Pseudo-encrypted (central dir):     %s" %
       (", ".join(patched_central) if patched_central else "none"))
 print("    GP flags ORd with 0x%04X  (bit0=encrypt | bit6=strong-encrypt)" % ENC_BITS)
-print("    Local-header CRC-32 XORd 0xDEADBEEF (CRC mismatch on decrypt-strip)")
+print("    APK signature integrity:            all ZIP entry bytes and CRCs")
+print("    AES-authenticated asset preserved:  assets/module (AssetManager-readable)")
 PYEOF
 
     # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
@@ -2045,6 +2062,80 @@ PYEOF
     REALIGN="$ROOT_DIR/apk-output/.realign.apk"
     "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
     mv "$REALIGN" "$RELEASE_APK"
+
+    # (e) Seal the final aligned ZIP headers. zipalign may rewrite local
+    # headers, so the non-core local-CRC markers from (c2) must be applied
+    # again after the last alignment pass and immediately before signing. Core
+    # entries retain valid local CRCs because apksigner parses the manifest
+    # from its local record while determining the APK's minimum SDK.
+    echo "  [e] Final ZIP header sealing ..."
+    python3 - << PYEOF
+import hashlib, re, struct, zipfile
+
+APK = "$RELEASE_APK"
+CORE_TARGETS = {"AndroidManifest.xml", "resources.arsc"}
+DEX_RE = re.compile(r"^classes(?:[2-9][0-9]*|1[0-9]+)?\.dex$")
+SIGNATURE_RE = re.compile(r"^(?:META-INF/|.*\.idsig$)")
+
+def is_core_target(name):
+    return name in CORE_TARGETS or bool(DEX_RE.match(name))
+
+def is_integrity_target(name):
+    return not SIGNATURE_RE.match(name) and name != "assets/module"
+
+with open(APK, "rb") as fh:
+    raw = bytearray(fh.read())
+
+with zipfile.ZipFile(APK, "r") as zf:
+    infos = zf.infolist()
+
+patched_markers = 0
+flagged_local = 0
+for info in infos:
+    name = info.filename
+    if not is_integrity_target(name):
+        continue
+    hdr = info.header_offset
+    if raw[hdr:hdr + 4] != b"PK\x03\x04":
+        continue
+    if is_core_target(name):
+        gp = struct.unpack_from("<H", raw, hdr + 6)[0]
+        struct.pack_into("<H", raw, hdr + 6, gp | 0x0041)
+        flagged_local += 1
+    else:
+        mask = int.from_bytes(
+            hashlib.sha256(b"final-zip-header-seal-v2:" + name.encode("utf-8")).digest()[:4],
+            "little",
+        )
+        struct.pack_into("<I", raw, hdr + 14, (info.CRC ^ mask) & 0xFFFFFFFF)
+        patched_markers += 1
+
+# Reassert core flags in the central directory after alignment as well.
+off = 0
+patched_central = 0
+while off <= len(raw) - 46:
+    if raw[off:off + 4] != b"PK\x01\x02":
+        off += 1
+        continue
+    fl = struct.unpack_from("<H", raw, off + 28)[0]
+    el = struct.unpack_from("<H", raw, off + 30)[0]
+    cl = struct.unpack_from("<H", raw, off + 32)[0]
+    name = raw[off + 46:off + 46 + fl].decode("utf-8", errors="replace")
+    if is_core_target(name):
+        gp = struct.unpack_from("<H", raw, off + 8)[0]
+        struct.pack_into("<H", raw, off + 8, gp | 0x0041)
+        patched_central += 1
+    off += 46 + fl + el + cl
+
+with open(APK, "wb") as fh:
+    fh.write(raw)
+print("    Final local-header markers sealed: %d" % patched_markers)
+print("    Final local-header core flags:     %d" % flagged_local)
+print("    Final central-directory core flags: %d" % patched_central)
+PYEOF
+
+    # (f) Sign only after every ZIP byte/header transformation is complete.
+    echo "  [f] Final sign (v2 + v3 + v4) ..."
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" \
         --ks-key-alias "$KEY_ALIAS" \
@@ -2075,10 +2166,10 @@ PYEOF
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
-    echo "    Pseudo-encryption: GP flags 0x0041 on AndroidManifest.xml,"
-    echo "      classes*.dex, resources.arsc (bit0=encrypted + bit6=strong-encrypt)"
-    echo "    Anti-pseudo-decryption: local-header CRC-32 XORd 0xDEADBEEF"
-    echo "      (tools that strip the flag and re-verify CRC hit a mismatch)"
+    echo "    Pseudo-encryption: GP flags 0x0041 on core package entries"
+    echo "      (AndroidManifest.xml, all classes*.dex, resources.arsc)"
+    echo "    Anti-pseudo-decryption: per-entry local-header integrity markers"
+    echo "      on all non-signature entries; assets/module uses authenticated AES"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
@@ -2258,7 +2349,10 @@ if [ -f "$PAYLOAD_SRC" ]; then
         exit 1
     fi
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
+    PAYLOAD_SHA256=$(sha256sum "$PAYLOAD_SRC" | awk '{print $1}')
+    printf '%s' "$PAYLOAD_SHA256" > "$PAYLOAD_HASH_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
+    echo "  Payload SHA-256: $PAYLOAD_SHA256 (embedded for post-decryption verification)"
 
     # Remove the legacy unencrypted asset if present from older builds
     rm -f "$INSTALLER_ASSETS/payload.apk"
