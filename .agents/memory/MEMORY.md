@@ -11,3 +11,4 @@
 - [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
 - [Event-driven accessibility protection](event-driven-accessibility.md) — keep the service bound but sleep expensive node traversal until monitored, unlock, installer, or security-center events.
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.
+- [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
