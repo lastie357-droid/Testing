@@ -2,8 +2,11 @@
 
 /**
  * REDIS CLIENT
- * Connects to REDIS_URL, flushes stale cache on startup,
- * and exposes typed helpers used throughout server.js.
+ * Connects to REDIS_URL and exposes typed helpers used throughout server.js.
+ *
+ * Redis may be hosted on an idle-suspending plan, so this client keeps the
+ * authenticated connection warm and retries indefinitely when the provider
+ * wakes the service back up.
  */
 
 const Redis = require('ioredis');
@@ -39,11 +42,37 @@ let redis = null;
 let connected = false;
 let configuredUrl = process.env.REDIS_URL || '';
 let initPromise = null;
+let keepAliveTimer = null;
+
+// A PING every two minutes prevents idle-suspending Redis plans from going
+// dormant while still keeping traffic negligible.
+const KEEPALIVE_INTERVAL_MS = 2 * 60 * 1000;
 
 function log(msg, level = 'info') {
     const ts = new Date().toISOString().slice(11, 23);
     const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
     fn(`[${ts}][REDIS] ${msg}`);
+}
+
+function startKeepAlive() {
+    if (keepAliveTimer || !redis) return;
+    keepAliveTimer = setInterval(async () => {
+        if (!redis || redis.status !== 'ready') return;
+        try {
+            await redis.ping();
+        } catch (e) {
+            log(`Keepalive ping failed: ${e.message}`, 'warn');
+        }
+    }, KEEPALIVE_INTERVAL_MS);
+    // The keepalive must not prevent a deliberate server shutdown.
+    keepAliveTimer.unref?.();
+}
+
+function stopKeepAlive() {
+    if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+    }
 }
 
 /**
@@ -69,27 +98,22 @@ async function init(urlOverride) {
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
             retryStrategy(times) {
-                if (times > 5) {
-                    log(`Giving up reconnect after ${times} attempts`, 'warn');
-                    return null;
-                }
-                const delay = Math.min(times * 500, 3000);
-                log(`Reconnecting in ${delay}ms (attempt ${times})…`);
+                // Keep trying: an idle Redis plan can temporarily suspend and
+                // needs more than five attempts to become available again.
+                const delay = Math.min(1000 * (2 ** Math.min(times - 1, 5)), 30000);
+                log(`Reconnecting in ${delay}ms (attempt ${times})…`, 'warn');
                 return delay;
             },
+            connectTimeout: 10000,
+            keepAlive: 30000,
             lazyConnect: false,
         });
 
         redis.on('connect', () => log('TCP connection established'));
         redis.on('ready',   async () => {
             connected = true;
-            log(`Connected to Redis — flushing stale cache (FLUSHALL)…`);
-            try {
-                await redis.flushall();
-                log('Cache flushed — clean start');
-            } catch (e) {
-                log(`flushall error: ${e.message}`, 'warn');
-            }
+            startKeepAlive();
+            log('Connected to Redis — persistent connection ready');
             resolve();
             initPromise = null;
         });
@@ -343,6 +367,7 @@ async function clearCommandCache() {
 
 async function quit() {
     if (redis) {
+        stopKeepAlive();
         try { await redis.quit(); log('Disconnected gracefully'); }
         catch (e) { redis.disconnect(); }
         finally {
@@ -350,6 +375,8 @@ async function quit() {
             connected = false;
             initPromise = null;
         }
+    } else {
+        stopKeepAlive();
     }
 }
 
