@@ -272,7 +272,9 @@ export default function UserDashboard({ user, onLogout }) {
         // superseded result only exists to clear the pending indicator; it is
         // not a user-visible command failure.
         if (data.superseded) break;
-        if (data.response?.streaming === true) break;
+        // stream_start is dashboard-timed: every request returns the JPEG
+        // captured for that tick. Keep the result so ScreenControl can paint
+        // it just like a take_screenshot response.
         const result = { id: data.commandId || Date.now(), command: data.command, deviceId: data.deviceId, success: data.success, response: data.response, error: data.error, time: new Date() };
         setCommandResults(prev => [result, ...prev].slice(0, 200));
         setActivityLog(prev => [{ id: Date.now(), type: data.success ? 'success' : 'error', text: `${data.command} → ${data.success ? 'OK' : data.error}`, time: new Date() }, ...prev].slice(0, 100));
