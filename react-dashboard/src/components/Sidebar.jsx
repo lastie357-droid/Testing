@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import DeviceActions from './DeviceActions.jsx';
 
-export default function Sidebar({ devices, selectedDevice, onSelectDevice }) {
+export default function Sidebar({ devices, selectedDevice, onSelectDevice, onBlockDevice, onDeleteDevice, deviceActionBusy }) {
   const [collapsed, setCollapsed] = useState(true);
 
   const online  = devices.filter(d => d.isOnline);
@@ -22,6 +23,15 @@ export default function Sidebar({ devices, selectedDevice, onSelectDevice }) {
             {device.deviceInfo?.manufacturer || ''} {device.deviceInfo?.model || 'Unknown'}
           </div>
         </div>
+      )}
+      {!collapsed && (
+        <DeviceActions
+          device={device}
+          onBlock={onBlockDevice}
+          onDelete={onDeleteDevice}
+          busy={deviceActionBusy === device.deviceId}
+          compact
+        />
       )}
       <span className={device.isOnline ? 'badge-online' : 'badge-offline'}>
         {device.isOnline ? 'LIVE' : 'OFF'}

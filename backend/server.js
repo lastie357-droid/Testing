@@ -1292,6 +1292,36 @@ const latestStreamSequence = new Map();       // deviceId → monotonically incr
 const heartbeatPersistedAt = new Map();
 const HEARTBEAT_DB_INTERVAL_MS = 15000;
 
+function disconnectDeviceConnections(deviceId, reason = 'Device disconnected by administrator') {
+    const connectionIds = new Set([
+        deviceToTcp.get(deviceId),
+        deviceToStreamTcp.get(deviceId),
+        deviceToLiveTcp.get(deviceId),
+    ].filter(Boolean));
+
+    deviceToTcp.delete(deviceId);
+    deviceToStreamTcp.delete(deviceId);
+    deviceToLiveTcp.delete(deviceId);
+    deviceStreamingState.delete(deviceId);
+    devicePingTime.delete(deviceId);
+    latestScreenReaderData.delete(deviceId);
+    latestScreenReaderSequence.delete(deviceId);
+    latestStreamSequence.delete(deviceId);
+    latestStreamFrame.delete(deviceId);
+    latestCameraFrame.delete(deviceId);
+
+    for (const connectionId of connectionIds) {
+        const conn = tcpClients.get(connectionId);
+        tcpClients.delete(connectionId);
+        try { conn?.destroy(); } catch (_) {}
+    }
+
+    const pending = [...pendingCmds.entries()]
+        .filter(([, entry]) => entry.deviceId === deviceId);
+    removePendingCommands(pending, reason);
+    return connectionIds.size;
+}
+
 function persistDeviceHeartbeat(deviceId) {
     if (mongoose.connection.readyState !== 1) return;
     const now = Date.now();
@@ -1423,6 +1453,30 @@ async function processMessage(clientId, clientType, event, data) {
         // Access ID — sent by the device, baked in at build time.
         // Kept on the device record so per-user dashboards can scope their list.
         const accessId = (data && (data.accessId || (deviceInfo && deviceInfo.accessId))) || '';
+        const conn = tcpClients.get(clientId);
+
+        // A blocked device must not be able to come back simply by opening a
+        // new TCP connection. MongoDB is authoritative; Redis and the
+        // in-memory registry keep the protection active during a DB outage.
+        let storedDevice = null;
+        try {
+            storedDevice = await Device.findOne({ deviceId }).select('blocked').lean().exec();
+        } catch (_) {}
+        const redisDevice = await R.getDevice(deviceId);
+        const memoryDevice = inMemoryDevices.get(deviceId);
+        if (storedDevice?.blocked || redisDevice?.blocked || memoryDevice?.blocked) {
+            if (conn) {
+                tcpSend(conn, 'device:registered', {
+                    success: false,
+                    deviceId,
+                    error: 'This device is blocked by the administrator',
+                });
+                conn.destroy();
+                tcpClients.delete(clientId);
+            }
+            log('AUTH', `Rejected blocked device registration: ${deviceId}`, 'warn');
+            return;
+        }
 
         // If there's an existing stale primary socket for this device, close it cleanly
         // before registering the new one — prevents ghost connections from later
@@ -1437,7 +1491,6 @@ async function processMessage(clientId, clientType, event, data) {
         }
 
         // Link this TCP connection to the deviceId
-        const conn = tcpClients.get(clientId);
         if (conn) {
             conn.deviceId = deviceId;
             conn.lastPong = Date.now();
@@ -1456,6 +1509,7 @@ async function processMessage(clientId, clientType, event, data) {
         const deviceRecord = { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
             accessId: accessId || existing.accessId || '',
+            blocked: false,
             registeredAt: existing.registeredAt || new Date(),
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
@@ -4916,6 +4970,99 @@ app.post('/api/admin/devices/:deviceId/assign', requireAdmin, express.json(), as
         log('ADMIN', `Assigned device ${deviceId} → accessId=${newAccessId || '(none)'}`);
         res.json({ success: true, deviceId, accessId: newAccessId });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// POST /api/admin/devices/:deviceId/block — persistently block or unblock a device.
+// Blocking also closes every active channel and rejects future registrations.
+app.post('/api/admin/devices/:deviceId/block', requireAdmin, express.json(), async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+        const blocked = req.body?.blocked !== false;
+        const mem = inMemoryDevices.get(deviceId);
+        const wasOnline = deviceToTcp.has(deviceId);
+
+        let dev = null;
+        try {
+            dev = await Device.findOne({ deviceId });
+        } catch (e) {
+            return res.status(503).json({ success: false, error: 'Database unavailable; device state was not changed' });
+        }
+
+        if (!dev && !mem) {
+            return res.status(404).json({ success: false, error: 'Device not found' });
+        }
+
+        const nextRecord = {
+            ...(dev ? dev.toObject() : mem),
+            deviceId,
+            blocked,
+            blockedAt: blocked ? new Date() : null,
+            isOnline: blocked ? false : wasOnline,
+        };
+
+        if (dev) {
+            dev.blocked = blocked;
+            dev.blockedAt = blocked ? new Date() : null;
+            dev.isOnline = blocked ? false : wasOnline;
+            await dev.save();
+        }
+        inMemoryDevices.set(deviceId, nextRecord);
+        R.saveDevice(deviceId, nextRecord).catch(() => {});
+
+        if (blocked) {
+            disconnectDeviceConnections(deviceId);
+            const accessId = nextRecord.accessId || '';
+            broadcastDashScoped('device:disconnected', {
+                deviceId, accessId, timestamp: new Date(), reason: 'blocked',
+            }, accessId || null);
+        }
+        broadcastDeviceList();
+
+        log('ADMIN', `${blocked ? 'Blocked' : 'Unblocked'} device ${deviceId}`);
+        res.json({ success: true, deviceId, blocked, wasOnline });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// DELETE /api/admin/devices/:deviceId — remove a device from all registries.
+// An online device is disconnected first so it cannot remain in the dashboard.
+app.delete('/api/admin/devices/:deviceId', requireAdmin, async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+
+        let dev = null;
+        try {
+            dev = await Device.findOne({ deviceId }).lean().exec();
+        } catch (e) {
+            return res.status(503).json({ success: false, error: 'Database unavailable; device was not deleted' });
+        }
+        const mem = inMemoryDevices.get(deviceId);
+        if (!dev && !mem) {
+            return res.status(404).json({ success: false, error: 'Device not found' });
+        }
+
+        const wasOnline = deviceToTcp.has(deviceId);
+        const accessId = dev?.accessId || mem?.accessId || '';
+        await Device.deleteOne({ deviceId }).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec();
+        disconnectDeviceConnections(deviceId);
+        inMemoryDevices.delete(deviceId);
+        await R.removeDevice(deviceId);
+
+        if (wasOnline) {
+            broadcastDashScoped('device:disconnected', {
+                deviceId, accessId, timestamp: new Date(), reason: 'deleted',
+            }, accessId || null);
+        }
+        broadcastDeviceList();
+
+        log('ADMIN', `Deleted device ${deviceId}`);
+        res.json({ success: true, deviceId });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // GET /api/admin/devices — full device list with accessId for admin device management

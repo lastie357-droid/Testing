@@ -215,6 +215,19 @@ async function markDeviceOffline(deviceId) {
     }
 }
 
+async function removeDevice(deviceId) {
+    if (!isConnected()) return false;
+    try {
+        await redis.del(K.device(deviceId));
+        await redis.srem(K.deviceList(), deviceId);
+        await redis.srem(K.deviceOnline(), deviceId);
+        return true;
+    } catch (e) {
+        log(`removeDevice error: ${e.message}`, 'warn');
+        return false;
+    }
+}
+
 // ── Notification helpers ──────────────────────────────────────────────────────
 
 async function pushNotification(deviceId, entry) {
@@ -408,6 +421,7 @@ function setConfiguredUrl(url) {
 module.exports = {
     init, start, stop, restart, getConfiguredUrl, setConfiguredUrl, isConnected, client, quit, getStats,
     saveDevice, getDevice, getAllDevices, markDeviceOnline, markDeviceOffline,
+    removeDevice,
     pushNotification, getNotifications,
     pushActivity, getActivity,
     pushKeylog, getKeylogs,

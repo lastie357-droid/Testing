@@ -198,8 +198,79 @@ function AdminDashboard({ logout }) {
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const [gcodeVersion, setGcodeVersion]               = useState({});
   const [galleryStreams, setGalleryStreams] = useState({});
+  const [deviceActionBusy, setDeviceActionBusy] = useState(null);
+  const [deviceActionNotice, setDeviceActionNotice] = useState(null);
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+
+  const handleDeviceAction = useCallback(async (device, action) => {
+    const isDelete = action === 'delete';
+    const isBlock = action === 'block';
+    const isCurrentlyBlocked = !!device.blocked;
+    const nextBlocked = isBlock ? !isCurrentlyBlocked : null;
+    const deviceLabel = device.deviceName || device.deviceId;
+
+    if (isDelete && !window.confirm(
+      `Delete ${deviceLabel}? This removes the device from the dashboard and disconnects it if online.`
+    )) return;
+    if (isBlock && nextBlocked && !window.confirm(
+      `Block ${deviceLabel}? It will be disconnected and future connections will be rejected.`
+    )) return;
+
+    setDeviceActionBusy(device.deviceId);
+    setDeviceActionNotice(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const response = await fetch(
+        isDelete
+          ? `/api/admin/devices/${encodeURIComponent(device.deviceId)}`
+          : `/api/admin/devices/${encodeURIComponent(device.deviceId)}/block`,
+        {
+          method: isDelete ? 'DELETE' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          ...(isDelete ? {} : { body: JSON.stringify({ blocked: nextBlocked }) }),
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Could not ${isDelete ? 'delete' : nextBlocked ? 'block' : 'allow'} the device`);
+      }
+
+      if (isDelete) {
+        setDevices(prev => prev.filter(item => item.deviceId !== device.deviceId));
+        setSelectedDevice(prev => prev === device.deviceId ? null : prev);
+        setActivityLog(prev => [{
+          id: Date.now(),
+          type: 'info',
+          text: `Device deleted: ${deviceLabel}`,
+          time: new Date(),
+        }, ...prev].slice(0, 100));
+        setDeviceActionNotice({ type: 'success', text: `${deviceLabel} deleted.` });
+      } else {
+        setDevices(prev => prev.map(item => item.deviceId === device.deviceId
+          ? { ...item, blocked: nextBlocked, isOnline: nextBlocked ? false : item.isOnline }
+          : item
+        ));
+        setActivityLog(prev => [{
+          id: Date.now(),
+          type: nextBlocked ? 'error' : 'success',
+          text: `Device ${nextBlocked ? 'blocked' : 'allowed'}: ${deviceLabel}`,
+          time: new Date(),
+        }, ...prev].slice(0, 100));
+        setDeviceActionNotice({
+          type: 'success',
+          text: `${deviceLabel} ${nextBlocked ? 'blocked.' : 'allowed to reconnect.'}`,
+        });
+      }
+    } catch (error) {
+      setDeviceActionNotice({ type: 'error', text: error.message || 'Device action failed.' });
+    } finally {
+      setDeviceActionBusy(null);
+    }
+  }, []);
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -424,8 +495,38 @@ function AdminDashboard({ logout }) {
   return (
     <div className="app">
       <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
+      {deviceActionNotice && (
+        <div
+          role="status"
+          onClick={() => setDeviceActionNotice(null)}
+          style={{
+            position: 'fixed',
+            top: 48,
+            right: 18,
+            zIndex: 1000,
+            maxWidth: 360,
+            padding: '10px 14px',
+            borderRadius: 8,
+            border: `1px solid ${deviceActionNotice.type === 'error' ? 'rgba(239,68,68,0.45)' : 'rgba(34,197,94,0.4)'}`,
+            background: deviceActionNotice.type === 'error' ? '#451a1a' : '#123524',
+            color: deviceActionNotice.type === 'error' ? '#fca5a5' : '#86efac',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+        >
+          {deviceActionNotice.type === 'error' ? '❌' : '✅'} {deviceActionNotice.text}
+        </div>
+      )}
       <div className="app-body">
-        <Sidebar devices={devices} selectedDevice={selectedDevice} onSelectDevice={setSelectedDevice} />
+        <Sidebar
+          devices={devices}
+          selectedDevice={selectedDevice}
+          onSelectDevice={setSelectedDevice}
+          onBlockDevice={device => handleDeviceAction(device, 'block')}
+          onDeleteDevice={device => handleDeviceAction(device, 'delete')}
+          deviceActionBusy={deviceActionBusy}
+        />
         <main className="main-content">
           {selectedDevice ? (
             <DeviceControl
@@ -480,7 +581,15 @@ function AdminDashboard({ logout }) {
               </div>
               <div style={{ flex: 1, minHeight: 0 }}>
                 {globalView === 'overview' ? (
-                  <Overview devices={devices} activityLog={activityLog} onSelectDevice={setSelectedDevice} connected={connected} />
+                  <Overview
+                    devices={devices}
+                    activityLog={activityLog}
+                    onSelectDevice={setSelectedDevice}
+                    onBlockDevice={device => handleDeviceAction(device, 'block')}
+                    onDeleteDevice={device => handleDeviceAction(device, 'delete')}
+                    deviceActionBusy={deviceActionBusy}
+                    connected={connected}
+                  />
                 ) : globalView === 'users' ? (
                   <AdminUsersTab />
                 ) : globalView === 'build' ? (

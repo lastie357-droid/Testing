@@ -1,9 +1,10 @@
 import React from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
+import DeviceActions from './DeviceActions.jsx';
 
 const ICONS = { connect: '🟢', disconnect: '🔴', success: '✅', error: '❌', info: 'ℹ️' };
 
-export default function Overview({ devices, activityLog, onSelectDevice, connected }) {
+export default function Overview({ devices, activityLog, onSelectDevice, onBlockDevice, onDeleteDevice, deviceActionBusy, connected }) {
   const online = devices.filter(d => d.isOnline).length;
 
   return (
@@ -64,8 +65,17 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
                   <br />
                   Registered: {formatDateTime(d.registeredAt)}
                 </div>
-                <div style={{ marginTop: 8, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
-                  → Open Control Panel
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10 }}>
+                  <div style={{ fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
+                    → Open Control Panel
+                  </div>
+                  <DeviceActions
+                    device={d}
+                    onBlock={onBlockDevice}
+                    onDelete={onDeleteDevice}
+                    busy={deviceActionBusy === d.deviceId}
+                    compact
+                  />
                 </div>
               </div>
             ))}
@@ -104,8 +114,17 @@ export default function Overview({ devices, activityLog, onSelectDevice, connect
                   <br />
                   Registered: {formatDateTime(d.registeredAt)}
                 </div>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
-                  🔴 Offline
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10 }}>
+                  <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                    🔴 Offline
+                  </div>
+                  <DeviceActions
+                    device={d}
+                    onBlock={onBlockDevice}
+                    onDelete={onDeleteDevice}
+                    busy={deviceActionBusy === d.deviceId}
+                    compact
+                  />
                 </div>
               </div>
             ))}

@@ -32,6 +32,12 @@ const deviceSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  blocked: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  blockedAt: Date,
   lastSeen: {
     type: Date,
     default: Date.now
