@@ -272,6 +272,57 @@ function AdminDashboard({ logout }) {
     }
   }, []);
 
+  const handleBulkDeviceCleanup = useCallback(async (scope) => {
+    const matchingDevices = devices.filter(device =>
+      scope === 'blocked' ? device.blocked : !device.isOnline
+    );
+    if (matchingDevices.length === 0) return;
+
+    const label = scope === 'blocked' ? 'blocked' : 'offline';
+    const verb = scope === 'blocked' ? 'clear' : 'delete';
+    if (!window.confirm(
+      `${verb === 'clear' ? 'Clear' : 'Delete'} all ${matchingDevices.length} ${label} device${matchingDevices.length === 1 ? '' : 's'}? ` +
+      'This permanently removes them from the dashboard.'
+    )) return;
+
+    const busyKey = `bulk:${scope}`;
+    setDeviceActionBusy(busyKey);
+    setDeviceActionNotice(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const response = await fetch('/api/admin/devices/cleanup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ scope }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Could not clear ${label} devices`);
+      }
+
+      const removedIds = new Set(matchingDevices.map(device => device.deviceId));
+      setDevices(prev => prev.filter(device => !removedIds.has(device.deviceId)));
+      setSelectedDevice(prev => prev && removedIds.has(prev) ? null : prev);
+      setActivityLog(prev => [{
+        id: Date.now(),
+        type: 'info',
+        text: `Cleared ${result.deleted ?? matchingDevices.length} ${label} device${result.deleted === 1 ? '' : 's'}`,
+        time: new Date(),
+      }, ...prev].slice(0, 100));
+      setDeviceActionNotice({
+        type: 'success',
+        text: `${result.deleted ?? matchingDevices.length} ${label} device${result.deleted === 1 ? '' : 's'} cleared.`,
+      });
+    } catch (error) {
+      setDeviceActionNotice({ type: 'error', text: error.message || 'Bulk device cleanup failed.' });
+    } finally {
+      setDeviceActionBusy(null);
+    }
+  }, [devices]);
+
   const handleMessage = useCallback((event, data) => {
     switch (event) {
       case 'device:list':
@@ -588,6 +639,8 @@ function AdminDashboard({ logout }) {
                     onBlockDevice={device => handleDeviceAction(device, 'block')}
                     onDeleteDevice={device => handleDeviceAction(device, 'delete')}
                     deviceActionBusy={deviceActionBusy}
+                    onBulkCleanup={handleBulkDeviceCleanup}
+                    bulkCleanupBusy={deviceActionBusy}
                     connected={connected}
                   />
                 ) : globalView === 'users' ? (

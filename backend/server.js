@@ -5065,6 +5065,63 @@ app.delete('/api/admin/devices/:deviceId', requireAdmin, async (req, res) => {
     }
 });
 
+// POST /api/admin/devices/cleanup — remove all offline or all blocked devices.
+// This endpoint deliberately never accepts an arbitrary list of ids: the two
+// supported scopes are server-defined and online devices cannot match the
+// offline scope because liveness is reconciled from the active TCP map.
+app.post('/api/admin/devices/cleanup', requireAdmin, express.json(), async (req, res) => {
+    try {
+        const scope = req.body?.scope;
+        if (scope !== 'offline' && scope !== 'blocked') {
+            return res.status(400).json({ success: false, error: 'scope must be offline or blocked' });
+        }
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                success: false,
+                error: 'Database unavailable; bulk cleanup was not performed',
+            });
+        }
+
+        // Include records that exist only in Redis or memory so cleanup also
+        // removes stale fallback entries created during a database outage.
+        const [dbDevices, redisDevices] = await Promise.all([
+            Device.find().maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).lean().exec(),
+            R.getAllDevices(),
+        ]);
+        const candidates = new Map();
+        for (const device of [...dbDevices, ...redisDevices, ...inMemoryDevices.values()]) {
+            if (device?.deviceId) candidates.set(device.deviceId, device);
+        }
+
+        const targetIds = [...candidates.entries()]
+            .filter(([, device]) => scope === 'blocked'
+                ? !!device.blocked
+                : !deviceToTcp.has(device.deviceId))
+            .map(([deviceId]) => deviceId);
+
+        if (targetIds.length === 0) {
+            return res.json({ success: true, scope, deleted: 0 });
+        }
+
+        await Device.deleteMany({ deviceId: { $in: targetIds } })
+            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+            .exec();
+
+        let disconnected = 0;
+        await Promise.all(targetIds.map(async deviceId => {
+            disconnected += disconnectDeviceConnections(deviceId);
+            inMemoryDevices.delete(deviceId);
+            await R.removeDevice(deviceId);
+        }));
+
+        broadcastDeviceList();
+        log('ADMIN', `Bulk-cleared ${targetIds.length} ${scope} device(s)${disconnected ? ` and disconnected ${disconnected} channel(s)` : ''}`);
+        res.json({ success: true, scope, deleted: targetIds.length, disconnected });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // GET /api/admin/devices — full device list with accessId for admin device management
 app.get('/api/admin/devices', requireAdmin, async (req, res) => {
     try {

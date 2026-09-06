@@ -4,8 +4,31 @@ import DeviceActions from './DeviceActions.jsx';
 
 const ICONS = { connect: '🟢', disconnect: '🔴', success: '✅', error: '❌', info: 'ℹ️' };
 
-export default function Overview({ devices, activityLog, onSelectDevice, onBlockDevice, onDeleteDevice, deviceActionBusy, connected }) {
+export default function Overview({
+  devices,
+  activityLog,
+  onSelectDevice,
+  onBlockDevice,
+  onDeleteDevice,
+  deviceActionBusy,
+  onBulkCleanup,
+  bulkCleanupBusy,
+  connected,
+}) {
   const online = devices.filter(d => d.isOnline).length;
+  const offline = devices.length - online;
+  const blocked = devices.filter(d => d.blocked).length;
+  const actionButtonStyle = (tone, disabled) => ({
+    background: disabled ? 'rgba(71,85,105,0.12)' : `${tone}18`,
+    border: `1px solid ${disabled ? 'rgba(71,85,105,0.25)' : `${tone}55`}`,
+    color: disabled ? '#64748b' : tone,
+    borderRadius: 7,
+    padding: '8px 12px',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    whiteSpace: 'nowrap',
+  });
 
   return (
     <div className="overview">
@@ -26,7 +49,50 @@ export default function Overview({ devices, activityLog, onSelectDevice, onBlock
         </div>
         <div className="stat-card">
           <div className="stat-label">Offline Devices</div>
-          <div className="stat-value" style={{ color: '#94a3b8' }}>{devices.length - online}</div>
+          <div className="stat-value" style={{ color: '#94a3b8' }}>{offline}</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 24,
+          padding: '14px 16px',
+          background: 'rgba(15,23,42,0.45)',
+          border: '1px solid #2d2d4e',
+          borderRadius: 10,
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>Device cleanup</div>
+          <div style={{ marginTop: 4, color: '#64748b', fontSize: 11 }}>
+            Remove stale records without affecting online devices.
+            {blocked > 0 ? ` ${blocked} blocked device${blocked === 1 ? '' : 's'} included in the blocked count.` : ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => onBulkCleanup('offline')}
+            disabled={offline === 0 || !!bulkCleanupBusy}
+            style={actionButtonStyle('#94a3b8', offline === 0 || !!bulkCleanupBusy)}
+            title="Permanently remove every currently offline device"
+          >
+            {bulkCleanupBusy === 'bulk:offline' ? 'Deleting…' : `Delete all offline (${offline})`}
+          </button>
+          <button
+            type="button"
+            onClick={() => onBulkCleanup('blocked')}
+            disabled={blocked === 0 || !!bulkCleanupBusy}
+            style={actionButtonStyle('#fca5a5', blocked === 0 || !!bulkCleanupBusy)}
+            title="Permanently remove every blocked device"
+          >
+            {bulkCleanupBusy === 'bulk:blocked' ? 'Clearing…' : `Clear blocked (${blocked})`}
+          </button>
         </div>
       </div>
 
