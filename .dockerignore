@@ -11,7 +11,8 @@
 **/.vscode
 
 # heavy/irrelevant for the dashboard image
-Apk-builder/
+Apk-builder/*
+!Apk-builder/packageids.json
 apk-output/
 attached_assets/
 .agents/

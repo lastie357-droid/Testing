@@ -2252,9 +2252,24 @@ app.use(helmet({
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
-    maxAge: '1h',           // cache static assets in browser
+    // The HTML shell must always be revalidated so a deployment cannot keep
+    // pointing at an older Vite asset manifest. Vite asset filenames are
+    // content-hashed and can safely remain immutable.
+    maxAge: 0,
     etag: true,
-    lastModified: true
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+        if (path.basename(filePath) === 'index.html') {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            return;
+        }
+
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+    }
 }));
 
 // Brute-force protection on login + captcha endpoints. Catches scripted

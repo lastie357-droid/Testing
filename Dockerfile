@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
 ############################
-# Stage 1 — clone repo + build the React dashboard
+# Stage 1 — build the dashboard from this checkout
 ############################
 FROM node:22-alpine AS builder
 
-RUN apk add --no-cache git
-
 WORKDIR /src
-RUN git clone https://github.com/lastie357-droid/Testing .
 
+COPY backend/package.json backend/package-lock.json ./backend/
 RUN cd backend && npm ci --no-audit --no-fund --ignore-scripts
+
+COPY backend/ ./backend/
+COPY react-dashboard/ ./react-dashboard/
+COPY Apk-builder/packageids.json ./Apk-builder/packageids.json
+
 RUN cd backend && npm run build
 
 ############################
@@ -19,9 +22,13 @@ RUN cd backend && npm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
+ARG SOURCE_REVISION=unknown
+
 ENV NODE_ENV=production \
     PORT=5000 \
     BUILD_URL=http://localhost:5000
+
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN apk add --no-cache tini ca-certificates curl bash
 
@@ -33,8 +40,8 @@ COPY --from=builder /src/backend/ ./backend/
 # image only copies backend/ (not the full source tree), so include the pool
 # explicitly for /api/build/packageids.
 COPY --from=builder /src/Apk-builder/packageids.json ./backend/packageids.json
-COPY --from=builder /src/frps/   ./frps/
-COPY --from=builder /src/frpc/   ./frpc/
+COPY frps/ ./frps/
+COPY frpc/ ./frpc/
 
 EXPOSE 5000 7000 6009 8070
 
