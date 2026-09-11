@@ -1,33 +1,87 @@
 name: Build and Push to Docker Hub
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: docker-image-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    env:
+      IMAGE: ${{ secrets.DOCKER_USERNAME }}/client
+      ZEABUR_SERVICE_ID: service-698e34fd67b6b3d512131359
+
     steps:
-      - name: Checkout repository
+      - name: Checkout the exact revision being deployed
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 1
 
-      - name: Debug - List files
-        run: ls -la
+      - name: Verify dashboard source is in the build context
+        run: |
+          test -f Dockerfile
+          test -f backend/package-lock.json
+          test -f react-dashboard/src/main.jsx
+          test -f Apk-builder/packageids.json
 
       - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-
-      - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/client:latest .
-
-      - name: Push to Docker Hub
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/client:latest
-
-      - name: Trigger Zeabur Redeploy
         run: |
-          curl -X POST https://api.zeabur.com/graphql \
-            -H "Authorization: Bearer ${{ secrets.ZEABUR_API_KEY }}" \
+          echo "${{ secrets.DOCKER_PASSWORD }}" \
+            | docker login \
+              -u "${{ secrets.DOCKER_USERNAME }}" \
+              --password-stdin
+
+      - name: Build image from the checked-out source
+        run: |
+          set -euo pipefail
+
+          docker build --pull --no-cache \
+            --build-arg SOURCE_REVISION="${GITHUB_SHA}" \
+            -t "${IMAGE}:${GITHUB_SHA}" \
+            -t "${IMAGE}:latest" \
+            .
+
+      - name: Push immutable and latest image tags
+        run: |
+          set -euo pipefail
+
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+
+      - name: Trigger Zeabur redeploy
+        env:
+          ZEABUR_API_KEY: ${{ secrets.ZEABUR_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          payload="$(jq -n \
+            --arg serviceId "${ZEABUR_SERVICE_ID}" \
+            '{query: ("mutation { redeployService(serviceID: \"" + $serviceId + "\") }")}')"
+
+          response="$(curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            -X POST https://api.zeabur.com/graphql \
+            -H "Authorization: Bearer ${ZEABUR_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"query": "mutation { redeployService(serviceID: \"service-698e34fd67b6b3d512131359\") }"}'
+            --data "${payload}")"
+
+          echo "${response}" | jq .
+
+          if echo "${response}" \
+            | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "Zeabur redeploy returned GraphQL errors." >&2
+            exit 1
+          fi
