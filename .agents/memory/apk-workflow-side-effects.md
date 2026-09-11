@@ -15,6 +15,12 @@ APK verification can also be blocked by the shared `/tmp/android-sdk` cache: the
 
 **How to apply:** Read the APK workflow tail first. If it fails before `compile...JavaWithJavac`, report the SDK/NDK blocker separately and still restore generated tracked artifacts before reviewing the final diff.
 
+Installer identity sources may already be checked in under generated class names rather than `MainActivity`/`BlockVpnService`.
+
+**Why:** The installer source tree is identity-hardened in the repository, so a build script that assumes the original filenames fails before Gradle starts.
+
+**How to apply:** Discover the activity and VPN service classes from their Java declarations before copying or rewriting them, and update the manifest/ProGuard references from those discovered names.
+
 The dashboard build emits hashed bundles into `backend/public`, which is the directory served by the running backend; those generated bundles must remain aligned with the source when the preview is restarted.
 
 **Why:** Restoring public assets after a successful source build makes the running preview serve stale dashboard code even though the source build passed.
