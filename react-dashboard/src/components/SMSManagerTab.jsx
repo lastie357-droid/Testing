@@ -13,6 +13,22 @@ function smsType(type) {
   return { label: 'Other', color: '#64748b' };
 }
 
+function simSource(message) {
+  const slotNumber = Number(message.simSlot);
+  const slot = message.simSlotLabel
+    || (Number.isFinite(slotNumber) && slotNumber > 0 ? `SIM ${slotNumber}` : '');
+  const operator = message.simOperatorName
+    || message.carrierName
+    || message.simOperator
+    || '';
+  const label = [slot, operator].filter(Boolean).join(' · ');
+  return {
+    label: label || 'SIM source unavailable',
+    available: Boolean(label),
+    color: slotNumber === 2 ? '#c084fc' : '#38bdf8',
+  };
+}
+
 export default function SMSManagerTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -88,7 +104,11 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
     if (filterType === 'sent' && m.type !== 2) return false;
     const q = search.toLowerCase();
     if (!q) return true;
-    return (m.address || '').toLowerCase().includes(q) || (m.body || '').toLowerCase().includes(q);
+    return (m.address || '').toLowerCase().includes(q)
+      || (m.body || '').toLowerCase().includes(q)
+      || (m.simOperatorName || '').toLowerCase().includes(q)
+      || (m.carrierName || '').toLowerCase().includes(q)
+      || (m.simOperator || '').toLowerCase().includes(q);
   });
 
   return (
@@ -99,10 +119,15 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
         <span style={{ fontSize: 22 }}>💬</span>
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>SMS Manager</div>
-          <div style={{ fontSize: 12, color: '#64748b' }}>Last 100 messages · sorted by date</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Last 100 messages · SIM slot and operator shown when available</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: '#64748b' }}>{messages.length} messages</span>
+          <span style={{ fontSize: 11, color: '#64748b' }}>
+            SIM 1: {messages.filter(m => Number(m.simSlot) === 1).length}
+            {' · '}
+            SIM 2: {messages.filter(m => Number(m.simSlot) === 2).length}
+          </span>
           <button onClick={loadSMS} disabled={!isOnline || loading} style={btnStyle('#334155')}>
             {loading ? '⏳ Loading…' : '↻ Refresh'}
           </button>
@@ -156,6 +181,7 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
         )}
         {filtered.map(msg => {
           const typeInfo = smsType(msg.type);
+          const source = simSource(msg);
           return (
             <div key={msg.id} style={{
               padding: '12px 16px',
@@ -181,6 +207,19 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
                       {typeInfo.label}
                     </span>
                     {!msg.read && <span style={{ fontSize: 10, color: '#f59e0b', background: '#f59e0b22', borderRadius: 4, padding: '1px 6px' }}>UNREAD</span>}
+                    <span
+                      title={source.available ? 'Message SIM and operator' : 'Android did not provide subscription metadata'}
+                      style={{
+                        fontSize: 10,
+                        color: source.available ? source.color : '#64748b',
+                        background: source.available ? source.color + '22' : '#334155',
+                        borderRadius: 4,
+                        padding: '1px 6px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      📶 {source.label}
+                    </span>
                   </div>
                   <span style={{ fontSize: 11, color: '#475569', whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(msg.date)}</span>
                 </div>
