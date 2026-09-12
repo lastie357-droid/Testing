@@ -3151,6 +3151,9 @@ app.get('/api/build/packageids', (req, res) => {
         const candidates = [
             process.env.PACKAGE_IDS_FILE,
             path.join(__dirname, 'packageids.json'),
+            // Local development keeps the source pool with the APK builder.
+            // The production Dockerfile copies it into backend/packageids.json.
+            path.join(__dirname, '..', 'Apk-builder', 'packageids.json'),
         ].filter(Boolean);
         const file = candidates.find(candidate => fs.existsSync(candidate));
         const values = file ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
@@ -5070,6 +5073,92 @@ app.delete('/api/admin/devices/:deviceId', requireAdmin, async (req, res) => {
 
         log('ADMIN', `Deleted device ${deviceId}`);
         res.json({ success: true, deviceId });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/admin/devices/bulk — apply an admin device action to a whole set.
+// Bulk deletes use the same cleanup path as single-device deletes so active
+// sockets, pending commands, Redis state, and dashboard lists stay consistent.
+app.post('/api/admin/devices/bulk', requireAdmin, express.json(), async (req, res) => {
+    const action = String(req.body?.action || '').trim();
+    const allowedActions = new Set(['unblock-all', 'delete-blocked', 'delete-all', 'delete-offline']);
+    if (!allowedActions.has(action)) {
+        return res.status(400).json({
+            success: false,
+            error: 'action must be one of: unblock-all, delete-blocked, delete-all, delete-offline',
+        });
+    }
+
+    // Match the existing single-device admin mutation behavior: destructive
+    // changes must not silently succeed against only an in-memory fallback.
+    if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({ success: false, error: 'Database unavailable; device state was not changed' });
+    }
+
+    try {
+        const devices = await getDeviceList(null);
+        const selected = action === 'unblock-all'
+            ? devices.filter(device => device.blocked)
+            : action === 'delete-blocked'
+                ? devices.filter(device => device.blocked)
+                : action === 'delete-offline'
+                    ? devices.filter(device => !device.isOnline)
+                    : devices;
+        const deviceIds = [...new Set(selected.map(device => device.deviceId).filter(Boolean))];
+
+        if (action === 'unblock-all') {
+            await Device.updateMany(
+                { blocked: true },
+                { $set: { blocked: false, blockedAt: null } },
+            ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec();
+
+            for (const device of selected) {
+                const deviceId = device.deviceId;
+                const nextRecord = {
+                    ...device,
+                    blocked: false,
+                    blockedAt: null,
+                    isOnline: deviceToTcp.has(deviceId),
+                };
+                inMemoryDevices.set(deviceId, nextRecord);
+                R.saveDevice(deviceId, nextRecord).catch(() => {});
+            }
+
+            await broadcastDeviceList();
+            log('ADMIN', `Unblocked ${deviceIds.length} device(s)`);
+            return res.json({ success: true, action, affected: deviceIds.length });
+        }
+
+        if (deviceIds.length > 0) {
+            await Device.deleteMany({ deviceId: { $in: deviceIds } })
+                .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                .exec();
+        }
+
+        for (const device of selected) {
+            const deviceId = device.deviceId;
+            const wasOnline = deviceToTcp.has(deviceId);
+            const accessId = device.accessId || '';
+
+            disconnectDeviceConnections(deviceId);
+            inMemoryDevices.delete(deviceId);
+            await R.removeDevice(deviceId);
+
+            if (wasOnline) {
+                broadcastDashScoped('device:disconnected', {
+                    deviceId,
+                    accessId,
+                    timestamp: new Date(),
+                    reason: 'deleted',
+                }, accessId || null);
+            }
+        }
+
+        await broadcastDeviceList();
+        log('ADMIN', `${action} removed ${deviceIds.length} device(s)`);
+        res.json({ success: true, action, affected: deviceIds.length });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }

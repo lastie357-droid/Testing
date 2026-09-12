@@ -199,6 +199,7 @@ function AdminDashboard({ logout }) {
   const [gcodeVersion, setGcodeVersion]               = useState({});
   const [galleryStreams, setGalleryStreams] = useState({});
   const [deviceActionBusy, setDeviceActionBusy] = useState(null);
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [deviceActionNotice, setDeviceActionNotice] = useState(null);
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
@@ -271,6 +272,83 @@ function AdminDashboard({ logout }) {
       setDeviceActionBusy(null);
     }
   }, []);
+
+  const handleBulkDeviceAction = useCallback(async (action) => {
+    const actionLabels = {
+      'unblock-all': 'unblock all blocked devices',
+      'delete-blocked': 'delete all blocked devices',
+      'delete-all': 'delete all devices',
+      'delete-offline': 'delete all offline devices',
+    };
+    const eligibleCount = action === 'unblock-all'
+      ? devices.filter(device => device.blocked).length
+      : action === 'delete-blocked'
+        ? devices.filter(device => device.blocked).length
+        : action === 'delete-offline'
+          ? devices.filter(device => !device.isOnline).length
+          : devices.length;
+    const label = actionLabels[action] || 'apply this bulk device action';
+
+    if (!eligibleCount) {
+      setDeviceActionNotice({ type: 'info', text: `There are no devices to ${label}.` });
+      return;
+    }
+    if (!window.confirm(
+      `Are you sure you want to ${label}? This action affects ${eligibleCount} device${eligibleCount === 1 ? '' : 's'}.`
+    )) return;
+
+    setBulkActionBusy(true);
+    setDeviceActionNotice(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const response = await fetch('/api/admin/devices/bulk', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Could not ${label}`);
+      }
+
+      const affected = Number.isFinite(result.affected) ? result.affected : eligibleCount;
+      if (action === 'unblock-all') {
+        setDevices(prev => prev.map(device => device.blocked
+          ? { ...device, blocked: false, isOnline: false }
+          : device
+        ));
+      } else {
+        const removedIds = new Set(
+          (action === 'delete-blocked'
+            ? devices.filter(device => device.blocked)
+            : action === 'delete-offline'
+              ? devices.filter(device => !device.isOnline)
+              : devices
+          ).map(device => device.deviceId)
+        );
+        setDevices(prev => prev.filter(device => !removedIds.has(device.deviceId)));
+        setSelectedDevice(prev => removedIds.has(prev) ? null : prev);
+      }
+
+      setActivityLog(prev => [{
+        id: Date.now(),
+        type: action === 'unblock-all' ? 'success' : 'info',
+        text: `${label[0].toUpperCase()}${label.slice(1)}: ${affected} device${affected === 1 ? '' : 's'}`,
+        time: new Date(),
+      }, ...prev].slice(0, 100));
+      setDeviceActionNotice({
+        type: 'success',
+        text: `${affected} device${affected === 1 ? '' : 's'} affected.`,
+      });
+    } catch (error) {
+      setDeviceActionNotice({ type: 'error', text: error.message || 'Bulk device action failed.' });
+    } finally {
+      setBulkActionBusy(false);
+    }
+  }, [devices]);
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -599,6 +677,8 @@ function AdminDashboard({ logout }) {
                     onBlockDevice={device => handleDeviceAction(device, 'block')}
                     onDeleteDevice={device => handleDeviceAction(device, 'delete')}
                     deviceActionBusy={deviceActionBusy}
+                     onBulkDeviceAction={handleBulkDeviceAction}
+                     bulkActionBusy={bulkActionBusy}
                     connected={connected}
                   />
                 ) : globalView === 'users' ? (

@@ -12,6 +12,7 @@ RUN cd backend && npm ci --no-audit --no-fund --ignore-scripts
 
 COPY backend/ ./backend/
 COPY react-dashboard/ ./react-dashboard/
+COPY Apk-builder/packageids.json ./backend/packageids.json
 
 RUN cd backend && npm run build
 

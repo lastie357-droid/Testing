@@ -4,8 +4,42 @@ import DeviceActions from './DeviceActions.jsx';
 
 const ICONS = { connect: '🟢', disconnect: '🔴', success: '✅', error: '❌', info: 'ℹ️' };
 
-export default function Overview({ devices, activityLog, onSelectDevice, onBlockDevice, onDeleteDevice, deviceActionBusy, connected }) {
+export default function Overview({
+  devices,
+  activityLog,
+  onSelectDevice,
+  onBlockDevice,
+  onDeleteDevice,
+  deviceActionBusy,
+  onBulkDeviceAction,
+  bulkActionBusy,
+  connected,
+}) {
   const online = devices.filter(d => d.isOnline).length;
+  const blocked = devices.filter(d => d.blocked).length;
+  const offline = devices.length - online;
+
+  const bulkButton = (background, label, action, count, disabled = false) => (
+    <button
+      type="button"
+      onClick={() => onBulkDeviceAction(action)}
+      disabled={bulkActionBusy || disabled}
+      style={{
+        border: '1px solid rgba(148,163,184,0.2)',
+        borderRadius: 7,
+        padding: '8px 11px',
+        background,
+        color: '#f8fafc',
+        fontSize: 11,
+        fontWeight: 700,
+        cursor: bulkActionBusy || disabled ? 'not-allowed' : 'pointer',
+        opacity: bulkActionBusy || disabled ? 0.45 : 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label} <span style={{ color: '#cbd5e1', fontWeight: 500 }}>({count})</span>
+    </button>
+  );
 
   return (
     <div className="overview">
@@ -27,6 +61,28 @@ export default function Overview({ devices, activityLog, onSelectDevice, onBlock
         <div className="stat-card">
           <div className="stat-label">Offline Devices</div>
           <div className="stat-value" style={{ color: '#94a3b8' }}>{devices.length - online}</div>
+        </div>
+      </div>
+
+      <div style={{
+        marginBottom: 24,
+        padding: 14,
+        borderRadius: 10,
+        border: '1px solid #2d2d4e',
+        background: 'rgba(22,33,62,0.72)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+          <div className="section-title" style={{ margin: 0 }}>🛡️ Device Control Center</div>
+          {bulkActionBusy && <span style={{ fontSize: 11, color: '#a5b4fc' }}>Updating devices…</span>}
+        </div>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 11 }}>
+          Use these admin actions to manage the full device list. Deletions disconnect online devices and cannot be undone.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {bulkButton('#14532d', '↗ Unblock all', 'unblock-all', blocked, blocked === 0)}
+          {bulkButton('#7f1d1d', '🗑 Delete blocked', 'delete-blocked', blocked, blocked === 0)}
+          {bulkButton('#991b1b', '🗑 Delete offline', 'delete-offline', offline, offline === 0)}
+          {bulkButton('#450a0a', '⚠ Delete all devices', 'delete-all', devices.length, devices.length === 0)}
         </div>
       </div>
 
