@@ -3145,27 +3145,22 @@ function isValidAppName(s) {
     return typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .&'-]+$/.test(s);
 }
 
-// Package IDs used by the Build APK tab come from the same pool as build.sh.
-// This is static, non-sensitive metadata. Keep it public so a stale/expired
-// dashboard token cannot turn the initial Build APK form into
-// "Package ID pool unavailable"; the build mutation itself remains protected.
+// Package IDs are optional because APK builds run outside this website image.
 app.get('/api/build/packageids', (req, res) => {
     try {
         const candidates = [
             process.env.PACKAGE_IDS_FILE,
             path.join(__dirname, 'packageids.json'),
-            path.join(__dirname, '..', 'Apk-builder', 'packageids.json'),
         ].filter(Boolean);
         const file = candidates.find(candidate => fs.existsSync(candidate));
-        if (!file) throw new Error('No package ID pool file found');
-        const values = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const values = file ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
         const packageIds = Array.isArray(values)
             ? [...new Set(values.filter(isValidPackage))]
             : [];
         res.set('Cache-Control', 'no-store');
         res.json({ success: true, packageIds });
     } catch (err) {
-        console.error('Failed to load APK package ID pool:', err.message);
+        console.error('Failed to load optional package ID pool:', err.message);
         res.status(500).json({ success: false, error: 'Package ID pool unavailable' });
     }
 });

@@ -33,7 +33,6 @@ jobs:
           test -f Dockerfile
           test -f backend/package-lock.json
           test -f react-dashboard/src/main.jsx
-          test -f Apk-builder/packageids.json
 
       - name: Login to Docker Hub
         run: |
@@ -51,6 +50,31 @@ jobs:
             -t "${IMAGE}:${GITHUB_SHA}" \
             -t "${IMAGE}:latest" \
             .
+
+      - name: Smoke test the image before pushing
+        run: |
+          set -euo pipefail
+
+          container="zeabur-client-smoke-test"
+          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          docker run --detach --name "$container" \
+            --publish 5000:5000 \
+            "${IMAGE}:${GITHUB_SHA}"
+
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              --max-time 3 http://127.0.0.1:5000/api/health >/tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs "$container"
+          echo "Container did not become healthy." >&2
+          exit 1
 
       - name: Push immutable and latest image tags
         run: |
