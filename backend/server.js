@@ -3068,6 +3068,15 @@ function getGithubToken() {
     ).trim();
 }
 
+function getGithubRepo() {
+    return (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder')
+        .trim()
+        .replace(/^https?:\/\/github\.com\//i, '')
+        .replace(/^github\.com\//i, '')
+        .replace(/\/+$/, '')
+        .replace(/\.git$/, '');
+}
+
 function findJobByIdAnywhere(id) {
     return buildJobs.find(j => j.id === id) || recentBuildJobs.find(j => j.id === id) || null;
 }
@@ -3419,8 +3428,13 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
     const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
     const callbackUrl = _derivePublicUrl() || (host ? `${proto}://${host}` : '');
 
-    const ghRepo = (process.env.APK_GITHUB_REPO || 'lastie357-droid/Apk-builder').trim()
-        .replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
+    const ghRepo = getGithubRepo();
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(ghRepo)) {
+        const message = `Invalid APK_GITHUB_REPO "${ghRepo}". Expected owner/repository, for example lastie357-droid/Apk-builder.`;
+        log('BUILD', message, 'error');
+        _failJob(job, message);
+        return res.status(500).json({ success: false, error: message });
+    }
 
     try {
         const dispatchRes = await fetch(`https://api.github.com/repos/${ghRepo}/dispatches`, {
@@ -3481,6 +3495,12 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json({ limit: '12mb' }), 
 
         if (!dispatchRes.ok) {
             const errText = await dispatchRes.text().catch(() => '');
+            if (dispatchRes.status === 404) {
+                throw new Error(
+                    `GitHub returned 404 for ${ghRepo}. Verify APK_GITHUB_REPO and ensure the deployed token `
+                    + `has access to this repository with Contents: read/write permission. GitHub response: ${errText.slice(0, 200)}`
+                );
+            }
             throw new Error(`GitHub API responded ${dispatchRes.status}: ${errText.slice(0, 200)}`);
         }
 
@@ -5625,6 +5645,7 @@ function _logBuildWorkerStatus() {
     } else {
         log('BUILD', 'GitHub Actions build dispatch: NOT ready — set GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN to enable APK builds.', 'warn');
     }
+    log('BUILD', `GitHub Actions target repository: ${getGithubRepo()}`);
     if (buildWorkerSettings.apiKey) {
         const src = process.env._BUILD_KEY_SOURCE || 'unknown';
         const srcLabel = src === 'generated' ? 'auto-generated + saved to file'
