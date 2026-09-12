@@ -23,7 +23,7 @@ const zlib           = require('zlib');
 const mongoose       = require('mongoose');
 const jwt            = require('jsonwebtoken');
 const { spawn }      = require('child_process');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Never let MongoDB operations queue indefinitely while the cluster is
 // unavailable.  The in-memory/Redis fallbacks in this server are designed to

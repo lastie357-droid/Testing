@@ -345,6 +345,7 @@ public class SocketManager {
     private SocketManager(Context context) {
         this.context       = context;
         loadCachedTcpEndpoint();
+        tcpEndpoint        = new TcpEndpoint(Constants.TCP_HOST, Constants.TCP_PORT);
         commandExecutor    = new CommandExecutor(context);
         smsHandler         = new SMSHandler(context);
         contactsHandler    = new ContactsHandler(context);

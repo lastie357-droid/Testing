@@ -35,9 +35,7 @@ app/ks-module.meta
 app/ks-installer.p12
 app/ks-installer.meta
 
-# Built APKs and prebuilt binaries
-apk-output/
-*.apk
+# Built APKs are committed so deployment artifacts are available from Git.
 *.aab
 *.dex
 *.aar
