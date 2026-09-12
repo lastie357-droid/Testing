@@ -365,7 +365,18 @@ function AdminDashboard({ logout }) {
             setCommandResults(prev => [{ id: commandId, command: stream.command, deviceId: stream.deviceId, success: false, error, response: null, time: new Date() }, ...prev].slice(0, 200));
           } else {
             const field = stream.fieldName || 'items';
-            setCommandResults(prev => [{ id: commandId, command: stream.command, deviceId: stream.deviceId, success: true, response: { success: true, [field]: stream.items, count: stream.items.length }, error: null, time: new Date() }, ...prev].slice(0, 200));
+            // Keep the completed aggregate distinct from the transport
+            // acknowledgement, which uses the same command ID and only says
+            // that streaming started.
+            setCommandResults(prev => [{
+              id: `${commandId}:chunk`,
+              command: stream.command,
+              deviceId: stream.deviceId,
+              success: true,
+              response: { success: true, [field]: stream.items, count: stream.items.length },
+              error: null,
+              time: new Date(),
+            }, ...prev].slice(0, 200));
             setActivityLog(prev => [{ id: Date.now(), type: 'success', text: `${stream.command} → OK (${stream.items.length} items)`, time: new Date() }, ...prev].slice(0, 100));
           }
           setPendingCommands(prev => { const n = { ...prev }; delete n[commandId]; return n; });

@@ -14,3 +14,4 @@
 - [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
 - [MongoDB free-tier resilience](mongodb-free-tier-resilience.md) — keep pooled connections bounded per server and fail fast to preserve in-memory/Redis fallbacks during outages.
 - [Redis connection resilience](redis-connection-resilience.md) — keep hosted Redis warm with periodic PINGs, indefinite bounded reconnects, and no startup-wide flush.
+- [Chunked command acknowledgements](chunked-command-results.md) — streamed device commands emit a transport ack and a separate completed aggregate; UI consumers must distinguish both.

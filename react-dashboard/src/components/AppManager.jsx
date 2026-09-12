@@ -41,14 +41,22 @@ export default function AppManager({ device, sendCommand, results }) {
   // Parse results
   useEffect(() => {
     results.forEach(r => {
-      if (r.command === 'get_installed_apps' && r.success && r.response && !seenIds.current.has(r.id)) {
-        seenIds.current.add(r.id);
-        setLoading(false);
-        try {
-          const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          const list = data.apps || data.installedApps || [];
-          setApps(list);
-        } catch (_) { setLoading(false); }
+      if (r.command !== 'get_installed_apps' || seenIds.current.has(r.id)) return;
+
+      const data = typeof r.response === 'string'
+        ? (() => { try { return JSON.parse(r.response); } catch (_) { return null; } })()
+        : r.response;
+
+      // Chunked commands first return a transport acknowledgement.  It is not
+      // the app list and must not consume the result ID before the final chunk
+      // aggregate arrives.
+      if (r.success && data?.streaming && !data.apps && !data.installedApps) return;
+
+      seenIds.current.add(r.id);
+      setLoading(false);
+      if (r.success && data) {
+        const list = data.apps || data.installedApps || [];
+        setApps(Array.isArray(list) ? list : []);
       }
     });
   }, [results]);

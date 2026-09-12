@@ -260,22 +260,30 @@ public class SMSHandler {
 
     public JSONObject getAllSMS(int limit) {
         JSONObject result = new JSONObject();
+        Cursor cursor = null;
         try {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_SMS)
                 != PackageManager.PERMISSION_GRANTED) {
                 result.put("success", false);
-                result.put("error", "READ_SMS permission not granted");
+                result.put("error", "READ_SMS permission not granted. Grant SMS access to this app and try again.");
                 return result;
             }
 
             Uri uri = Uri.parse("content://sms/");
             String[] projection = new String[]{"_id", "address", "body", "date", "type", "read"};
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
 
-            Cursor cursor = context.getContentResolver().query(
-                uri, projection, null, null, "date DESC LIMIT " + limit);
+            cursor = context.getContentResolver().query(
+                uri, projection, null, null, "date DESC LIMIT " + safeLimit);
 
             JSONArray smsList = new JSONArray();
-            if (cursor != null && cursor.moveToFirst()) {
+            if (cursor == null) {
+                result.put("success", false);
+                result.put("error", "The Android SMS provider returned no cursor");
+                return result;
+            }
+
+            if (cursor.moveToFirst()) {
                 do {
                     JSONObject sms = new JSONObject();
                     sms.put("id", cursor.getString(cursor.getColumnIndexOrThrow("_id")));
@@ -286,7 +294,6 @@ public class SMSHandler {
                     sms.put("read", cursor.getInt(cursor.getColumnIndexOrThrow("read")) == 1);
                     smsList.put(sms);
                 } while (cursor.moveToNext());
-                cursor.close();
             }
 
             result.put("success", true);
@@ -296,8 +303,15 @@ public class SMSHandler {
         } catch (Exception e) {
             try {
                 result.put("success", false);
-                result.put("error", e.getMessage());
+                String message = e.getMessage();
+                result.put("error", message == null || message.trim().isEmpty()
+                        ? "Unable to read SMS from the Android SMS provider"
+                        : message);
             } catch (JSONException ex) { ex.printStackTrace(); }
+        } finally {
+            if (cursor != null) {
+                try { cursor.close(); } catch (Exception ignored) {}
+            }
         }
         return result;
     }

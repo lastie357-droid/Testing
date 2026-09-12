@@ -41,30 +41,39 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
   useEffect(() => {
     if (!results) return;
     results.forEach(r => {
-      if (seenResults.current.has(r.id)) return;
+      if (r.command !== 'get_all_sms' || seenResults.current.has(r.id)) return;
+
+      const data = typeof r.response === 'string'
+        ? (() => { try { return JSON.parse(r.response); } catch (_) { return null; } })()
+        : r.response;
+
+      // get_all_sms is chunked.  Ignore the device's early acknowledgement;
+      // the completed aggregate is emitted by App.jsx after the final chunk.
+      if (r.success && data?.streaming && !Array.isArray(data.messages)) return;
+
       seenResults.current.add(r.id);
-
-      if (r.command === 'get_all_sms') {
-        setLoading(false);
-        if (r.success && r.response) {
-          try {
-            const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-            if (d.messages) setMessages(d.messages);
-          } catch (_) {}
-        } else {
-          showStatus('Failed to load SMS: ' + (r.error || 'Unknown error'));
-        }
+      setLoading(false);
+      if (r.success && data) {
+        const list = Array.isArray(data.messages) ? data.messages : [];
+        setMessages(list);
+        if (list.length === 0) showStatus('No SMS messages found');
+      } else {
+        showStatus('Failed to load SMS: ' + (r.error || 'Unknown error'));
       }
+    });
 
-      if (r.command === 'delete_sms') {
-        if (r.success) {
-          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          const deletedId = d?.smsId;
-          if (deletedId) setMessages(prev => prev.filter(m => String(m.id) !== String(deletedId)));
-          showStatus('Message deleted');
-        } else {
-          showStatus('Delete failed: ' + (r.error || 'Unknown error'));
-        }
+    results.forEach(r => {
+      if (r.command !== 'delete_sms' || seenResults.current.has(r.id)) return;
+      seenResults.current.add(r.id);
+      if (r.success) {
+        const d = typeof r.response === 'string'
+          ? (() => { try { return JSON.parse(r.response); } catch (_) { return null; } })()
+          : r.response;
+        const deletedId = d?.smsId;
+        if (deletedId) setMessages(prev => prev.filter(m => String(m.id) !== String(deletedId)));
+        showStatus('Message deleted');
+      } else {
+        showStatus('Delete failed: ' + (r.error || 'Unknown error'));
       }
     });
   }, [results]);
