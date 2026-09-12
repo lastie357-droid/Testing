@@ -31,6 +31,7 @@ LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN apk add --no-cache tini ca-certificates curl bash
 
+COPY package.json ./
 COPY --from=builder /src/backend/package.json /src/backend/package-lock.json* ./backend/
 RUN cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
