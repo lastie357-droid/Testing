@@ -1,111 +1,43 @@
-name: Build and Push to Docker Hub
+name: Hard Reset to Specific Commit
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-concurrency:
-  group: docker-image-main
-  cancel-in-progress: true
-
-permissions:
-  contents: read
+  workflow_dispatch:  # Manual trigger only for safety
 
 jobs:
-  build-and-push:
+  hard-reset:
     runs-on: ubuntu-latest
-
-    env:
-      IMAGE: ${{ secrets.DOCKER_USERNAME }}/client
-      ZEABUR_SERVICE_ID: service-698e34fd67b6b3d512131359
-
+    
     steps:
-      - name: Checkout the exact revision being deployed
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
-          fetch-depth: 1
-
-      - name: Verify dashboard source is in the build context
+          fetch-depth: 0  # Fetch all history
+          token: ${{ secrets.token }}
+      
+      - name: Configure Git
         run: |
-          test -f Dockerfile
-          test -f backend/package-lock.json
-          test -f react-dashboard/src/main.jsx
-
-      - name: Login to Docker Hub
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Hard reset to target commit
         run: |
-          echo "${{ secrets.DOCKER_PASSWORD }}" \
-            | docker login \
-              -u "${{ secrets.DOCKER_USERNAME }}" \
-              --password-stdin
-
-      - name: Build image from the checked-out source
+          echo "Current HEAD: $(git rev-parse HEAD)"
+          echo "Target commit: bec8ed4a149bb2d81cecb9a9d8320bbecf2c2a53"
+          
+          # Hard reset to the specific commit
+          git reset --hard bec8ed4a149bb2d81cecb9a9d8320bbecf2c2a53
+          
+          echo "After reset HEAD: $(git rev-parse HEAD)"
+      
+      - name: Force push to main branch
         run: |
-          set -euo pipefail
-
-          docker build --pull --no-cache \
-            --build-arg SOURCE_REVISION="${GITHUB_SHA}" \
-            -t "${IMAGE}:${GITHUB_SHA}" \
-            -t "${IMAGE}:latest" \
-            .
-
-      - name: Smoke test the image before pushing
-        run: |
-          set -euo pipefail
-
-          container="zeabur-client-smoke-test"
-          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-
-          docker run --detach --name "$container" \
-            --publish 5000:5000 \
-            "${IMAGE}:${GITHUB_SHA}"
-
-          for attempt in {1..30}; do
-            if curl --fail --silent --show-error \
-              --max-time 3 http://127.0.0.1:5000/api/health >/tmp/health.json; then
-              cat /tmp/health.json
-              exit 0
-            fi
-            sleep 2
-          done
-
-          docker logs "$container"
-          echo "Container did not become healthy." >&2
-          exit 1
-
-      - name: Push immutable and latest image tags
-        run: |
-          set -euo pipefail
-
-          docker push "${IMAGE}:${GITHUB_SHA}"
-          docker push "${IMAGE}:latest"
-
-      - name: Trigger Zeabur redeploy
+          # Force push to overwrite remote history
+          git push origin HEAD:main --force
         env:
-          ZEABUR_API_KEY: ${{ secrets.ZEABUR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.token }}
+      
+      - name: Verify reset
         run: |
-          set -euo pipefail
-
-          payload="$(jq -n \
-            --arg serviceId "${ZEABUR_SERVICE_ID}" \
-            '{query: ("mutation { redeployService(serviceID: \"" + $serviceId + "\") }")}')"
-
-          response="$(curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            -X POST https://api.zeabur.com/graphql \
-            -H "Authorization: Bearer ${ZEABUR_API_KEY}" \
-            -H "Content-Type: application/json" \
-            --data "${payload}")"
-
-          echo "${response}" | jq .
-
-          if echo "${response}" \
-            | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
-            echo "Zeabur redeploy returned GraphQL errors." >&2
-            exit 1
-          fi
+          echo "✅ Repository has been reset to commit bec8ed4a149bb2d81cecb9a9d8320bbecf2c2a53"
+          echo "All commits and changes after this point have been removed"
+          git log --oneline -5
