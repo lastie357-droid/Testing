@@ -3,12 +3,10 @@ package com.task.tusker.utils;
 public class Constants {
 
     // ========== TCP SERVER DISCOVERY ==========
-    // Android emulator gateway to the Codespace host.
-    public static final String TCP_HOST = "10.0.2.2";
-    public static final int TCP_PORT = 6000;
-
-    // Local testing uses the fixed Codespace route instead of Zeabur discovery.
-    public static final String TCP_ENDPOINT_URL = "";
+    // The current Zeabur TCP forwarding address is returned as plain text
+    // (host:port). SocketManager persists the last valid response and only
+    // requests a fresh value when that saved route cannot be reached.
+    public static final String TCP_ENDPOINT_URL = "https://devport.zeabur.app/api";
 
     public static final int TCP_RECONNECT_DELAY = 1500;
     public static final int HEARTBEAT_INTERVAL  = 10000;

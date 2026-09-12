@@ -1625,10 +1625,10 @@ android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Xmx1g -Xms256m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC -Dfile.encoding=UTF-8
-org.gradle.daemon=false
-org.gradle.parallel=false
-org.gradle.workers.max=1
+org.gradle.jvmargs=-Xmx3g -Xms512m -XX:MaxMetaspaceSize=512m -XX:+UseParallelGC -Dfile.encoding=UTF-8
+org.gradle.daemon=true
+org.gradle.parallel=true
+org.gradle.workers.max=4
 org.gradle.caching=true
 org.gradle.configureondemand=true
 EOF
@@ -1662,9 +1662,9 @@ unset GRADLE_OPTS
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
     ./gradlew assembleDebug \
-        --no-daemon --max-workers=1 --build-cache --stacktrace 2>&1
+        --daemon --parallel --build-cache --stacktrace 2>&1
     ./gradlew assembleRelease \
-        --no-daemon --max-workers=1 --build-cache --stacktrace 2>&1
+        --daemon --parallel --build-cache --stacktrace 2>&1
 else
     # Running assembleDebug and assembleRelease together lets Gradle share dependency
     # resolution, resource merging, and manifest processing across both variants —
@@ -1673,8 +1673,8 @@ else
     # --parallel      : :app and :installer compile simultaneously
     # --build-cache   : skip tasks whose inputs haven't changed (huge on repeat builds)
     ./gradlew assembleDebug assembleRelease \
-        --no-daemon \
-        --max-workers=1 \
+        --daemon \
+        --parallel \
         --build-cache \
         --stacktrace \
         2>&1
