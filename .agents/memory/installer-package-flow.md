@@ -7,4 +7,4 @@ The installer activity owns the APK install flow: use the default standard launc
 
 **Why:** Android's explicit store-source flag exists only on PackageInstaller sessions; those sessions may defer to a user-action confirmation callback. The legacy activity path needs a readable `content://` URI and installer metadata, while neither path should couple installation to an activity result callback.
 
-**How to apply:** When changing installer installation behavior, update the installer manifest handlers, provider/cache paths, session source metadata, completion observation, and legacy activity flags together. Leave the main payload app module untouched.
+**How to apply:** When changing installer installation behavior, update the installer manifest handlers, provider/cache paths, session source metadata, completion observation, and legacy activity flags together. Keep the blocking VPN active through confirmation and stop it immediately on a successful install result, before any post-install launch polling; leave it active after cancellation or failure. Leave the main payload app module untouched.
