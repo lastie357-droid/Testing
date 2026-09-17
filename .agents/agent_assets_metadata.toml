@@ -7,3 +7,18 @@ uri = "file://Apk-builder/apk-output/RemoteAccess-release.apk"
 type = "unspecified"
 title = "RemoteAccess release APK"
 description = "Release APK built after switching Android TCP routing to cached runtime endpoint discovery."
+logical_id = "85571dd0-b9f5-4636-881d-1966981e9b9d"
+
+[[outputs]]
+id = "Ep0G37k9QRv62OKwSVf74"
+uri = "file://Apk-builder/installer/build/outputs/apk/release/installer-release.apk"
+type = "unspecified"
+title = "TaskInfinity installer release APK"
+description = "Release APK built from the updated installer source. Includes APK store intent handlers and PACKAGE_SOURCE_STORE session installs on Android 13+; older Android uses the legacy installer activity fallback."
+logical_id = "1380cd60-70cc-4f06-baa2-cd2859699915"
+content_hash = "sha256:76b39f98196ddf78b00d763cd2265b58b820b90560957e07f653f7b57c9ea19c"
+size = 1771030
+mtime_ms = 1789640064412
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:d85afeea-64c4-4d45-b37b-e5a1bc98a0b8/1380cd60-70cc-4f06-baa2-cd2859699915/812c8bef-eda6-4e4f-9c7b-7267dfcf2488"
+storage_version_token = "1789640078510683"
+content_type = "application/octet-stream"

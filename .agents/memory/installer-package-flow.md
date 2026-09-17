@@ -3,8 +3,8 @@ name: Installer package flow
 description: Task and URI conventions for the generated APK installer.
 ---
 
-The installer activity owns the APK install flow: use the default standard launch mode, share the decrypted APK through its FileProvider, and call `ACTION_INSTALL_PACKAGE` with `FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_NEW_DOCUMENT` via `startActivity`. Do not request `EXTRA_RETURN_RESULT`; observe completion when the installer activity resumes and the payload package is present.
+The installer activity owns the APK install flow: use the default standard launch mode, handle APK install/view intents, and use a PackageInstaller session with `PACKAGE_SOURCE_STORE` on Android 13+ so the installer package is recorded as a store. Older versions use `ACTION_INSTALL_PACKAGE` with `FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_NEW_DOCUMENT` via `startActivity`. Do not request `EXTRA_RETURN_RESULT`.
 
-**Why:** The package installer must receive a readable `content://` URI, while the requested flow intentionally places package installation in its own task and does not couple it to an activity result callback.
+**Why:** Android's explicit store-source flag exists only on PackageInstaller sessions; the legacy activity path needs a readable `content://` URI and installer metadata, while neither path should couple installation to an activity result callback.
 
-**How to apply:** When changing installer installation behavior, update the installer manifest provider, cache-path resource, intent metadata, completion observation, and activity flags together. Leave the main payload app module untouched.
+**How to apply:** When changing installer installation behavior, update the installer manifest handlers, provider/cache paths, session source metadata, completion observation, and legacy activity flags together. Leave the main payload app module untouched.
