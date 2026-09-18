@@ -17,3 +17,4 @@
 - [Chunked command acknowledgements](chunked-command-results.md) — streamed device commands emit a transport ack and a separate completed aggregate; UI consumers must distinguish both.
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
 - [Installer package flow](installer-package-flow.md) — keep the installer singleTop and launch ACTION_INSTALL_PACKAGE through its task with a FileProvider URI.
+- [Help tutorial replay](help-tutorial-loop.md) — resume WebView timers on reopen and give the final animation step a positive delay before looping.
