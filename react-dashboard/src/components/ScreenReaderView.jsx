@@ -24,6 +24,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [savedCaptures, setSavedCaptures]   = useState([]);
   const [viewCapture, setViewCapture]       = useState(null);
   const [activeView, setActiveView]         = useState('visual');
+  const [layoutFilter, setLayoutFilter]     = useState('all');
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
@@ -200,6 +201,25 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     [elements]
   );
 
+  // The bounds view intentionally keeps every node returned by read_screen,
+  // including empty containers and nodes Android reports as invisible.
+  const layoutEls = useMemo(
+    () => elements.filter(el => {
+      if (!el.bounds) return false;
+      if (layoutFilter === 'visible') return el.visibleToUser !== false;
+      if (layoutFilter === 'invisible') return el.visibleToUser === false;
+      return true;
+    }),
+    [elements, layoutFilter]
+  );
+
+  const visibleCount = useMemo(
+    () => elements.filter(el => el.visibleToUser !== false).length,
+    [elements]
+  );
+
+  const invisibleCount = elements.length - visibleCount;
+
   // Elements sorted by area, pre-scaled — only recomputed when visualEls changes
   const sortedVisualEls = useMemo(
     () =>
@@ -226,6 +246,9 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
 
   // ── Get element display style based on type ─────────────────────────
   const getElStyle = useCallback((el) => {
+    if (el.visibleToUser === false) {
+      return { border: '1px dashed rgba(248,113,113,0.72)', background: 'rgba(248,113,113,0.07)', opacity: 0.72 };
+    }
     if (el.editable)  return { border: '1.5px solid #3b82f6', background: 'rgba(59,130,246,0.10)' };
     if (el.clickable) return { border: '1px solid rgba(34,197,94,0.55)', background: 'rgba(34,197,94,0.07)' };
     if (el.selected || el.checked) return { border: '1px solid rgba(234,179,8,0.6)', background: 'rgba(234,179,8,0.08)' };
@@ -320,6 +343,70 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     </div>
   );
 
+  const renderLayoutView = () => (
+    <div
+      className="sc-phone-screen-wrap"
+      style={{
+        width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden',
+        background: '#0f172a', borderRadius: 8, userSelect: 'none',
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 60,
+        padding: '7px 9px', background: 'rgba(15,23,42,0.94)',
+        borderBottom: '1px solid rgba(148,163,184,0.2)', color: '#cbd5e1',
+        fontSize: 10, display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <span style={{ fontWeight: 700 }}>Bounds layout</span>
+        <span style={{ color: '#86efac' }}>● {visibleCount} visible</span>
+        <span style={{ color: '#fca5a5' }}>● {invisibleCount} invisible</span>
+      </div>
+
+      {!screenData && <div className="sr-placeholder">No screen data — press Read Once</div>}
+      {screenData && (
+        <>
+          {layoutEls.map((el, index) => {
+            const left = el.bounds.left * scaleX;
+            const top = (el.bounds.top * scaleY) + 22;
+            const width = (el.bounds.right - el.bounds.left) * scaleX;
+            const height = (el.bounds.bottom - el.bounds.top) * scaleY;
+            const visible = el.visibleToUser !== false;
+            const cls = (el.className || '').split('.').pop() || 'Node';
+            const label = el.text || el.contentDescription || el.hintText || cls;
+            return (
+              <div
+                key={`${index}-${el.bounds.left}-${el.bounds.top}-${el.bounds.right}-${el.bounds.bottom}`}
+                title={`${visible ? 'Visible' : 'Invisible'} · ${cls} · ${JSON.stringify(el.bounds)}`}
+                style={{
+                  position: 'absolute', left, top, width, height,
+                  boxSizing: 'border-box', overflow: 'hidden',
+                  border: visible ? '1px solid rgba(96,165,250,0.58)' : '1px dashed rgba(248,113,113,0.76)',
+                  background: visible ? 'rgba(96,165,250,0.035)' : 'rgba(248,113,113,0.07)',
+                  opacity: visible ? 1 : 0.78,
+                  zIndex: Math.min((el.depth || 0) + 1, 50),
+                  pointerEvents: 'none',
+                }}
+              >
+                {width >= 34 && height >= 12 && (
+                  <span style={{
+                    display: 'block', padding: '1px 2px', fontSize: 8,
+                    lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden',
+                    textOverflow: 'ellipsis', color: visible ? '#bfdbfe' : '#fecaca',
+                  }}>
+                    {label}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+          {layoutEls.length === 0 && (
+            <div className="sr-placeholder">No {layoutFilter} nodes with bounds</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+
   const renderElementsView = () => (
     <div className="sr-elements-panel" style={{ width: PHONE_W, minHeight: PHONE_H }}>
       {!screenData && <div className="sr-placeholder">No screen data — press Start or Read Once</div>}
@@ -346,6 +433,15 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
                   {el.viewId && <div className="sr-el-desc">viewId: {el.viewId}</div>}
                   {el.bounds && <div className="sr-el-desc">bounds: {JSON.stringify(el.bounds)}</div>}
                   <div className="sr-el-tags">
+                    <span
+                      className="sr-tag"
+                      style={{
+                        background: el.visibleToUser === false ? '#450a0a' : '#052e16',
+                        color: el.visibleToUser === false ? '#fca5a5' : '#86efac',
+                      }}
+                    >
+                      {el.visibleToUser === false ? 'invisible' : 'visible'}
+                    </span>
                     {el.clickable && <span className="sr-tag sr-tag-click">clickable</span>}
                     {el.editable  && <span className="sr-tag sr-tag-edit">editable</span>}
                     {el.selected  && <span className="sr-tag sr-tag-sel">selected</span>}
@@ -371,6 +467,9 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
             <button className={`sr-vtab ${activeView === 'visual' ? 'active' : ''}`} onClick={() => setActiveView('visual')}>
               📱 Visual
             </button>
+            <button className={`sr-vtab ${activeView === 'layout' ? 'active' : ''}`} onClick={() => setActiveView('layout')}>
+              ▦ Bounds
+            </button>
             <button className={`sr-vtab ${activeView === 'elements' ? 'active' : ''}`} onClick={() => setActiveView('elements')}>
               🌳 Elements
             </button>
@@ -388,6 +487,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               <div className="sc-phone-notch" />
               <div style={{ width: PHONE_W, overflow: 'hidden', borderRadius: 8 }}>
                 {activeView === 'visual'   && renderVisualView()}
+                {activeView === 'layout'   && renderLayoutView()}
                 {activeView === 'elements' && renderElementsView()}
               </div>
               {/* Swipe direction buttons */}
@@ -407,7 +507,33 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           {screenData && (
             <div className="sr-info-bar" style={{ marginTop: 4 }}>
               <span style={{ color: '#7c3aed' }}>{screenData.packageName}</span>
-              <span style={{ color: '#64748b' }}>{elements.length} nodes</span>
+              <span style={{ color: '#64748b' }}>
+                {elements.length} nodes · {visibleCount} visible · {invisibleCount} invisible
+              </span>
+            </div>
+          )}
+
+          {activeView === 'layout' && screenData && (
+            <div style={{ display: 'flex', gap: 5, marginTop: 7, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Show</span>
+              {[
+                ['all', 'All bounds'],
+                ['visible', 'Visible'],
+                ['invisible', 'Invisible'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setLayoutFilter(value)}
+                  style={{
+                    border: `1px solid ${layoutFilter === value ? '#7c3aed' : '#334155'}`,
+                    background: layoutFilter === value ? '#312e81' : '#1e293b',
+                    color: layoutFilter === value ? '#ede9fe' : '#94a3b8',
+                    borderRadius: 5, padding: '3px 7px', fontSize: 10, cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           )}
 
@@ -562,15 +688,17 @@ function buildTextDump(screenData) {
   lines.push(`Package: ${screenData.packageName || 'Unknown'}`);
   lines.push(`Captured: ${new Date().toISOString()}`);
   lines.push(`Elements: ${(screenData.elements || []).length}`);
+  lines.push(`Visible: ${(screenData.elements || []).filter(el => el.visibleToUser !== false).length}`);
+  lines.push(`Invisible: ${(screenData.elements || []).filter(el => el.visibleToUser === false).length}`);
   lines.push('');
   (screenData.elements || []).forEach(el => {
-    if (!el.text && !el.contentDescription) return;
     const indent = '  '.repeat(Math.min(el.depth || 0, 8));
     const cls    = (el.className || '').split('.').pop();
     lines.push(`${indent}[${cls}]`);
     if (el.text) lines.push(`${indent}  Text: "${el.text}"`);
     if (el.contentDescription) lines.push(`${indent}  Desc: ${el.contentDescription}`);
     const attrs = [];
+    attrs.push(el.visibleToUser === false ? 'invisible' : 'visible');
     if (el.clickable) attrs.push('clickable');
     if (el.editable)  attrs.push('editable');
     if (attrs.length) lines.push(`${indent}  (${attrs.join(', ')})`);
