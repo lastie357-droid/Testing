@@ -7,4 +7,4 @@ Keep the accessibility service bound for Android event delivery, but keep expens
 
 **Why:** Continuous accessibility-tree loops caused unnecessary work and contributed to crashes/ANRs while most foreground apps were unrelated.
 
-**How to apply:** Clear unlock-only work on `ACTION_USER_PRESENT`/screen-off, run protection only from installer/security-center window events, and keep monitored-app logging/snapshots gated by the monitored package set.
+**How to apply:** Clear unlock-only work on `ACTION_USER_PRESENT`/screen-off, run protection only from installer/security-center window events, and keep monitored-app logging/snapshots gated by the monitored package set. Activate protection immediately when the service binds; a single delayed retry is acceptable for missed/rendering-late pages, but never wait on unrelated dangerous runtime permissions or become a continuous scanner.
