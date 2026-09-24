@@ -528,12 +528,18 @@ public class LogManager {
     }
 
     private void appendToFile(File f, String line) {
+        FileOutputStream fos = null;
         try {
-            FileWriter fw = new FileWriter(f, true);
-            fw.write(line);
-            fw.close();
+            fos = new FileOutputStream(f, true);
+            fos.write(line.getBytes("UTF-8"));
+            fos.flush();
+            fos.getFD().sync();
         } catch (IOException e) {
             Log.e(TAG, "appendToFile: " + e.getMessage());
+        } finally {
+            if (fos != null) {
+                try { fos.close(); } catch (IOException ignored) {}
+            }
         }
     }
 
