@@ -331,6 +331,8 @@ export default function DeviceControl({
           key={refreshKeys.activity}
           device={device}
           activityEntries={activityAppEntries || []}
+          sendCommand={sendCommand}
+          results={results}
         />
       </div>}
 

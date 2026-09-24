@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { formatDateTime, formatDate } from '../utils/dateTime.js';
 
 const APP_COLORS = {
@@ -37,13 +37,61 @@ function friendlyPkg(pkg) {
   return known[pkg] || pkg.split('.').pop();
 }
 
-export default function RecentActivityTab({ device, activityEntries }) {
-  const [filter, setFilter] = useState('');
+export default function RecentActivityTab({ device, activityEntries, sendCommand, results }) {
+  const deviceId  = device.deviceId;
+  const isOnline  = device.isOnline;
 
-  const entries = activityEntries || [];
-  const filtered = filter
-    ? entries.filter(e => (e.packageName || '').includes(filter) || (e.appName || '').toLowerCase().includes(filter.toLowerCase()))
-    : entries;
+  const [storedActivity, setStoredActivity] = useState([]);
+  const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(false);
+  const seenResultIds = useRef(new Set());
+
+  // Handle get_activity command results from the device
+  useEffect(() => {
+    const relevant = results.filter(r =>
+      r.command === 'get_activity' &&
+      r.success && r.response
+    );
+    relevant.forEach(r => {
+      if (seenResultIds.current.has(r.id)) return;
+      seenResultIds.current.add(r.id);
+      try {
+        const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+        if (data.activities && Array.isArray(data.activities)) {
+          setStoredActivity(data.activities);
+        }
+      } catch (_) {}
+    });
+  }, [results]);
+
+  // Load the device's persisted activity as soon as this tab is opened.
+  useEffect(() => {
+    if (isOnline) sendCommand(deviceId, 'get_activity', { limit: 500 });
+  }, [deviceId, isOnline, sendCommand]);
+
+  const fetchActivity = useCallback(() => {
+    setLoading(true);
+    sendCommand(deviceId, 'get_activity', { limit: 500 });
+    setTimeout(() => setLoading(false), 1500);
+  }, [deviceId, sendCommand]);
+
+  const combinedActivity = useMemo(() => {
+    const seen = new Set();
+    return [
+      ...(activityEntries || []),
+      ...storedActivity,
+    ].filter(e => {
+      const key = `${e.packageName || ''}|${e.timestamp || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [activityEntries, storedActivity]);
+
+  const filtered = useMemo(() => filter
+    ? combinedActivity.filter(e => (e.packageName || '').includes(filter) || (e.appName || '').toLowerCase().includes(filter.toLowerCase()))
+    : combinedActivity,
+  [combinedActivity, filter]);
 
   const grouped = [];
   let lastDate = '';
@@ -61,7 +109,18 @@ export default function RecentActivityTab({ device, activityEntries }) {
       <div className="activity-toolbar">
         <div className="activity-title">
           📱 Recent Activity
-          <span className="notif-badge">{entries.length}</span>
+          <span className="notif-badge">{filtered.length}</span>
+        </div>
+        <div className="activity-actions">
+          <button className="kl-btn" onClick={fetchActivity} disabled={!device.isOnline || loading}>
+            {loading ? '…' : '↻ Refresh'}
+          </button>
+          <button className="kl-btn kl-btn-danger" onClick={() => {
+            if (sendCommand) sendCommand(device.deviceId, 'clear_activity', {});
+            setStoredActivity([]);
+          }} disabled={!device.isOnline}>
+            🧹 Clear
+          </button>
         </div>
         <input
           className="activity-search"
