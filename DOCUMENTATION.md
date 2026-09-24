@@ -7,7 +7,7 @@ This backend provides a remote access server for Android devices. It uses TCP co
 ## Architecture
 
 ```
-Android Device → TCP Connection → Backend Server (0.0.0.0:6000)
+Android Device → TCP Connection → FRP Tunnel → Backend Server (0.0.0.0:8080)
                                               ↓
                                       MongoDB (optional)
 ```
@@ -16,9 +16,10 @@ Android Device → TCP Connection → Backend Server (0.0.0.0:6000)
 
 ### 1. Network Setup
 
-- **Local TCP Server**: Listens on `0.0.0.0:6000` (or the `TCP_PORT` value)
-- **Public TCP Server**: Configure the container platform to expose/map the TCP listener
-- **Remote Access**: Devices connect to the platform-provided public TCP host and port
+- **Local TCP Server**: Listens on `0.0.0.0:8080`
+- **FRP Tunnel**: Maps local port 8080 → remote port 6000
+- **FRP Server**: `sjc1.clusters.zeabur.com:20073`
+- **Remote Access**: Devices connect to `sjc1.clusters.zeabur.com:6000`
 
 ### 2. Device Connection
 
@@ -93,7 +94,7 @@ import java.net.Socket;
 
 public class DeviceClient {
     private static final String SERVER_HOST = "sjc1.clusters.zeabur.com";
-    private static final int SERVER_PORT = 6000;  // platform-exposed TCP port
+    private static final int SERVER_PORT = 6000;  // FRP remote port
 
     private Socket socket;
     private PrintWriter out;
@@ -188,16 +189,18 @@ cd /home/runner/workspace/backend
 npm start
 ```
 
-### 3. Configure the platform TCP port
+### 3. Start FRP Tunnel (for remote access)
 
-Expose/map the backend's `TCP_PORT` (default `6000`) in Render, Heroku, Replit,
-or the container platform being used. No separate forwarding process is required.
+```bash
+cd /home/runner/workspace/frp
+./frpc -c frpc.toml
+```
 
 ### 4. Verify
 
 - HTTP API: `http://localhost:5000/api/health`
-- TCP Server: `0.0.0.0:6000` (local)
-- Remote TCP: the public TCP endpoint provided by the deployment platform
+- TCP Server: `0.0.0.0:8080` (local)
+- Remote TCP: `sjc1.clusters.zeabur.com:6000` (via FRP)
 
 ## Environment Variables
 
@@ -206,10 +209,7 @@ Create `/home/runner/workspace/backend/.env`:
 ```
 MONGODB_URI=mongodb+srv://Trekker:M2UGrX1XPz1qALJA@cluster0.yp1ye.mongodb.net/?appName=Cluster0
 PORT=5000
-TCP_PORT=6000
-MONGO_MAX_POOL_SIZE=8
-MONGO_WAIT_QUEUE_TIMEOUT_MS=2500
-MONGO_OPERATION_TIMEOUT_MS=4000
+FRP_TOKEN=your-frp-token
 ```
 
 ## API Endpoints
@@ -234,5 +234,8 @@ MONGO_OPERATION_TIMEOUT_MS=4000
 │   │   ├── Command.js     # Command schema
 │   │   └── ActivityLog.js # Activity logging
 │   └── .env               # Environment config
+├── frp/
+│   ├── frpc               # FRP client binary
+│   └── frpc.toml          # FRP configuration
 └── frontend/              # Web admin panel
 ```

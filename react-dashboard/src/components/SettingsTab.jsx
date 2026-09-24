@@ -930,7 +930,7 @@ bash build.sh --worker`}
               <div>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>Runtime Services</div>
                 <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                  Start, stop, restart, and monitor the server database/cache connections
+                  Start, stop, restart, and monitor the server connections and FRP tunnel processes
                 </div>
               </div>
             </div>
@@ -960,6 +960,8 @@ bash build.sh --worker`}
             {[
               { id: 'mongodb', label: 'MongoDB', icon: '🍃', description: 'Database connection' },
               { id: 'redis', label: 'Redis', icon: '⚡', description: 'Cache connection' },
+              { id: 'frps', label: 'FRP Server (frps)', icon: '🌐', description: 'Tunnel server process' },
+              { id: 'frpc', label: 'FRP Client (frpc)', icon: '🔌', description: 'Tunnel client process' },
             ].map(item => {
               const info = services?.[item.id];
               const isRunning = info?.state === 'running';

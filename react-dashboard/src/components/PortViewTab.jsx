@@ -35,7 +35,7 @@ export default function PortViewTab() {
         <div>
           <h2 style={{ margin: 0, fontSize: 19 }}>Port View</h2>
           <p style={{ color: '#94a3b8', fontSize: 12, margin: '6px 0 0' }}>
-            Local listeners and any public HTTP, TCP, or explicit container mappings.
+            Local listeners and any public HTTP, FRP, or explicit container mappings.
           </p>
         </div>
         <button onClick={load} disabled={loading} style={{

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 const SOURCE_COLORS = {
+    frps:   '#38bdf8',
+    frpc:   '#818cf8',
     server: '#94a3b8',
     system: '#6ee7b7',
 };
@@ -11,7 +13,7 @@ const LEVEL_COLORS = {
     error: '#f87171',
 };
 
-const SOURCES = ['all', 'server', 'system'];
+const SOURCES = ['all', 'server', 'frps', 'frpc', 'system'];
 
 function fmtTime(ts) {
     const d = new Date(ts);

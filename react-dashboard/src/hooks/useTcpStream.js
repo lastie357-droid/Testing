@@ -12,7 +12,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
  * The hook exposes the same { connected, reconnecting, send } API as the old
  * useWebSocket hook so no component needs to change.
  */
-export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = null) {
+export function useTcpStream(onMessage, tokenStorageKey = null) {
   const [connected, setConnected]     = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
 
@@ -22,32 +22,10 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
   const generationRef = useRef(0);
   const disposedRef   = useRef(false);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
-  const realtimeQueueRef = useRef(new Map());
-  const realtimeFlushRef = useRef(null);
   const onMessageRef  = useRef(onMessage);
-  const onAuthExpiredRef = useRef(onAuthExpired);
   onMessageRef.current = onMessage;
-  onAuthExpiredRef.current = onAuthExpired;
 
-  const queueRealtimeMessage = (event, data) => {
-    const key = `${event}:${data?.deviceId || '__global__'}`;
-    realtimeQueueRef.current.set(key, { event, data });
-    if (realtimeFlushRef.current !== null) return;
-
-    // Large screen/camera frames can arrive faster than React can render the
-    // dashboard. Latest-wins coalescing keeps the SSE connection live while
-    // bounding browser work to at most 10 realtime updates per second.
-    realtimeFlushRef.current = setTimeout(() => {
-      realtimeFlushRef.current = null;
-      const pending = Array.from(realtimeQueueRef.current.values());
-      realtimeQueueRef.current.clear();
-      for (const message of pending) {
-        onMessageRef.current(message.event, message.data);
-      }
-    }, 100);
-  };
-
-  const connect = useCallback(async () => {
+  const connect = useCallback(() => {
     if (disposedRef.current) return;
     // Each dashboard uses its own token. Do not let an old admin token in the
     // same browser override a user's JWT and cause an endless SSE reconnect.
@@ -62,36 +40,6 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
       esRef.current = null;
     }
     const generation = ++generationRef.current;
-    const scheduleRetry = () => {
-      if (disposedRef.current || generation !== generationRef.current) return;
-      clearTimeout(retryRef.current);
-      retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
-    };
-
-    // EventSource does not expose HTTP response status codes. Validate the
-    // session first so an expired token does not create an endless silent
-    // reconnect loop that leaves the dashboard frozen.
-    try {
-      const response = await fetch('/api/session/check', {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      });
-      if (generation !== generationRef.current || disposedRef.current) return;
-      if (response.status === 401 || response.status === 403) {
-        localStorage.removeItem(tokenStorageKey || 'admin_token');
-        setConnected(false);
-        setReconnecting(false);
-        onAuthExpiredRef.current?.();
-        return;
-      }
-      if (!response.ok) throw new Error(`Session check failed (${response.status})`);
-    } catch (_) {
-      if (generation !== generationRef.current || disposedRef.current) return;
-      setConnected(false);
-      setReconnecting(true);
-      scheduleRetry();
-      return;
-    }
 
     // EventSource opens a persistent TCP connection; browser reconnects automatically.
     const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
@@ -113,15 +61,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
           sseIdRef.current = msg.data.sseClientId;
           sessionStorage.setItem('sseClientId', msg.data.sseClientId);
         }
-        if (msg.event === 'stream:frame' ||
-            msg.event === 'screen:update' ||
-            msg.event === 'camera:frame' ||
-            msg.event === 'device:heartbeat' ||
-            msg.event === 'device:latency') {
-          queueRealtimeMessage(msg.event, msg.data);
-        } else {
-          onMessageRef.current(msg.event, msg.data);
-        }
+        onMessageRef.current(msg.event, msg.data);
       } catch (_) {}
     };
 
@@ -131,7 +71,8 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
       setReconnecting(true);
       es.close();
       // EventSource would retry automatically but we want controlled backoff.
-      scheduleRetry();
+      clearTimeout(retryRef.current);
+      retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
     };
   }, []);
   connectRef.current = connect;
@@ -143,9 +84,6 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
       disposedRef.current = true;
       generationRef.current += 1;
       clearTimeout(retryRef.current);
-      clearTimeout(realtimeFlushRef.current);
-      realtimeFlushRef.current = null;
-      realtimeQueueRef.current.clear();
       if (esRef.current) esRef.current.close();
       esRef.current = null;
     };

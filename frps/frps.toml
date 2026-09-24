@@ -1,0 +1,16 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+# Detect dead clients quickly so ports are freed for reconnects
+transport.heartbeatTimeout    = 90
+transport.tcpMux              = true
+transport.tls.force           = true
+# Allow unlimited ports per client (0 = no limit) so a reconnecting
+# frpc can always re-register its proxies
+maxPortsPerClient             = 0
+
+webServer.addr     = "127.0.0.1"
+# 7500 is reserved by the backend callback mirror in this project.
+webServer.port     = 7501
+webServer.user     = "admin"
+webServer.password = "admin"

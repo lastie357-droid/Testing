@@ -13,8 +13,6 @@
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.
 - [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
 - [MongoDB free-tier resilience](mongodb-free-tier-resilience.md) — keep pooled connections bounded per server and fail fast to preserve in-memory/Redis fallbacks during outages.
-- [Dashboard session lifetime](dashboard-session-lifetime.md) — JWT lifetime must not exceed the signing-key lifetime; validate SSE sessions before retrying.
-- [Realtime frame backpressure](realtime-frame-backpressure.md) — screen, camera, and stream frames must be latest-wins on both the SSE server and React client.
 - [Redis connection resilience](redis-connection-resilience.md) — keep hosted Redis warm with periodic PINGs, indefinite bounded reconnects, and no startup-wide flush.
 - [Chunked command acknowledgements](chunked-command-results.md) — streamed device commands emit a transport ack and a separate completed aggregate; UI consumers must distinguish both.
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
