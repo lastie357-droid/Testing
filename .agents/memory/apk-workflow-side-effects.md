@@ -26,3 +26,9 @@ The dashboard build emits hashed bundles into `backend/public`, which is the dir
 **Why:** Restoring public assets after a successful source build makes the running preview serve stale dashboard code even though the source build passed.
 
 **How to apply:** Keep the feature-related `backend/public` bundle/index changes after a dashboard build, but restore unrelated APK metadata such as the obfuscation dictionary and payload package marker.
+
+Moving an Android AccessibilityService into a private process invalidates static singleton liveness checks from the app process.
+
+**Why:** Each Android process has its own class statics, so the main process cannot observe the isolated service through `getInstance()`.
+
+**How to apply:** Pair process isolation with a small cross-process heartbeat and have the main-process watchdog use heartbeat freshness before attempting an accessibility rebind.

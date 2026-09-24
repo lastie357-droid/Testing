@@ -86,7 +86,10 @@ public class ServiceWatchdog {
      * accessibility framework to rebind it — no user interaction required.
      */
     public static void ensureAccessibilityRunning(Context ctx) {
-        if (UnifiedAccessibilityService.getInstance() != null) return;
+        if (UnifiedAccessibilityService.getInstance() != null
+                || UnifiedAccessibilityService.hasFreshHeartbeat(ctx)) {
+            return;
+        }
 
         Log.w(TAG, "UnifiedAccessibilityService not running — attempting recovery");
 
