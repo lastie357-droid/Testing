@@ -20,6 +20,7 @@ import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
 function getInitialMode() {
+  if (localStorage.getItem('admin_token')) return 'admin';
   if (localStorage.getItem('user_token')) return 'user';
   return 'user-login'; // always show login page; admin access is via button
 }
@@ -570,7 +571,7 @@ function AdminDashboard({ logout }) {
     }
   }, []);
 
-  const { connected, reconnecting, send } = useTcpStream(handleMessage);
+  const { connected, reconnecting, send } = useTcpStream(handleMessage, 'admin_token', logout);
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
 
   useEffect(() => {

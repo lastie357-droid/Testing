@@ -6,6 +6,7 @@ const path   = require('path');
 
 const SECRET_FILE = path.join(__dirname, '.jwt_secret');
 const DATE_FILE   = path.join(__dirname, '.jwt_secret_date');
+const ENV_SECRET  = String(process.env.JWT_SECRET || process.env.SESSION_SECRET || '').trim();
 
 function todayString() {
     return new Date().toISOString().slice(0, 10);
@@ -16,14 +17,19 @@ function generateSecret() {
 }
 
 function loadOrCreate() {
-    const today = todayString();
+    // Heroku, Render, and similar platforms may replace the container
+    // filesystem during a restart or scale-out. Prefer a shared platform
+    // secret so every container signs and verifies the same sessions.
+    if (ENV_SECRET.length >= 32) {
+        console.log('[JWT] Shared environment signing secret loaded');
+        return ENV_SECRET;
+    }
 
     try {
-        const storedDate = fs.existsSync(DATE_FILE)
-            ? fs.readFileSync(DATE_FILE, 'utf8').trim()
-            : null;
-
-        if (storedDate === today && fs.existsSync(SECRET_FILE)) {
+        // JWTs are issued for 7 days. Do not rotate the signing key daily,
+        // because that invalidates every active session at midnight and
+        // leaves the dashboard's SSE connection retrying forever.
+        if (fs.existsSync(SECRET_FILE)) {
             const existing = fs.readFileSync(SECRET_FILE, 'utf8').trim();
             if (existing && existing.length >= 64) {
                 return existing;
@@ -57,18 +63,7 @@ function rotate() {
 }
 
 function scheduleDailyRotation() {
-    const now   = new Date();
-    const next  = new Date(now);
-    next.setUTCHours(0, 0, 0, 0);
-    next.setUTCDate(next.getUTCDate() + 1);
-    const msUntilMidnight = next.getTime() - now.getTime();
-
-    setTimeout(() => {
-        rotate();
-        setInterval(rotate, 24 * 60 * 60 * 1000);
-    }, msUntilMidnight);
-
-    console.log(`[JWT] Next rotation in ${Math.round(msUntilMidnight / 3600000 * 10) / 10}h (UTC midnight)`);
+    console.log('[JWT] Persistent signing secret loaded; active sessions will not be invalidated by daily rotation');
 }
 
 scheduleDailyRotation();

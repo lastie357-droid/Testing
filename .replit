@@ -28,8 +28,13 @@ localPort = 7500
 externalPort = 80
 
 [[ports]]
-localPort = 8070
+localPort = 7501
 externalPort = 3002
+exposeLocalhost = true
+
+[[ports]]
+localPort = 8070
+externalPort = 3003
 
 [workflows]
 runButton = "Project"

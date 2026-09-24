@@ -2277,7 +2277,35 @@ app.post('/api/admin/verify', (req, res) => {
         global._adminTokens.delete(token);
         return res.status(401).json({ success: false });
     }
+    // Keep an active dashboard session alive without making the token
+    // permanent. Inactive sessions still expire after 24 hours.
+    global._adminTokens.set(token, Date.now() + 86400000);
     return res.json({ success: true });
+});
+
+// Lightweight session validation used before opening SSE. It intentionally
+// does not query MongoDB, so a database outage cannot turn a valid browser
+// session into an authentication failure.
+app.get('/api/session/check', (req, res) => {
+    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || req.query.token;
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    if (global._adminTokens && global._adminTokens.has(token)) {
+        const expiry = global._adminTokens.get(token);
+        if (expiry && Date.now() <= expiry) {
+            global._adminTokens.set(token, Date.now() + 86400000);
+            return res.json({ success: true, role: 'admin', expiresAt: Date.now() + 86400000 });
+        }
+        global._adminTokens.delete(token);
+    }
+
+    try {
+        const decoded = jwt.verify(token, getJwtSecret());
+        if (decoded?.userId && decoded.role === 'user') {
+            return res.json({ success: true, role: 'user', expiresAt: decoded.exp ? decoded.exp * 1000 : null });
+        }
+    } catch (_) {}
+    return res.status(401).json({ success: false, error: 'Session expired' });
 });
 
 // ── SSE event stream — Dashboard persistent TCP push channel ─────────────────
@@ -2330,6 +2358,10 @@ app.get('/api/events', async (req, res) => {
     res.setHeader('Connection',    'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');  // disable nginx buffering
     res.flushHeaders();
+    // Let EventSource become open immediately, before the initial device-list
+    // lookup completes. This prevents a slow database query from looking like
+    // a dead dashboard connection.
+    res.write(': connected\n\n');
 
     sseClients.set(clientId, { res, token, role, accessId, userId });
     log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
@@ -2425,6 +2457,7 @@ function requireAdmin(req, res, next) {
     if (!token || !global._adminTokens) return res.status(401).json({ success: false, error: 'Unauthorized' });
     const expiry = global._adminTokens.get(token);
     if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    global._adminTokens.set(token, Date.now() + 86400000);
     next();
 }
 

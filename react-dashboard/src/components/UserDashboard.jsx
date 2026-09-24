@@ -404,7 +404,7 @@ export default function UserDashboard({ user, onLogout }) {
     }
   }, []);
 
-  const { connected, reconnecting, send } = useTcpStream(handleMessage, 'user_token');
+  const { connected, reconnecting, send } = useTcpStream(handleMessage, 'user_token', onLogout);
 
   const sendCommand = useCallback((deviceId, command, params = null) => {
     send('command:send', { deviceId, command, params });
