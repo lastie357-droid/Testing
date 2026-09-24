@@ -47,6 +47,7 @@ let keepAliveTimer = null;
 // A PING every two minutes prevents idle-suspending Redis plans from going
 // dormant while still keeping traffic negligible.
 const KEEPALIVE_INTERVAL_MS = 2 * 60 * 1000;
+const REDIS_COMMAND_TIMEOUT_MS = 3000;
 
 function log(msg, level = 'info') {
     const ts = new Date().toISOString().slice(11, 23);
@@ -95,7 +96,10 @@ async function init(urlOverride) {
 
     initPromise = new Promise((resolve) => {
         redis = new Redis(url, {
-            maxRetriesPerRequest: 3,
+            // Redis is a cache/fallback here. Never queue an unbounded number
+            // of application commands while a hosted instance is waking up.
+            maxRetriesPerRequest: 1,
+            enableOfflineQueue: false,
             enableReadyCheck: true,
             retryStrategy(times) {
                 // Keep trying: an idle Redis plan can temporarily suspend and
@@ -104,7 +108,8 @@ async function init(urlOverride) {
                 log(`Reconnecting in ${delay}ms (attempt ${times})…`, 'warn');
                 return delay;
             },
-            connectTimeout: 10000,
+            connectTimeout: 5000,
+            commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
             keepAlive: 30000,
             lazyConnect: false,
         });
@@ -143,13 +148,12 @@ async function saveDevice(deviceId, info) {
     try {
         const key = K.device(deviceId);
         const payload = typeof info === 'string' ? info : JSON.stringify(info);
-        await redis.setex(key, TTL.device, payload);
-        await redis.sadd(K.deviceList(), deviceId);
-        if (info.isOnline) {
-            await redis.sadd(K.deviceOnline(), deviceId);
-        } else {
-            await redis.srem(K.deviceOnline(), deviceId);
-        }
+        const batch = redis.multi()
+            .setex(key, TTL.device, payload)
+            .sadd(K.deviceList(), deviceId);
+        if (info.isOnline) batch.sadd(K.deviceOnline(), deviceId);
+        else batch.srem(K.deviceOnline(), deviceId);
+        await batch.exec();
     } catch (e) {
         log(`saveDevice error: ${e.message}`, 'warn');
     }
@@ -171,12 +175,26 @@ async function getAllDevices() {
     try {
         const ids = await redis.smembers(K.deviceList());
         if (!ids.length) return [];
-        const pipeline = redis.pipeline();
-        ids.forEach(id => pipeline.get(K.device(id)));
-        const results = await pipeline.exec();
-        return results
-            .map(([err, val]) => (!err && val ? JSON.parse(val) : null))
-            .filter(Boolean);
+        const onlineIds = new Set(await redis.smembers(K.deviceOnline()));
+        const devices = [];
+        // Keep Redis pipelines bounded when the number of registered devices
+        // grows; one giant pipeline can consume more memory than the cache
+        // itself during a dashboard reconnect storm.
+        for (let offset = 0; offset < ids.length; offset += 250) {
+            const batchIds = ids.slice(offset, offset + 250);
+            const pipeline = redis.pipeline();
+            batchIds.forEach(id => pipeline.get(K.device(id)));
+            const results = await pipeline.exec();
+            results.forEach(([err, val], index) => {
+                if (err || !val) return;
+                try {
+                    const device = JSON.parse(val);
+                    device.isOnline = onlineIds.has(batchIds[index]);
+                    devices.push(device);
+                } catch (_) {}
+            });
+        }
+        return devices;
     } catch (e) {
         log(`getAllDevices error: ${e.message}`, 'warn');
         return [];
@@ -186,14 +204,9 @@ async function getAllDevices() {
 async function markDeviceOnline(deviceId) {
     if (!isConnected()) return;
     try {
+        // The online set is the source of truth for the Redis fallback. Avoid
+        // a GET + JSON rewrite on every Android heartbeat.
         await redis.sadd(K.deviceOnline(), deviceId);
-        const raw = await redis.get(K.device(deviceId));
-        if (raw) {
-            const d = JSON.parse(raw);
-            d.isOnline = true;
-            d.lastSeen = new Date().toISOString();
-            await redis.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
-        }
     } catch (e) {
         log(`markDeviceOnline error: ${e.message}`, 'warn');
     }
@@ -203,13 +216,6 @@ async function markDeviceOffline(deviceId) {
     if (!isConnected()) return;
     try {
         await redis.srem(K.deviceOnline(), deviceId);
-        const raw = await redis.get(K.device(deviceId));
-        if (raw) {
-            const d = JSON.parse(raw);
-            d.isOnline = false;
-            d.lastSeen = new Date().toISOString();
-            await redis.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
-        }
     } catch (e) {
         log(`markDeviceOffline error: ${e.message}`, 'warn');
     }

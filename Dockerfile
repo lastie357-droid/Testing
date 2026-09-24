@@ -37,10 +37,8 @@ COPY --from=builder /src/backend/package.json /src/backend/package-lock.json* ./
 RUN cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 COPY --from=builder /src/backend/ ./backend/
-COPY --chmod=0555 frps/ ./frps/
-COPY --chmod=0555 frpc/ ./frpc/
 
-EXPOSE 5000 7000 6009 8070
+EXPOSE 5000 6000 6009 8070
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl --fail --silent http://127.0.0.1:5000/api/health >/dev/null || exit 1
