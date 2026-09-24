@@ -26,3 +26,9 @@ The dashboard build emits hashed bundles into `backend/public`, which is the dir
 **Why:** Restoring public assets after a successful source build makes the running preview serve stale dashboard code even though the source build passed.
 
 **How to apply:** Keep the feature-related `backend/public` bundle/index changes after a dashboard build, but restore unrelated APK metadata such as the obfuscation dictionary and payload package marker.
+
+APK build success must be judged after the final packaging stages, not only by Gradle. Shell syntax checks also do not validate embedded Python or other heredoc scripts.
+
+**Why:** A build can complete Gradle compilation and still fail during APK hardening, signing, payload encryption, or installer assembly.
+
+**How to apply:** Require the script's final completion output and verify the produced APK signatures and alignment before reporting a successful build.

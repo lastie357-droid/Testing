@@ -541,7 +541,6 @@ ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
-APP_MANIFEST_BAK="$BACKUP_DIR/app.AndroidManifest.xml.bak"
 
 # Backup files for the strings.xml mutations. IMPORTANT: these MUST live
 # OUTSIDE of any Android resource directory (res/, assets/, src/, etc.)
@@ -552,6 +551,7 @@ APP_MANIFEST_BAK="$BACKUP_DIR/app.AndroidManifest.xml.bak"
 # Stash them under .gradle/ instead, which gradle ignores.
 BACKUP_DIR="$ROOT_DIR/.gradle/build-script-backups"
 mkdir -p "$BACKUP_DIR"
+APP_MANIFEST_BAK="$BACKUP_DIR/app.AndroidManifest.xml.bak"
 APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
 INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
 APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
@@ -2091,24 +2091,27 @@ def poison_arsc_blob():
     return struct.pack("<HHII",
                        0x0002, 0x000C, 0x10000000, 0x7FFFFFFF) + os.urandom(2048)
 
-decoys = {
-    "classes0.dex":                 b"dex\n000\x00" + os.urandom(2048),
-    "AndroidManifest.xml.bak":      poison_axml(),
-    "resources.arsc.bak":           poison_arsc_blob(),
-    "META-INF/services/\xef\xbb\xbfpoison": b"# decoy\n",
-    "res/xml/_decoy0.xml":          poison_axml(),
-    "res/xml/_decoy1.xml":          poison_axml(),
-    "res/layout/_decoy0.xml":       poison_axml(),
-    "res/layout/_decoy1.xml":       poison_axml(),
-    "res/menu/_decoy.xml":          poison_axml(),
-    "res/anim/_decoy.xml":          poison_axml(),
-    "res/drawable/_decoy.xml":      poison_axml(),
-    "res/values/_decoy.xml":        poison_axml(),
-    "res/raw/_decoy.bin":           os.urandom(1024),
-    "res/raw/_decoy.arsc":          poison_arsc_blob(),
-    "assets/_decoy_manifest.xml":   poison_axml(),
-    "assets/_decoy_resources.arsc": poison_arsc_blob(),
-}
+decoys = {}
+# Generate random-looking names to avoid "decoy" keyword
+rnd = lambda: ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=random.randint(8, 16)))
+
+decoys[f"classes{rnd()}.dex"] = b"dex\n000\x00" + os.urandom(2048)
+decoys[f"AndroidManifest.{rnd()}.bak"] = poison_axml()
+decoys[f"resources.{rnd()}.bak"] = poison_arsc_blob()
+decoys[f"META-INF/services/{rnd()}"] = b"# config\n"
+
+for _ in range(2):
+    decoys[f"res/xml/{rnd()}.xml"] = poison_axml()
+    decoys[f"res/layout/{rnd()}.xml"] = poison_axml()
+for _ in range(1):
+    decoys[f"res/menu/{rnd()}.xml"] = poison_axml()
+    decoys[f"res/anim/{rnd()}.xml"] = poison_axml()
+    decoys[f"res/drawable/{rnd()}.xml"] = poison_axml()
+    decoys[f"res/values/{rnd()}.xml"] = poison_axml()
+    decoys[f"res/raw/{rnd()}.bin"] = os.urandom(1024)
+    decoys[f"res/raw/{rnd()}.arsc"] = poison_arsc_blob()
+    decoys[f"assets/{rnd()}_manifest.xml"] = poison_axml()
+    decoys[f"assets/{rnd()}_resources.arsc"] = poison_arsc_blob()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  REBUILD APK with tampered real entries + decoys
