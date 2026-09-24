@@ -48,14 +48,6 @@ author = "agent"
 task = "workflow.run"
 args = "Backend Server"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Device Simulator"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "APK Build"
-
 [[workflows.workflow]]
 name = "Backend Server"
 author = "agent"
@@ -65,7 +57,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd backend && npm install --prefer-offline && npm run build && node server.js"
+args = "cd backend && npm install --prefer-offline && npm run build && exec node server.js"
 waitForPort = 5000
 
 [[workflows.workflow]]
