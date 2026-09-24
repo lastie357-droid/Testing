@@ -1846,7 +1846,9 @@ async function processMessage(clientId, clientType, event, data) {
             _ts: now,
         };
         latestCameraFrame.set(deviceId, cameraMsg);
-        broadcastDash('camera:frame', cameraMsg);
+        // Camera frames are large and high frequency. Keep only the newest
+        // frame per dashboard instead of appending to a slow SSE response.
+        broadcastLatestDash('camera:frame', cameraMsg);
         // Ack-based pacing for camera stream — same pattern as screen stream
         try { conn.write(JSON.stringify({ event: 'camera:ack', data: { deviceId } }) + '\n'); } catch (_) {}
         return;

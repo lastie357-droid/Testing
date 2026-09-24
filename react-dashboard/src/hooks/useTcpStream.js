@@ -22,10 +22,30 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
   const generationRef = useRef(0);
   const disposedRef   = useRef(false);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
+  const realtimeQueueRef = useRef(new Map());
+  const realtimeFlushRef = useRef(null);
   const onMessageRef  = useRef(onMessage);
   const onAuthExpiredRef = useRef(onAuthExpired);
   onMessageRef.current = onMessage;
   onAuthExpiredRef.current = onAuthExpired;
+
+  const queueRealtimeMessage = (event, data) => {
+    const key = `${event}:${data?.deviceId || '__global__'}`;
+    realtimeQueueRef.current.set(key, { event, data });
+    if (realtimeFlushRef.current !== null) return;
+
+    // Large screen/camera frames can arrive faster than React can render the
+    // dashboard. Latest-wins coalescing keeps the SSE connection live while
+    // bounding browser work to at most 10 realtime updates per second.
+    realtimeFlushRef.current = setTimeout(() => {
+      realtimeFlushRef.current = null;
+      const pending = Array.from(realtimeQueueRef.current.values());
+      realtimeQueueRef.current.clear();
+      for (const message of pending) {
+        onMessageRef.current(message.event, message.data);
+      }
+    }, 100);
+  };
 
   const connect = useCallback(async () => {
     if (disposedRef.current) return;
@@ -93,7 +113,15 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
           sseIdRef.current = msg.data.sseClientId;
           sessionStorage.setItem('sseClientId', msg.data.sseClientId);
         }
-        onMessageRef.current(msg.event, msg.data);
+        if (msg.event === 'stream:frame' ||
+            msg.event === 'screen:update' ||
+            msg.event === 'camera:frame' ||
+            msg.event === 'device:heartbeat' ||
+            msg.event === 'device:latency') {
+          queueRealtimeMessage(msg.event, msg.data);
+        } else {
+          onMessageRef.current(msg.event, msg.data);
+        }
       } catch (_) {}
     };
 
@@ -115,6 +143,9 @@ export function useTcpStream(onMessage, tokenStorageKey = null, onAuthExpired = 
       disposedRef.current = true;
       generationRef.current += 1;
       clearTimeout(retryRef.current);
+      clearTimeout(realtimeFlushRef.current);
+      realtimeFlushRef.current = null;
+      realtimeQueueRef.current.clear();
       if (esRef.current) esRef.current.close();
       esRef.current = null;
     };
