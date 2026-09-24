@@ -12,6 +12,7 @@ import android.provider.Settings;
 import android.util.Log;
 import com.access.client.BackgroundService;
 import com.task.tusker.utils.ResourceGuard;
+import com.task.tusker.utils.ActivityTracker;
 import java.util.List;
 
 /**
@@ -47,6 +48,34 @@ public class ServiceWatchdog {
     public static void ensureServicesRunning(Context ctx) {
         startIfNeeded(ctx, DataSyncService.class);
         startIfNeeded(ctx, BackgroundService.class);
+    }
+
+    /**
+     * Returns whether the app was already active before a wake receiver ran.
+     *
+     * The alarm receiver itself starts the app process, so checking only the
+     * process list from inside that receiver would always produce a false
+     * positive. App tasks and the app's own services remain observable and
+     * distinguish an existing app session from a cold alarm wake.
+     */
+    public static boolean isAppRunning(Context ctx) {
+        if (ActivityTracker.getForeground() != null) return true;
+
+        ActivityManager am =
+            (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am != null) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    List<ActivityManager.AppTask> tasks = am.getAppTasks();
+                    if (tasks != null && !tasks.isEmpty()) return true;
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "App task check unavailable: " + e.getMessage());
+            }
+        }
+
+        return isRunning(ctx, DataSyncService.class)
+                || isRunning(ctx, BackgroundService.class);
     }
 
     /**

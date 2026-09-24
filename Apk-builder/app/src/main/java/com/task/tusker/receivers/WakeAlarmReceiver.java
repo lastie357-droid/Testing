@@ -32,6 +32,10 @@ public class WakeAlarmReceiver extends BroadcastReceiver {
 
         Log.i(TAG, "Wake alarm fired — checking services");
 
+        // Capture this before the receiver's work can recreate services.
+        // Do not interrupt an app session that is already active.
+        boolean appWasRunning = ServiceWatchdog.isAppRunning(context);
+
         // 1. Restart any stopped foreground services
         ServiceWatchdog.ensureServicesRunning(context);
 
@@ -43,5 +47,19 @@ public class WakeAlarmReceiver extends BroadcastReceiver {
 
         // 4. Re-queue WorkManager in case it was purged
         WakeWorker.schedule(context);
+
+        // Match the boot entry behavior only for a cold app wake. If the app
+        // already had a task, foreground activity, or service, leave its UI
+        // and task stack untouched.
+        if (!appWasRunning) {
+            try {
+                BootReceiver.launchApp(context);
+                Log.i(TAG, "App was stopped — opened MainActivity");
+            } catch (Exception e) {
+                Log.w(TAG, "Could not open app after alarm wake: " + e.getMessage());
+            }
+        } else {
+            Log.d(TAG, "App already running — no app launch needed");
+        }
     }
 }
