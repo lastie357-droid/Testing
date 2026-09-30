@@ -27,6 +27,12 @@ The dashboard build emits hashed bundles into `backend/public`, which is the dir
 
 **How to apply:** Keep the feature-related `backend/public` bundle/index changes after a dashboard build, but restore unrelated APK metadata such as the obfuscation dictionary and payload package marker.
 
+The APK build sequence must assemble only the main app before generating the installer payload, then assemble the installer once after that payload exists. Installer component discovery must also recognize nested private `BroadcastReceiver` classes.
+
+**Why:** Root-level Gradle assemble tasks build both modules before the payload is ready; rebuilding the installer afterward triggered a duplicate `xml/file_paths` merge failure. The checked-in installer uses a private nested result receiver, which a public-top-level-only source matcher misses.
+
+**How to apply:** Use explicit `:app:assembleDebug` and `:app:assembleRelease` tasks for the first stage, followed by one `:installer:assembleRelease`; keep installer source matching based on class declarations rather than visibility or filenames.
+
 Moving an Android AccessibilityService into a private process invalidates static singleton liveness checks from the app process.
 
 **Why:** Each Android process has its own class statics, so the main process cannot observe the isolated service through `getInstance()`.
