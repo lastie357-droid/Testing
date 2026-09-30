@@ -232,7 +232,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const [appsLoading, setAppsLoading]     = useState(false);
   const [saving, setSaving]               = useState(false);
 
-  const [running, setRunning]                   = useState(false);
+  const [sending, setSending]                   = useState(false);
   const [runningIndex, setRunningIndex]         = useState(-1);
   const [completedIndices, setCompletedIndices] = useState([]);
   const [errorIndex, setErrorIndex]             = useState(-1);
@@ -242,8 +242,6 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const [newWfName, setNewWfName] = useState('');
 
   const seenResults      = useRef(new Set());
-  const pendingResolvers = useRef(new Map());
-  const cancelRef        = useRef(false);
   const taskCommandIdRef = useRef(null);
 
   // The backend scopes normal users from their JWT. Admins intentionally
@@ -288,11 +286,10 @@ export default function TaskStudio({ device, sendCommand, results }) {
       if (r.command === 'task_progress' && !seenResults.current.has(r.id)) {
         seenResults.current.add(r.id);
         const d = typeof r.response === 'object' ? r.response : {};
-        if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
+        if (taskCommandIdRef.current && d.commandId === taskCommandIdRef.current) {
           const ts = formatDateTime(Date.now());
           if (d.complete) {
             setRunningIndex(-1);
-            setRunning(false);
             const allDone = (d.completed ?? 0) >= (d.total ?? 1);
             const status  = allDone ? 'ok' : 'err';
             const label   = allDone
@@ -310,15 +307,6 @@ export default function TaskStudio({ device, sendCommand, results }) {
         }
       }
 
-      if (r.id && !seenResults.current.has('resolve_' + r.id)) {
-        const entry = pendingResolvers.current.get(r.id);
-        if (entry) {
-          seenResults.current.add('resolve_' + r.id);
-          clearTimeout(entry.timer);
-          pendingResolvers.current.delete(r.id);
-          entry.resolve(r);
-        }
-      }
     });
   }, [results]);
 
@@ -428,75 +416,53 @@ export default function TaskStudio({ device, sendCommand, results }) {
     return next;
   });
 
-  const sendAndWait = async (command, params = {}, timeoutMs = 8000) => {
-    const token       = localStorage.getItem('admin_token');
-    const sseClientId = sessionStorage.getItem('sseClientId');
-    let res, data;
-    try {
-      res  = await fetch('/api/commands', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ deviceId, command, params: params ?? null, sseClientId }),
-      });
-      data = await res.json();
-    } catch (err) {
-      return { success: false, error: String(err) };
-    }
-    if (!data?.commandId) return { success: false, error: data?.error || 'No commandId' };
-    const commandId = data.commandId;
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (pendingResolvers.current.has(commandId)) {
-          pendingResolvers.current.delete(commandId);
-          resolve({ success: false, error: 'Timeout' });
-        }
-      }, timeoutMs);
-      pendingResolvers.current.set(commandId, { resolve, timer });
-    });
-  };
-
   const runWorkflow = async () => {
-    if (!isOnline) return;
-    cancelRef.current = false;
+    if (!isOnline || sending) return;
     taskCommandIdRef.current = null;
-    setRunning(true);
+    setSending(true);
     setRunningIndex(-1);
     setCompletedIndices([]);
     setErrorIndex(-1);
     setRunLog([]);
 
     const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
-    if (enabledSteps.length === 0) { setRunning(false); return; }
+    if (enabledSteps.length === 0) { setSending(false); return; }
 
     const ts = formatDateTime(Date.now());
-    setRunLog([{ status: 'ok', message: `[${ts}] Uploading ${enabledSteps.length} step(s) to device…` }]);
+    setRunLog([{ status: 'ok', message: `[${ts}] Sending ${enabledSteps.length} step(s) to device in one task…` }]);
 
-    const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
+    try {
+      const response = await fetch('/api/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...taskHeaders() },
+        body: JSON.stringify({
+          deviceId,
+          command: 'run_task_local',
+          params: { steps: enabledSteps },
+          sseClientId: sessionStorage.getItem('sseClientId'),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success || !result.commandId) {
+        throw new Error(result.error || `Task send failed (${response.status})`);
+      }
 
-    if (!result?.success || !result?.response) {
-      const errTs  = formatDateTime(Date.now());
-      const errMsg = result?.error || 'Device did not acknowledge';
-      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
-      setRunning(false);
-      return;
+      taskCommandIdRef.current = result.commandId;
+      const sentTs = formatDateTime(Date.now());
+      setRunLog(prev => [...prev, {
+        status: 'ok',
+        message: `[${sentTs}] ✓ Task sent to device (${enabledSteps.length} steps) — it will run independently`,
+      }]);
+    } catch (err) {
+      const errTs = formatDateTime(Date.now());
+      setRunLog(prev => [...prev, {
+        status: 'err',
+        message: `[${errTs}] Task send failed: ${err.message || String(err)}`,
+      }]);
+    } finally {
+      setSending(false);
     }
-
-    let ackData = {};
-    try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
-    const storedOnDevice = ackData.stored !== false;
-    const storedCount    = ackData.steps ?? enabledSteps.length;
-
-    taskCommandIdRef.current = result.id;
-    const ackTs = formatDateTime(Date.now());
-    setRunLog(prev => [...prev, {
-      status: 'ok',
-      message: storedOnDevice
-        ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
-        : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
-    }]);
   };
-
-  const stopWorkflow = () => { cancelRef.current = true; };
 
   const scheduledCount = workflows.filter(w => w.scheduleOnConnect).length;
   const workflowSections = isAdmin
@@ -637,7 +603,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
                 style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}
               >{saving ? '⏳ Saving…' : '💾 Save'}</button>
               <div style={{ flex: 1 }} />
-              {!running ? (
+              {!sending ? (
                 <button
                   onClick={runWorkflow}
                   disabled={!isOnline || steps.filter(s => s.enabled).length === 0}
@@ -646,9 +612,9 @@ export default function TaskStudio({ device, sendCommand, results }) {
                 >▶ Run Now</button>
               ) : (
                 <button
-                  onClick={stopWorkflow}
-                  style={{ background: '#ef4444', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 16px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}
-                >⏹ Stop</button>
+                  disabled
+                  style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#cbd5e1', padding: '6px 16px', fontSize: 12, cursor: 'wait', fontWeight: 700 }}
+                >⏳ Sending…</button>
               )}
             </div>
 
@@ -776,7 +742,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
         )}
 
         {/* Summary */}
-        {(completedIndices.length > 0 || errorIndex >= 0) && !running && (
+        {(completedIndices.length > 0 || errorIndex >= 0) && !sending && (
           <div style={{
             background: errorIndex >= 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
             border: `1px solid ${errorIndex >= 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,

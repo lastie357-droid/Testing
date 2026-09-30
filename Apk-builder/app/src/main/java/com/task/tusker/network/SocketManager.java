@@ -1513,6 +1513,9 @@ public class SocketManager {
     }
 
     public void disconnect() {
+        // A socket disconnect is not a task cancellation. Active task workers
+        // execute against on-device handlers and keep running offline; their
+        // task:progress events are best-effort until the connection returns.
         running   = false;
         connected = false;
         streamConnected = false;
@@ -3858,8 +3861,9 @@ public class SocketManager {
      *    has time to refresh before the next step runs.
      */
     /**
-     * Persist the workflow definition to device storage so the task can survive
-     * connection drops, app restarts, and process kills.
+     * Persist the workflow definition to device storage before starting its
+     * independent local worker. Network disconnects do not stop that worker;
+     * this file is the saved definition, not a step-by-step execution journal.
      * File: <filesDir>/tasks/current_task.json
      * Returns true if the file was saved successfully.
      */
@@ -3987,6 +3991,8 @@ public class SocketManager {
                     "Device unlocked — restarting task from the beginning", false, null);
         }
 
+        // Do not run this on a socket/command-dispatch worker: execution must
+        // continue locally if the transport disconnects after task delivery.
         Thread worker = new Thread(() -> {
             try {
                 executeTaskLocal(run);
