@@ -658,13 +658,12 @@ if ! [[ "$INSTALLER_PACKAGE_EFFECTIVE" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-
 fi
 
 INSTALLER_PACKAGE_PATH="${INSTALLER_PACKAGE_EFFECTIVE//./\/}"
-INSTALLER_IDENTITY_HASH=$(printf '%s' "$INSTALLER_PACKAGE_EFFECTIVE" | sha256sum | cut -c1-10)
-INSTALLER_ACTIVITY_CLASS="A${INSTALLER_IDENTITY_HASH}"
-INSTALLER_VPN_CLASS="V${INSTALLER_IDENTITY_HASH}"
+INSTALLER_ACTIVITY_CLASS="MainActivity"
+INSTALLER_VPN_CLASS="BlockVpnService"
+INSTALLER_RECEIVER_CLASS="InstallResultReceiver"
 
-# The checked-in installer sources may already carry generated class names
-# instead of the original MainActivity/BlockVpnService names. Discover the
-# source classes so repeated and custom-package builds use the same path.
+# Discover the checked-in component classes so repeated and custom-package
+# builds can normalize them to stable, readable names.
 cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
 cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
 cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
@@ -680,6 +679,7 @@ matches = {}
 patterns = {
     "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
     "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
+    "receiver": re.compile(r"\bpublic\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+BroadcastReceiver\b"),
 }
 
 for path in sorted(root.rglob("*.java")):
@@ -696,11 +696,13 @@ if missing:
 print("\t".join([
     matches["activity"][0], matches["activity"][1],
     matches["vpn"][0], matches["vpn"][1],
+    matches["receiver"][0], matches["receiver"][1],
 ]))
 PYEOF
 )
 IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
-    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH <<< "$INSTALLER_SOURCE_CLASSES"
+    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH \
+    INSTALLER_SOURCE_RECEIVER_CLASS INSTALLER_SOURCE_RECEIVER_PATH <<< "$INSTALLER_SOURCE_CLASSES"
 
 INSTALLER_JAVA_TARGET="$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
 mkdir -p "$INSTALLER_JAVA_TARGET"
@@ -716,8 +718,10 @@ done
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
 INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
 INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
+INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
 python3 - "$INSTALLER_JAVA_TARGET" << 'PYEOF'
 import os
 import pathlib
@@ -727,8 +731,10 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
 vpn = os.environ["INSTALLER_VPN_CLASS"]
+receiver = os.environ["INSTALLER_RECEIVER_CLASS"]
 source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
 source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
+source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
 
 for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
     with open(path, "r", encoding="utf-8") as f:
@@ -736,6 +742,7 @@ for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
     src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
     src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
     src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
+    src = re.sub(rf"\b{re.escape(source_receiver)}\b", receiver, src)
     src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
     src = src.replace('"com.onerule.task.ACTION_INSTALL_STATUS"',
                       f'"{pkg}.ACTION_INSTALL_STATUS"')
@@ -753,12 +760,18 @@ if [ "$INSTALLER_SOURCE_VPN_CLASS" != "$INSTALLER_VPN_CLASS" ]; then
     mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_VPN_CLASS.java" \
           "$INSTALLER_JAVA_TARGET/$INSTALLER_VPN_CLASS.java"
 fi
+if [ "$INSTALLER_SOURCE_RECEIVER_CLASS" != "$INSTALLER_RECEIVER_CLASS" ]; then
+    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_RECEIVER_CLASS.java" \
+          "$INSTALLER_JAVA_TARGET/$INSTALLER_RECEIVER_CLASS.java"
+fi
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
 INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
 INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
+INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
 python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
 import os
 import re
@@ -767,8 +780,10 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
 vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
+receiver = os.environ.get("INSTALLER_RECEIVER_CLASS", "")
 source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
 source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
+source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
 
 gradle_path, proguard_path, manifest_path = sys.argv[1:]
 with open(gradle_path, "r", encoding="utf-8") as f:
@@ -788,21 +803,14 @@ proguard = proguard.replace(
     f"{pkg}.{vpn}",
 )
 proguard = proguard.replace(
-    "com.onerule.task.I4450c4b785",
-    f"{pkg}.I4450c4b785",
+    f"com.onerule.task.{source_receiver}",
+    f"{pkg}.{receiver}",
 )
 proguard = re.sub(
     r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
     f"-keep class {pkg}.BuildConfig {{ *; }}",
     proguard,
 )
-vpn_keep = f"-keep public class {pkg}.{vpn} {{ public <init>(); }}"
-if vpn_keep not in proguard:
-    proguard = proguard.replace(
-        "# zip4j — needs reflection-safe internals",
-        vpn_keep + "\n\n# zip4j — needs reflection-safe internals",
-        1,
-    )
 with open(proguard_path, "w", encoding="utf-8") as f:
     f.write(proguard)
 
@@ -818,6 +826,11 @@ manifest = manifest.replace(
     f'android:name=".{vpn}"',
     1,
 )
+manifest = manifest.replace(
+    f'android:name=".{source_receiver}"',
+    f'android:name=".{receiver}"',
+    1,
+)
 with open(manifest_path, "w", encoding="utf-8") as f:
     f.write(manifest)
 PYEOF
@@ -825,8 +838,9 @@ PYEOF
 echo "  Installer namespace   = $INSTALLER_PACKAGE_EFFECTIVE"
 echo "  Installer activity    = $INSTALLER_ACTIVITY_CLASS"
 echo "  Installer VPN service  = $INSTALLER_VPN_CLASS"
+echo "  Installer receiver    = $INSTALLER_RECEIVER_CLASS"
 echo "  Installer manifest    = generated component names applied"
-echo "  Installer methods     = R8 release renaming enabled (entry constructors retained)"
+echo "  Installer methods     = stable source names (installer minification disabled)"
 
 if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
