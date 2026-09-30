@@ -55,7 +55,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Shares the decrypted payload with Android's package installer. -->
+        <!-- Shares the prepared payload with Android's package installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

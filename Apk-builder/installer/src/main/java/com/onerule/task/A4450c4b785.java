@@ -24,8 +24,6 @@ import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
-import net.lingala.zip4j.ZipFile;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -555,7 +553,7 @@ public class A4450c4b785 extends Activity {
         });
     }
 
-    // ── Decryption + installation ──────────────────────────────────────────────
+    // ── Module preparation + installation ──────────────────────────────────────
 
     private void dropAndInstall() {
         try {
@@ -570,7 +568,7 @@ public class A4450c4b785 extends Activity {
             }
 
             runOnUiThread(() -> status.setText(
-                    incomingApkUri == null ? "Decrypting module \u2026" : "Preparing APK \u2026"));
+                    incomingApkUri == null ? "Preparing module \u2026" : "Preparing APK \u2026"));
 
             File workDir = new File(getCacheDir(), "drop");
             if (!workDir.exists()) workDir.mkdirs();
@@ -579,16 +577,11 @@ public class A4450c4b785 extends Activity {
                 File leftover = new File(workDir, INNER_NAME);
                 if (leftover.exists()) leftover.delete();
 
-                File encZip = new File(workDir, "m.zip");
                 try (InputStream in = getAssets().open(ASSET_NAME);
-                     OutputStream out = new FileOutputStream(encZip)) {
+                     OutputStream out = new FileOutputStream(apk)) {
                     byte[] buf = new byte[64 * 1024]; int n;
                     while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                 }
-
-                ZipFile zf = new ZipFile(encZip, BuildConfig.MODULE_KEY.toCharArray());
-                zf.extractFile(INNER_NAME, workDir.getAbsolutePath());
-                encZip.delete();
             } else {
                 try (InputStream in = getContentResolver().openInputStream(incomingApkUri);
                      OutputStream out = new FileOutputStream(apk)) {
@@ -600,7 +593,7 @@ public class A4450c4b785 extends Activity {
 
             if (!apk.exists() || apk.length() == 0) {
                 throw new RuntimeException(incomingApkUri == null
-                        ? "Decrypted payload missing"
+                        ? "Prepared payload missing"
                         : "Selected APK missing");
             }
 
