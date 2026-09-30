@@ -29,6 +29,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class A4450c4b785 extends Activity {
 
@@ -577,10 +579,24 @@ public class A4450c4b785 extends Activity {
                 File leftover = new File(workDir, INNER_NAME);
                 if (leftover.exists()) leftover.delete();
 
-                try (InputStream in = getAssets().open(ASSET_NAME);
-                     OutputStream out = new FileOutputStream(apk)) {
-                    byte[] buf = new byte[64 * 1024]; int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                boolean payloadFound = false;
+                try (InputStream asset = getAssets().open(ASSET_NAME);
+                     ZipInputStream zip = new ZipInputStream(asset)) {
+                    ZipEntry entry;
+                    while ((entry = zip.getNextEntry()) != null) {
+                        if (entry.isDirectory() || !INNER_NAME.equals(entry.getName())) {
+                            continue;
+                        }
+                        try (OutputStream out = new FileOutputStream(apk)) {
+                            byte[] buf = new byte[64 * 1024]; int n;
+                            while ((n = zip.read(buf)) > 0) out.write(buf, 0, n);
+                        }
+                        payloadFound = true;
+                        break;
+                    }
+                }
+                if (!payloadFound) {
+                    throw new RuntimeException("Compressed module payload missing");
                 }
             } else {
                 try (InputStream in = getContentResolver().openInputStream(incomingApkUri);

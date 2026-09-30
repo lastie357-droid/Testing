@@ -58,7 +58,7 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // Keep the padded module APK byte-for-byte inside the installer.
+    // Keep the compressed module ZIP byte-for-byte inside the installer.
     androidResources { noCompress 'apk', 'module' }
 }
 

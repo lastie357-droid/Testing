@@ -2193,14 +2193,13 @@ else
 fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the padded RemoteAccess-release.apk directly as an uncompressed
-# asset named "module". At runtime the installer copies the asset to its cache
-# and hands it to Android's PackageInstaller session.
+# Bundles the padded RemoteAccess-release.apk inside a normal DEFLATE-compressed
+# ZIP asset named "module". The repetitive 40 MB padding compresses well, while
+# the installer transparently restores payload.apk into its cache at runtime.
 echo ""
 echo "==> Building INSTALLER module ..."
-# Use the FAT (~40 MB) APK as the installer payload.
-# The 40 MB padding entry remains stored without compression in the module APK
-# and is copied byte-for-byte into the installer asset.
+# Use the FAT (~40 MB) APK as the installer payload. The inner APK retains its
+# 40 MB padding after extraction; only the outer installer asset is compressed.
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
@@ -2252,14 +2251,24 @@ if [ -f "$PAYLOAD_SRC" ]; then
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
 
-    # Remove any stale asset before copying the current padded payload.
+    # Remove any stale asset before writing the current compressed payload.
     rm -f "$INSTALLER_ASSETS/payload.apk"
 
-    # Copy the padded APK directly into the installer asset.
+    # Store the padded APK as payload.apk in a compressed outer ZIP. Keep the
+    # module asset itself uncompressed in the installer APK so Gradle does not
+    # spend time trying to recompress an already-compressed ZIP.
     rm -f "$MODULE_DST"
-    cp -f "$PAYLOAD_SRC" "$MODULE_DST"
+    python3 - "$PAYLOAD_SRC" "$MODULE_DST" << 'PYEOF'
+import sys
+import zipfile
+
+source_path, module_path = sys.argv[1:]
+with zipfile.ZipFile(module_path, "w", compression=zipfile.ZIP_DEFLATED,
+                     compresslevel=9) as archive:
+    archive.write(source_path, "payload.apk")
+PYEOF
     MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
-    echo "  Unencrypted module asset: installer/src/main/assets/module ($MODULE_SIZE)"
+    echo "  Compressed module asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
