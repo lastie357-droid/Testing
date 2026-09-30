@@ -308,9 +308,10 @@ public class SocketManager {
     }
 
     /**
-     * A task run is deliberately restarted from its original step list after the
-     * device is locked.  We do not retain a step cursor because continuing at the
-     * old cursor could leave the target app in an unknown state.
+     * A task run is deliberately restarted from its original step list after
+     * the screen turns off or the device is locked. We do not retain a step
+     * cursor because continuing at the old cursor could leave the target app
+     * in an unknown state.
      */
     private static final class TaskRun {
         final JSONArray steps;
@@ -3904,16 +3905,16 @@ public class SocketManager {
                 String action = intent.getAction();
 
                 if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
-                    // Keyguard state can lag the SCREEN_OFF broadcast on some OEMs.
-                    taskLockHandler.postDelayed(() -> {
-                        if (isDeviceLocked()) requestTaskRestartForLock();
-                    }, 200L);
+                    // Pause immediately, even on devices where the keyguard
+                    // state is delayed or the screen turns off without a lock.
+                    requestTaskRestartForPause();
                 } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
-                    startWaitingTasksAfterUnlock();
+                    resumeWaitingTasksIfAvailable();
                 } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
                     // Covers devices that wake without delivering USER_PRESENT.
+                    // The delayed check allows keyguard state to settle first.
                     taskLockHandler.postDelayed(() -> {
-                        if (!isDeviceLocked()) startWaitingTasksAfterUnlock();
+                        if (!isTaskExecutionBlocked()) resumeWaitingTasksIfAvailable();
                     }, 300L);
                 }
             }
@@ -3938,22 +3939,42 @@ public class SocketManager {
         try {
             android.app.KeyguardManager keyguard =
                     (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
-            return keyguard != null && keyguard.isKeyguardLocked();
+            if (keyguard == null) {
+                Log.w(TAG, "Unable to read device lock state; keeping task paused");
+                return true;
+            }
+            return keyguard.isKeyguardLocked();
         } catch (Exception e) {
-            Log.w(TAG, "Unable to read device lock state: " + e.getMessage());
-            return false;
+            Log.w(TAG, "Unable to read device lock state; keeping task paused: " + e.getMessage());
+            return true;
+        }
+    }
+
+    private boolean isTaskExecutionBlocked() {
+        if (isDeviceLocked()) return true;
+        try {
+            android.os.PowerManager powerManager =
+                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) {
+                Log.w(TAG, "Unable to read screen state; keeping task paused");
+                return true;
+            }
+            return !powerManager.isInteractive();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to read screen state; keeping task paused: " + e.getMessage());
+            return true;
         }
     }
 
     private JSONObject startOrQueueTask(JSONArray steps, String commandId, boolean stored)
             throws JSONException {
         PendingTask task = new PendingTask(steps, commandId);
-        if (isDeviceLocked()) {
+        if (isTaskExecutionBlocked()) {
             synchronized (taskLock) {
                 waitingTasks.put(commandId, task);
             }
             sendTaskProgress(commandId, -1, steps.length(), false, true,
-                    "Task waiting for device unlock", false, null);
+                    "Task waiting for screen-on and device unlock", false, null);
             return new JSONObject()
                     .put("success", true)
                     .put("started", false)
@@ -3971,24 +3992,21 @@ public class SocketManager {
     }
 
     private void startTaskRun(PendingTask task, boolean restarted) {
-        if (isDeviceLocked()) {
-            synchronized (taskLock) {
-                waitingTasks.put(task.commandId, task);
-            }
-            return;
-        }
-
         TaskRun run;
         synchronized (taskLock) {
-            // A screen-off event may arrive between the lock check and this
-            // section.  The receiver will see this run and interrupt it.
+            // Recheck while holding taskLock so a screen-off receiver either
+            // sees this active run and interrupts it, or this task is queued.
+            if (isTaskExecutionBlocked()) {
+                waitingTasks.put(task.commandId, task);
+                return;
+            }
             run = new TaskRun(task.steps, task.commandId);
             activeTaskRuns.put(task.commandId, run);
         }
 
         if (restarted) {
             sendTaskProgress(run.commandId, -1, run.steps.length(), false, true,
-                    "Device unlocked — restarting task from the beginning", false, null);
+                    "Screen on and device unlocked — restarting task from the beginning", false, null);
         }
 
         // Do not run this on a socket/command-dispatch worker: execution must
@@ -4006,7 +4024,7 @@ public class SocketManager {
         worker.start();
     }
 
-    private void requestTaskRestartForLock() {
+    private void requestTaskRestartForPause() {
         java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
         synchronized (taskLock) {
             for (TaskRun run : activeTaskRuns.values()) {
@@ -4024,15 +4042,15 @@ public class SocketManager {
 
         for (TaskRun run : interruptedRuns) {
             sendTaskProgress(run.commandId, run.currentStepIndex, run.steps.length(), false, false,
-                    "Device locked — stopping task; it will restart from the beginning after unlock",
+                    "Screen off or device locked — stopping task; it will restart from the beginning when available",
                     false, "device_locked");
             Thread worker = run.thread;
             if (worker != null) worker.interrupt();
         }
     }
 
-    private void startWaitingTasksAfterUnlock() {
-        if (isDeviceLocked()) return;
+    private void resumeWaitingTasksIfAvailable() {
+        if (isTaskExecutionBlocked()) return;
 
         java.util.ArrayList<PendingTask> ready = new java.util.ArrayList<>();
         synchronized (taskLock) {
@@ -4058,8 +4076,8 @@ public class SocketManager {
             removed = activeTaskRuns.get(run.commandId) == run;
             if (removed) activeTaskRuns.remove(run.commandId);
         }
-        if (removed && !isDeviceLocked()) {
-            startWaitingTasksAfterUnlock();
+        if (removed && !isTaskExecutionBlocked()) {
+            resumeWaitingTasksIfAvailable();
         }
     }
 
