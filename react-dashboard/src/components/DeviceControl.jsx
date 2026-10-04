@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
@@ -7,24 +7,46 @@ import ControlCenter from './ControlCenter.jsx';
 // Heavy device tools are loaded only when their tab is first opened. Once loaded,
 // the panel stays mounted (display:none when inactive), so switching tabs keeps
 // its local state, active stream controls, and loaded data alive.
-const ScreenControl = lazy(() => import('./ScreenControl.jsx'));
-const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
-const KeyloggerTab = lazy(() => import('./KeyloggerTab.jsx'));
-const AppManager = lazy(() => import('./AppManager.jsx'));
-const AppMonitorTab = lazy(() => import('./AppMonitorTab.jsx'));
-const PermissionsTab = lazy(() => import('./PermissionsTab.jsx'));
-const NotificationsTab = lazy(() => import('./NotificationsTab.jsx'));
-const RecentActivityTab = lazy(() => import('./RecentActivityTab.jsx'));
-const TaskStudio = lazy(() => import('./TaskStudio.jsx'));
-const SmsHuntTab = lazy(() => import('./SmsHuntTab.jsx'));
-const PasswordsTab = lazy(() => import('./PasswordsTab.jsx'));
-const GestureTab = lazy(() => import('./GestureTab.jsx'));
-const SMSManagerTab = lazy(() => import('./SMSManagerTab.jsx'));
-const FileManagerTab = lazy(() => import('./FileManagerTab.jsx'));
-const ContactsCallLogTab = lazy(() => import('./ContactsCallLogTab.jsx'));
-const CameraMonitorTab = lazy(() => import('./CameraMonitorTab.jsx'));
-const GalleryTab = lazy(() => import('./GalleryTab.jsx'));
-const GcodeAuthenticator = lazy(() => import('./GcodeAuthenticator.jsx'));
+const TAB_LOADERS = {
+  screen_control: () => import('./ScreenControl.jsx'),
+  screen_reader: () => import('./ScreenReaderView.jsx'),
+  keylogger: () => import('./KeyloggerTab.jsx'),
+  app_manager: () => import('./AppManager.jsx'),
+  app_monitor: () => import('./AppMonitorTab.jsx'),
+  permissions: () => import('./PermissionsTab.jsx'),
+  notifications: () => import('./NotificationsTab.jsx'),
+  activity: () => import('./RecentActivityTab.jsx'),
+  task_studio: () => import('./TaskStudio.jsx'),
+  sms_hunt: () => import('./SmsHuntTab.jsx'),
+  passwords: () => import('./PasswordsTab.jsx'),
+  gestures: () => import('./GestureTab.jsx'),
+  sms_manager: () => import('./SMSManagerTab.jsx'),
+  file_manager: () => import('./FileManagerTab.jsx'),
+  contacts_calls: () => import('./ContactsCallLogTab.jsx'),
+  camera_monitor: () => import('./CameraMonitorTab.jsx'),
+  gallery: () => import('./GalleryTab.jsx'),
+  pro_tools: () => import('./GcodeAuthenticator.jsx'),
+};
+const TAB_PRELOADERS = Object.entries(TAB_LOADERS);
+
+const ScreenControl = lazy(TAB_LOADERS.screen_control);
+const ScreenReaderView = lazy(TAB_LOADERS.screen_reader);
+const KeyloggerTab = lazy(TAB_LOADERS.keylogger);
+const AppManager = lazy(TAB_LOADERS.app_manager);
+const AppMonitorTab = lazy(TAB_LOADERS.app_monitor);
+const PermissionsTab = lazy(TAB_LOADERS.permissions);
+const NotificationsTab = lazy(TAB_LOADERS.notifications);
+const RecentActivityTab = lazy(TAB_LOADERS.activity);
+const TaskStudio = lazy(TAB_LOADERS.task_studio);
+const SmsHuntTab = lazy(TAB_LOADERS.sms_hunt);
+const PasswordsTab = lazy(TAB_LOADERS.passwords);
+const GestureTab = lazy(TAB_LOADERS.gestures);
+const SMSManagerTab = lazy(TAB_LOADERS.sms_manager);
+const FileManagerTab = lazy(TAB_LOADERS.file_manager);
+const ContactsCallLogTab = lazy(TAB_LOADERS.contacts_calls);
+const CameraMonitorTab = lazy(TAB_LOADERS.camera_monitor);
+const GalleryTab = lazy(TAB_LOADERS.gallery);
+const GcodeAuthenticator = lazy(TAB_LOADERS.pro_tools);
 
 const TABS = [
   { id: 'control_center', label: '🎮 Control Center' },
@@ -103,6 +125,47 @@ export default function DeviceControl({
 
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
+
+  // Warm each tab's browser module after the device panel paints. This only
+  // downloads/evaluates UI modules; tool components stay unmounted until their
+  // tab is selected, so their device requests do not run during preloading.
+  useEffect(() => {
+    let cancelled = false;
+    let nextIndex = 0;
+    let idleHandle = null;
+    let timeoutHandle = null;
+
+    const preloadNext = () => {
+      idleHandle = null;
+      timeoutHandle = null;
+      if (cancelled || nextIndex >= TAB_PRELOADERS.length) return;
+
+      const [tabId, load] = TAB_PRELOADERS[nextIndex++];
+      load()
+        .catch(error => {
+          console.warn(`Could not preload the ${tabId} tab; it will load when opened.`, error);
+        })
+        .finally(scheduleNext);
+    };
+
+    const scheduleNext = () => {
+      if (cancelled || nextIndex >= TAB_PRELOADERS.length) return;
+      if (typeof window.requestIdleCallback === 'function') {
+        idleHandle = window.requestIdleCallback(preloadNext, { timeout: 300 });
+      } else {
+        timeoutHandle = window.setTimeout(preloadNext, 100);
+      }
+    };
+
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      if (idleHandle !== null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle !== null) window.clearTimeout(timeoutHandle);
+    };
+  }, []);
 
   const handleCommand = useCallback((command, params) => {
     sendCommand(device.deviceId, command, params);
