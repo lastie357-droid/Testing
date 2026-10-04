@@ -8,3 +8,9 @@ Saved workflows are private to a normal user's access ID, while admins may view 
 **Why:** The dashboard can successfully save a task and still appear empty if the subsequent list request is unauthenticated or the admin endpoint defaults to global-only records.
 
 **How to apply:** Keep access-ID scoping and ownership checks in the backend; treat client-provided access IDs as advisory for users, and use authenticated requests for Task Studio and task-runner refreshes.
+
+Task Studio workflows are intended to be one-time, ordered sequences, not recurring background jobs. A workflow saved as “Run once when device comes online” waits for one device connection and is then cleared.
+
+**Why:** The user clarified that Task Studio is for one-time tasks, not surveillance or recurring execution.
+
+**How to apply:** Preserve sequential, one-shot semantics and distinguish a task already delivered to the device (which can continue without the dashboard) from a server-side schedule waiting for the device to reconnect.
