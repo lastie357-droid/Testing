@@ -18,9 +18,12 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
 
   const esRef         = useRef(null);
   const retryRef      = useRef(null);
+  const watchdogRef   = useRef(null);
   const connectRef    = useRef(null);
   const generationRef = useRef(0);
   const disposedRef   = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const lastMessageAtRef = useRef(0);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
   const onMessageRef  = useRef(onMessage);
   onMessageRef.current = onMessage;
@@ -32,28 +35,61 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
     const token = tokenStorageKey
       ? localStorage.getItem(tokenStorageKey)
       : (localStorage.getItem('admin_token') || localStorage.getItem('user_token'));
-    if (!token) return;
+    if (!token) {
+      setConnected(false);
+      setReconnecting(false);
+      return;
+    }
 
     // Never allow two EventSource instances to survive a reconnect race.
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
+    clearInterval(watchdogRef.current);
+    watchdogRef.current = null;
     const generation = ++generationRef.current;
 
-    // EventSource opens a persistent TCP connection; browser reconnects automatically.
+    // EventSource opens a persistent TCP connection. Our watchdog detects a
+    // half-open connection that EventSource itself may not report as failed.
     const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
     esRef.current = es;
+
+    const failConnection = () => {
+      if (generation !== generationRef.current || disposedRef.current) return;
+      generationRef.current += 1;
+      setConnected(false);
+      setReconnecting(true);
+      clearInterval(watchdogRef.current);
+      watchdogRef.current = null;
+      if (esRef.current === es) esRef.current = null;
+      es.close();
+      clearTimeout(retryRef.current);
+      const delay = Math.min(3000 * (2 ** reconnectAttemptRef.current), 30000);
+      reconnectAttemptRef.current = Math.min(reconnectAttemptRef.current + 1, 4);
+      retryRef.current = setTimeout(() => {
+        retryRef.current = null;
+        connectRef.current?.();
+      }, delay);
+    };
 
     es.onopen = () => {
       if (generation !== generationRef.current || disposedRef.current) return;
       setConnected(true);
       setReconnecting(false);
+      reconnectAttemptRef.current = 0;
+      lastMessageAtRef.current = Date.now();
       clearTimeout(retryRef.current);
+      clearInterval(watchdogRef.current);
+      watchdogRef.current = setInterval(() => {
+        if (generation !== generationRef.current || disposedRef.current) return;
+        if (Date.now() - lastMessageAtRef.current > 70000) failConnection();
+      }, 15000);
     };
 
     es.onmessage = (e) => {
       if (generation !== generationRef.current || disposedRef.current) return;
+      lastMessageAtRef.current = Date.now();
       try {
         const msg = JSON.parse(e.data);
         // Capture our sseClientId the first time the server sends it
@@ -67,12 +103,8 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
 
     es.onerror = () => {
       if (generation !== generationRef.current || disposedRef.current) return;
-      setConnected(false);
-      setReconnecting(true);
-      es.close();
-      // EventSource would retry automatically but we want controlled backoff.
-      clearTimeout(retryRef.current);
-      retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
+      // EventSource would retry automatically; close it and use bounded backoff.
+      failConnection();
     };
   }, []);
   connectRef.current = connect;
@@ -84,6 +116,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
       disposedRef.current = true;
       generationRef.current += 1;
       clearTimeout(retryRef.current);
+      clearInterval(watchdogRef.current);
       if (esRef.current) esRef.current.close();
       esRef.current = null;
     };
