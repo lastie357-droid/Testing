@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
-const { getJwtSecret } = require('../jwtSecret');
+const { getJwtSecret, verifyJwt } = require('../jwtSecret');
 const { verifyCaptcha } = require('../utils/captcha');
 
 const router = express.Router();
@@ -147,7 +147,7 @@ router.post('/change-password', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No token provided.' });
     }
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = verifyJwt(token);
     const user = await User.findById(decoded.userId);
     if (!user || user.role !== 'user') {
       return res.status(401).json({ success: false, error: 'Unauthorized.' });
@@ -183,7 +183,7 @@ router.delete('/account', async (req, res) => {
       return res.status(401).json({ success: false, error: 'No token provided.' });
     }
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = verifyJwt(token);
     const user = await User.findById(decoded.userId);
     if (!user || user.role !== 'user') {
       return res.status(401).json({ success: false, error: 'Unauthorized.' });
@@ -210,19 +210,34 @@ router.delete('/account', async (req, res) => {
 });
 
 router.get('/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, error: 'No token provided.' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  let decoded;
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'No token provided.' });
-    }
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, getJwtSecret());
+    decoded = verifyJwt(token);
+  } catch (_) {
+    return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+  }
+
+  try {
     const user = await User.findById(decoded.userId);
-    if (!user || user.role !== 'user') {
+    if (!user || user.role !== 'user' || !user.isActive) {
       return res.status(401).json({ success: false, error: 'Unauthorized.' });
     }
+
+    const refreshedToken = jwt.sign(
+      { userId: user._id, role: 'user', accessId: user.accessId || '' },
+      getJwtSecret(),
+      { expiresIn: '7d' }
+    );
+
     res.json({
       success: true,
+      token: refreshedToken,
       user: {
         ...userPayload(user),
         lastLogin: user.lastLogin,
@@ -230,7 +245,8 @@ router.get('/me', async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+    console.error('[USER-AUTH] Session check error:', error.message);
+    res.status(503).json({ success: false, error: 'Session service temporarily unavailable.' });
   }
 });
 

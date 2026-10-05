@@ -21,7 +21,6 @@ const fs             = require('fs');
 const crypto         = require('crypto');
 const zlib           = require('zlib');
 const mongoose       = require('mongoose');
-const jwt            = require('jsonwebtoken');
 const { spawn }      = require('child_process');
 require('dotenv').config();
 
@@ -32,7 +31,7 @@ require('dotenv').config();
 mongoose.set('bufferCommands', false);
 mongoose.set('bufferTimeoutMS', 5000);
 
-const { getJwtSecret } = require('./jwtSecret');
+const { verifyJwt } = require('./jwtSecret');
 const { formatDateTime } = require('./utils/dateTime');
 
 // ============================================
@@ -2383,7 +2382,7 @@ app.get('/api/events', async (req, res) => {
     }
     if (!role) {
         try {
-            const decoded = jwt.verify(token, getJwtSecret());
+            const decoded = verifyJwt(token);
             if (decoded && decoded.userId && decoded.role === 'user') {
                 role = 'user';
                 userId = decoded.userId;
@@ -2628,7 +2627,7 @@ async function requireUserOrAdmin(req, res, next) {
 
     // 2) User JWT?
     try {
-        const decoded = jwt.verify(token, getJwtSecret());
+        const decoded = verifyJwt(token);
         if (decoded && decoded.userId && decoded.role === 'user') {
             req.authRole     = 'user';
             req.authUserId   = decoded.userId;
@@ -2977,9 +2976,7 @@ app.get('/api/camera/latest/:deviceId', async (req, res) => {
     // Also accept user JWT tokens (for user-facing dashboard)
     if (!authed) {
         try {
-            const { getJwtSecret } = require('./jwtSecret');
-            const jwt = require('jsonwebtoken');
-            const decoded = jwt.verify(token, getJwtSecret());
+            const decoded = verifyJwt(token);
             if (decoded && decoded.userId) authed = true;
         } catch (_) {}
     }

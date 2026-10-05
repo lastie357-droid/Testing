@@ -20,8 +20,9 @@ import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
 function getInitialMode() {
+  if (localStorage.getItem('admin_token')) return 'admin';
   if (localStorage.getItem('user_token')) return 'user';
-  return 'user-login'; // always show login page; admin access is via button
+  return 'user-login';
 }
 
 // ─── Admin auth hook (unchanged) ────────────────────────────────────────────
@@ -57,35 +58,51 @@ function useUserAuth() {
   useEffect(() => {
     const token = localStorage.getItem('user_token');
     if (!token) { setUserAuthed(false); return; }
+
+    const restoreCachedSession = () => {
+      const cached = localStorage.getItem('user_info');
+      if (cached) {
+        try {
+          const user = JSON.parse(cached);
+          if (user && typeof user === 'object') {
+            setUserInfo(user);
+            setUserAuthed(true);
+            return;
+          }
+        } catch (_) {}
+      }
+      setUserAuthed(false);
+    };
+
     fetch('/api/user-auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setUserAuthed(true);
-          setUserInfo(d.user);
-          localStorage.setItem('user_info', JSON.stringify(d.user));
-        } else {
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+
+        if (response.status === 401) {
           localStorage.removeItem('user_token');
           localStorage.removeItem('user_info');
+          setUserInfo(null);
           setUserAuthed(false);
+          return;
+        }
+
+        if (!response.ok || !data?.success || !data.user) {
+          // A server/database outage is not proof that the saved session is
+          // invalid. Keep the token and use cached account data until retry.
+          restoreCachedSession();
+          return;
+        }
+
+        if (data.success) {
+          setUserAuthed(true);
+          setUserInfo(data.user);
+          localStorage.setItem('user_info', JSON.stringify(data.user));
+          if (data.token) localStorage.setItem('user_token', data.token);
         }
       })
-      .catch(() => {
-        // If server unreachable, try to use cached info
-        const cached = localStorage.getItem('user_info');
-        if (cached) {
-          try {
-            setUserInfo(JSON.parse(cached));
-            setUserAuthed(true);
-          } catch {
-            setUserAuthed(false);
-          }
-        } else {
-          setUserAuthed(false);
-        }
-      });
+      .catch(restoreCachedSession);
   }, []);
 
   const logout = () => {
