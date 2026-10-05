@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
 
-export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected }) {
+export default function ScreenControl({
+  device, sendCommand, results, streamFrame, send, connected, authTokenStorageKey,
+}) {
   const deviceId = device.deviceId;
+  const devicePathId = encodeURIComponent(deviceId);
+  const token = authTokenStorageKey ? localStorage.getItem(authTokenStorageKey) : '';
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   const isOnline = device.isOnline;
 
   const [isStreaming, setIsStreaming]         = useState(false);
@@ -52,8 +57,11 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   // Clears stale pending commands, streaming state, frame throttle, and all
   // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
   useEffect(() => {
-    fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
-  }, [deviceId]);
+    fetch(`/api/device/${devicePathId}/reset-session`, {
+      method: 'POST',
+      headers: authHeaders,
+    }).catch(() => {});
+  }, [devicePathId, token]);
 
   // ── Manual Start Stream ──
   // stream_start is a one-shot screenshot response. The dashboard owns the
@@ -101,7 +109,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
     try {
-      const res = await fetch(`/api/recordings/${deviceId}`);
+      const res = await fetch(`/api/recordings/${devicePathId}`);
       const data = await res.json();
       setRecordings(data.recordings || []);
     } catch (e) {
@@ -278,9 +286,9 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
     const nextState = !isBlackedOut;
     try {
       // Dedicated fast channel — bypasses WebSocket queue, writes directly to device TCP
-      const res = await fetch(`/api/device/${deviceId}/blackout`, {
+      const res = await fetch(`/api/device/${devicePathId}/blackout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ state: nextState }),
       });
       if (res.ok) {
@@ -332,7 +340,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   const handleDeleteRecording = async (filename) => {
     if (!window.confirm(`Delete recording "${filename}"?`)) return;
     try {
-      await fetch(`/api/recordings/${deviceId}/${filename}`, { method: 'DELETE' });
+      await fetch(`/api/recordings/${devicePathId}/${encodeURIComponent(filename)}`, { method: 'DELETE' });
       fetchRecordings();
     } catch (e) {
       alert('Delete failed');
@@ -340,16 +348,16 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
   };
 
   const handleDownloadRecording = (filename) => {
-    window.open(`/api/recordings/${deviceId}/${filename}`, '_blank');
+    window.open(`/api/recordings/${devicePathId}/${encodeURIComponent(filename)}`, '_blank');
   };
 
   const handleViewRecording = async (filename) => {
     try {
-      const res = await fetch(`/api/recordings/${deviceId}/${filename}/view`);
+      const res = await fetch(`/api/recordings/${devicePathId}/${encodeURIComponent(filename)}/view`);
       const data = await res.json();
       openRecordingViewer(data, filename);
     } catch (_) {
-      window.open(`/api/recordings/${deviceId}/${filename}`, '_blank');
+      window.open(`/api/recordings/${devicePathId}/${encodeURIComponent(filename)}`, '_blank');
     }
   };
 

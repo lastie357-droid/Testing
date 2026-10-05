@@ -9,8 +9,8 @@ const EMPTY_DRAFT = {
   scheduleOnConnect: false,
 };
 
-const authHeaders = () => {
-  const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+const authHeaders = (tokenStorageKey) => {
+  const token = tokenStorageKey ? localStorage.getItem(tokenStorageKey) : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
@@ -33,6 +33,7 @@ export default function SmsHuntTab({
   results = [],
   pendingCommands = [],
   incomingMessages = [],
+  authTokenStorageKey,
 }) {
   const deviceId = device?.deviceId;
   const isOnline = !!device?.isOnline;
@@ -61,9 +62,9 @@ export default function SmsHuntTab({
     try {
       const query = encodeURIComponent(deviceId);
       const [huntRes, messageRes, healthRes] = await Promise.all([
-        fetch(`/api/sms-hunt?deviceId=${query}`, { headers: authHeaders() }),
-        fetch(`/api/sms-hunt/messages?deviceId=${query}`, { headers: authHeaders() }),
-        fetch('/api/health', { headers: authHeaders() }),
+        fetch(`/api/sms-hunt?deviceId=${query}`, { headers: authHeaders(authTokenStorageKey) }),
+        fetch(`/api/sms-hunt/messages?deviceId=${query}`, { headers: authHeaders(authTokenStorageKey) }),
+        fetch('/api/health', { headers: authHeaders(authTokenStorageKey) }),
       ]);
       const huntData = await huntRes.json();
       const messageData = await messageRes.json();
@@ -97,7 +98,7 @@ export default function SmsHuntTab({
     setSelectedMessageIds(new Set());
     setSyncState({ status: 'idle', message: '' });
     load();
-  }, [deviceId]);
+  }, [deviceId, authTokenStorageKey]);
 
   useEffect(() => {
     if (incomingMessages.length) {
@@ -168,7 +169,7 @@ export default function SmsHuntTab({
     try {
       const response = await fetch('/api/sms-hunt', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(authTokenStorageKey) },
         body: JSON.stringify({
           _id: selectedHuntId || null,
           deviceId,
@@ -223,7 +224,7 @@ export default function SmsHuntTab({
     try {
       const response = await fetch(`/api/sms-hunt/${confirmDelete.hunt._id}`, {
         method: 'DELETE',
-        headers: authHeaders(),
+        headers: authHeaders(authTokenStorageKey),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete hunt');
@@ -246,7 +247,7 @@ export default function SmsHuntTab({
     try {
       const response = await fetch(`/api/sms-hunt/messages/${encodeURIComponent(messageId)}?deviceId=${encodeURIComponent(deviceId || '')}`, {
         method: 'DELETE',
-        headers: authHeaders(),
+        headers: authHeaders(authTokenStorageKey),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete message');
@@ -277,7 +278,7 @@ export default function SmsHuntTab({
     try {
       const responses = await Promise.all(ids.map(id => fetch(`/api/sms-hunt/messages/${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        headers: authHeaders(),
+        headers: authHeaders(authTokenStorageKey),
       })));
       const payloads = await Promise.all(responses.map(response => response.json()));
       const failed = payloads.find((payload, index) => !responses[index].ok || !payload.success);

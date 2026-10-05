@@ -14,8 +14,11 @@ const SCREEN_READER_INTERVAL_OPTIONS = [
   { value: 10000, label: '10 sec' },
 ];
 
-export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected }) {
+export default function ScreenReaderView({
+  device, sendCommand, results, screenPushData, connected, authTokenStorageKey,
+}) {
   const deviceId = device.deviceId;
+  const token = authTokenStorageKey ? localStorage.getItem(authTokenStorageKey) : '';
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
 
@@ -58,8 +61,11 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // Clears stale pending commands, streaming state, frame throttle, and all
   // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
   useEffect(() => {
-    fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
-  }, [deviceId]);
+    fetch(`/api/device/${encodeURIComponent(deviceId)}/reset-session`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).catch(() => {});
+  }, [deviceId, token]);
 
   // ── Start: begin dashboard-side repeated command requests ────────────
   // No interval is sent to Android. Each tick is one normal screen read.

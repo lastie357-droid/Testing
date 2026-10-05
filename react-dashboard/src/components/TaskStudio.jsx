@@ -217,11 +217,12 @@ function StepCard({ step, index, total, apps, onUpdate, onDelete, onMove, runnin
   );
 }
 
-export default function TaskStudio({ device, sendCommand, results }) {
+export default function TaskStudio({
+  device, sendCommand, results, authTokenStorageKey, isAdmin = false,
+}) {
   const deviceId = device.deviceId;
   const accessId = device.accessId || '';
   const isOnline = device.isOnline;
-  const isAdmin = !!localStorage.getItem('admin_token');
 
   const [workflows, setWorkflows]         = useState([]);
   const [activeWfIndex, setActiveWfIndex] = useState(null);
@@ -248,7 +249,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   // request the complete task library so tasks from every user are visible.
   const API_TASKS = '/api/tasks';
   const taskHeaders = () => {
-    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    const token = authTokenStorageKey ? localStorage.getItem(authTokenStorageKey) : null;
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
@@ -262,7 +263,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
       .catch(() => {});
-  }, [deviceId, accessId, isAdmin]);
+  }, [deviceId, accessId, isAdmin, authTokenStorageKey]);
 
   useEffect(() => {
     if (isOnline && apps.length === 0) {

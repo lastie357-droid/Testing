@@ -291,6 +291,16 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  animation: device-panel-enter 180ms ease-out both;
+}
+
+@keyframes device-panel-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-control { animation: none; }
 }
 
 .dc-header {

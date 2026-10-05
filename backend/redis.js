@@ -350,25 +350,38 @@ async function getStats() {
 // ── Session reset helper ──────────────────────────────────────────────────────
 
 /**
- * Delete all command:* cache keys from Redis.
- * Called when the dashboard refreshes on ScreenControl or ScreenReader tab so
- * stale command results, pending frame requests, and screenshot blobs don't
- * linger in the cache between sessions.
+ * Delete cached command results for one device, or all devices when called
+ * without a device ID. Scoped resets preserve other devices' cached results.
  */
-async function clearCommandCache() {
+async function clearCommandCache(deviceId = null) {
     if (!isConnected()) return 0;
     try {
+        const targetDeviceId = deviceId == null ? null : String(deviceId);
         let cursor = '0';
         let deleted = 0;
         do {
             const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'command:*', 'COUNT', 200);
             cursor = nextCursor;
             if (keys.length) {
-                await redis.del(...keys);
-                deleted += keys.length;
+                let deleteKeys = keys;
+                if (targetDeviceId !== null) {
+                    const values = await redis.mget(...keys);
+                    deleteKeys = keys.filter((key, index) => {
+                        if (!values[index]) return false;
+                        try {
+                            return String(JSON.parse(values[index])?.deviceId || '') === targetDeviceId;
+                        } catch (_) {
+                            return false;
+                        }
+                    });
+                }
+                if (deleteKeys.length) {
+                    await redis.del(...deleteKeys);
+                    deleted += deleteKeys.length;
+                }
             }
         } while (cursor !== '0');
-        log(`clearCommandCache: removed ${deleted} command cache key(s)`);
+        log(`clearCommandCache: removed ${deleted} command cache key(s)${targetDeviceId === null ? '' : ` for ${targetDeviceId}`}`);
         return deleted;
     } catch (e) {
         log(`clearCommandCache error: ${e.message}`, 'warn');

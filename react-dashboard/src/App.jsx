@@ -199,6 +199,7 @@ function Splash({ text }) {
 function AdminDashboard({ logout }) {
   const [devices, setDevices]                         = useState([]);
   const [selectedDevice, setSelectedDevice]           = useState(null);
+  const mainContentRef = useRef(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
   const [pendingCommands, setPendingCommands]         = useState({});
@@ -591,6 +592,10 @@ function AdminDashboard({ logout }) {
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
 
   useEffect(() => {
+    mainContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [selectedDevice]);
+
+  useEffect(() => {
     if (!connected) return;
     const tick = () => send('dashboard:ping', { sentAt: Date.now() });
     tick();
@@ -633,12 +638,14 @@ function AdminDashboard({ logout }) {
           onDeleteDevice={device => handleDeviceAction(device, 'delete')}
           deviceActionBusy={deviceActionBusy}
         />
-        <main className="main-content">
+        <main ref={mainContentRef} className="main-content">
           {selectedDevice ? (
             <DeviceControl
               key={selectedDevice}
               device={devices.find(d => d.deviceId === selectedDevice) || { deviceId: selectedDevice }}
               sendCommand={sendCommand}
+              authTokenStorageKey="admin_token"
+              isAdmin
               results={commandResults.filter(r => r.deviceId === selectedDevice)}
               pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
               onBack={() => setSelectedDevice(null)}

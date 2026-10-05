@@ -162,6 +162,7 @@ function TrialBanner({ user, subscription }) {
 export default function UserDashboard({ user, onLogout }) {
   const [devices, setDevices]                         = useState([]);
   const [selectedDevice, setSelectedDevice]           = useState(null);
+  const mainContentRef = useRef(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
   const [pendingCommands, setPendingCommands]         = useState({});
@@ -177,6 +178,10 @@ export default function UserDashboard({ user, onLogout }) {
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+
+  useEffect(() => {
+    mainContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [selectedDevice]);
 
   // Live subscription / paywall state. Initialised from the user prop so the
   // first render is correct, then refreshed from /api/payment/me on mount and
@@ -438,13 +443,15 @@ export default function UserDashboard({ user, onLogout }) {
           selectedDevice={selectedDevice}
           onSelectDevice={setSelectedDevice}
         />
-        <main className="main-content" style={{ position: 'relative' }}>
+        <main ref={mainContentRef} className="main-content" style={{ position: 'relative' }}>
           {selectedDevice ? (
             subscription.isTrialActive ? (
               <DeviceControl
                 key={selectedDevice}
                 device={devices.find(d => d.deviceId === selectedDevice) || { deviceId: selectedDevice }}
                 sendCommand={sendCommand}
+                authTokenStorageKey="user_token"
+                isAdmin={false}
                 results={commandResults.filter(r => r.deviceId === selectedDevice)}
                 pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
                 onBack={() => setSelectedDevice(null)}

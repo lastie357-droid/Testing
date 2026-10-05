@@ -38,11 +38,12 @@ function formatBytes(b) {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function CameraMonitorTab({ device, sendCommand, results, sseCameraFrame, galleryActive, connected }) {
+export default function CameraMonitorTab({
+  device, sendCommand, results, sseCameraFrame, galleryActive, connected, authTokenStorageKey,
+}) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
-  // Accept admin token OR user JWT — the backend now accepts both
-  const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+  const token = authTokenStorageKey ? localStorage.getItem(authTokenStorageKey) : '';
 
   // ── Camera selection ──────────────────────────────────────────────────
   const [selectedCamera, setSelectedCamera] = useState('0');
