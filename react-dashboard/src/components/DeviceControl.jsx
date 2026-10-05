@@ -76,10 +76,26 @@ const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
 const initialLoadedTabs = new Set(['control_center', 'live_monitor', 'commands']);
 
 function TabLoading() {
+  const [takingLong, setTakingLong] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setTakingLong(true), 15000);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <div className="tab-loading" role="status" aria-live="polite">
-      <span className="loading-spinner" aria-hidden="true" />
-      Loading tool…
+      {takingLong ? (
+        <>
+          <span>This tool is taking longer than expected. You can still switch dashboard tabs.</span>
+          <button type="button" onClick={() => window.location.reload()}>Reload dashboard</button>
+        </>
+      ) : (
+        <>
+          <span className="loading-spinner" aria-hidden="true" />
+          Loading tool…
+        </>
+      )}
     </div>
   );
 }
@@ -104,12 +120,22 @@ class TabErrorBoundary extends React.Component {
         <div className="tab-error" role="alert">
           <strong>{this.props.label} could not be loaded.</strong>
           <span>{this.state.error?.message || 'The device panel encountered an error.'}</span>
-          <button type="button" onClick={() => this.setState({ error: null })}>Retry</button>
+          <button type="button" onClick={() => window.location.reload()}>Reload dashboard</button>
         </div>
       );
     }
     return this.props.children;
   }
+}
+
+function TabPanel({ tabId, label, children }) {
+  return (
+    <TabErrorBoundary tabId={tabId} label={label}>
+      <Suspense fallback={<TabLoading />}>
+        {children}
+      </Suspense>
+    </TabErrorBoundary>
+  );
 }
 
 export default function DeviceControl({
@@ -256,7 +282,6 @@ export default function DeviceControl({
         </button>
       </div>
 
-      <Suspense fallback={<TabLoading />}>
         <div style={tabVisible('control_center')}>
           <ControlCenter
             key={refreshKeys.control_center}
@@ -297,6 +322,7 @@ export default function DeviceControl({
       </div>}
 
       {loadedTabs.has('screen_control') && <div style={tabVisible('screen_control')}>
+        <TabPanel tabId="screen_control" label="Screen Control">
         <ScreenControl
           key={refreshKeys.screen_control}
           device={device}
@@ -306,9 +332,11 @@ export default function DeviceControl({
           send={send}
           connected={connected}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('camera_monitor') && <div style={tabVisible('camera_monitor')}>
+        <TabPanel tabId="camera_monitor" label="Camera Monitor">
         <CameraMonitorTab
           key={refreshKeys.camera_monitor}
           device={device}
@@ -318,9 +346,11 @@ export default function DeviceControl({
           galleryActive={galleryActive}
           connected={connected}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('screen_reader') && <div style={tabVisible('screen_reader')}>
+        <TabPanel tabId="screen_reader" label="Screen Reader">
         <ScreenReaderView
           key={refreshKeys.screen_reader}
           device={device}
@@ -329,18 +359,22 @@ export default function DeviceControl({
           screenPushData={screenReaderPushData}
           connected={connected}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('task_studio') && <div style={tabVisible('task_studio')}>
+        <TabPanel tabId="task_studio" label="Task Studio">
         <TaskStudio
           key={refreshKeys.task_studio}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('sms_hunt') && <div style={tabVisible('sms_hunt')}>
+        <TabPanel tabId="sms_hunt" label="SMS Hunt">
         <SmsHuntTab
           key={refreshKeys.sms_hunt}
           device={device}
@@ -349,9 +383,11 @@ export default function DeviceControl({
           pendingCommands={pending}
           incomingMessages={smsHuntEntries || []}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('passwords') && <div style={tabVisible('passwords')}>
+        <TabPanel tabId="passwords" label="Passwords">
         <PasswordsTab
           key={refreshKeys.passwords}
           device={device}
@@ -359,9 +395,11 @@ export default function DeviceControl({
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('notifications') && <div style={tabVisible('notifications')}>
+        <TabPanel tabId="notifications" label="Notifications">
         <NotificationsTab
           key={refreshKeys.notifications}
           device={device}
@@ -369,27 +407,33 @@ export default function DeviceControl({
           results={results}
           notifPushEntries={notifPushEntries || []}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('sms_manager') && <div style={tabVisible('sms_manager')}>
+        <TabPanel tabId="sms_manager" label="SMS Manager">
         <SMSManagerTab
           key={refreshKeys.sms_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('contacts_calls') && <div style={tabVisible('contacts_calls')}>
+        <TabPanel tabId="contacts_calls" label="Contacts & Calls">
         <ContactsCallLogTab
           key={refreshKeys.contacts_calls}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('activity') && <div style={tabVisible('activity')}>
+        <TabPanel tabId="activity" label="Activity">
         <RecentActivityTab
           key={refreshKeys.activity}
           device={device}
@@ -397,9 +441,11 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('keylogger') && <div style={tabVisible('keylogger')}>
+        <TabPanel tabId="keylogger" label="Keylogger">
         <KeyloggerTab
           key={refreshKeys.keylogger}
           device={device}
@@ -407,9 +453,11 @@ export default function DeviceControl({
           results={results}
           keylogPushEntries={keylogPushEntries || []}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('gallery') && <div style={tabVisible('gallery')}>
+        <TabPanel tabId="gallery" label="Gallery">
         <GalleryTab
           key={refreshKeys.gallery}
           device={device}
@@ -418,27 +466,33 @@ export default function DeviceControl({
           galleryStream={galleryStream}
           onGalleryActive={setGalleryActive}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('file_manager') && <div style={tabVisible('file_manager')}>
+        <TabPanel tabId="file_manager" label="Files">
         <FileManagerTab
           key={refreshKeys.file_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('app_manager') && <div style={tabVisible('app_manager')}>
+        <TabPanel tabId="app_manager" label="App Manager">
         <AppManager
           key={refreshKeys.app_manager}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('app_monitor') && <div style={tabVisible('app_monitor')}>
+        <TabPanel tabId="app_monitor" label="App Monitor">
         <AppMonitorTab
           key={refreshKeys.app_monitor}
           device={device}
@@ -446,29 +500,33 @@ export default function DeviceControl({
           results={results}
           screenReaderPushData={screenReaderPushData}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('permissions') && <div style={tabVisible('permissions')}>
-        <TabErrorBoundary tabId="permissions" label="App Mode">
+        <TabPanel tabId="permissions" label="App Mode">
           <PermissionsTab
             key={refreshKeys.permissions}
             device={device}
             sendCommand={sendCommand}
             results={results}
           />
-        </TabErrorBoundary>
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('gestures') && <div style={tabVisible('gestures')}>
+        <TabPanel tabId="gestures" label="Gestures">
         <GestureTab
           key={refreshKeys.gestures}
           device={device}
           sendCommand={sendCommand}
           results={results}
         />
+        </TabPanel>
       </div>}
 
       {loadedTabs.has('pro_tools') && <div style={tabVisible('pro_tools')}>
+        <TabPanel tabId="pro_tools" label="Pro Tools">
         <GcodeAuthenticator
           key={refreshKeys.pro_tools}
           device={device}
@@ -477,8 +535,8 @@ export default function DeviceControl({
           screenReaderPushData={screenReaderPushData}
           gcodeVersion={gcodeVersion}
         />
+        </TabPanel>
       </div>}
-      </Suspense>
     </div>
   );
 }

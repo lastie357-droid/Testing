@@ -1,12 +1,12 @@
 ---
-name: Dashboard connection liveness
-description: Keep dashboard and device connection indicators aligned with live transport health.
+name: Dashboard SSE liveness
+description: Keep the browser dashboard status aligned with its live server event stream.
 ---
 
 ## Rule
 - Dashboard SSE health must be observable to the browser: SSE comment keepalives do not trigger `EventSource.onmessage`, so send a data heartbeat and reconnect when the stream goes silent.
-- Remove SSE clients when the response closes, and derive device online state from a recent pong and a usable primary socket rather than map membership alone.
+- Remove SSE clients when the response closes.
 
-**Why:** Half-open connections can remain green or online after the peer has stopped responding, leaving commands aimed at a dead transport.
+**Why:** Half-open event streams can remain green after the browser has stopped receiving server events.
 
-**How to apply:** Preserve these checks when changing dashboard SSE handling, device presence reconciliation, or command dispatch.
+**How to apply:** Preserve the visible heartbeat, silence watchdog, bounded reconnect, and response-close cleanup when changing dashboard SSE handling.

@@ -853,7 +853,7 @@ const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
 const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
 const ZEABUR_PORT_API_PORT = parseInt(process.env.ZEABUR_PORT_API_PORT) || 8070;
 const PING_INTERVAL  = 20000;   // ms – ping every 20 s (was 30 s); faster detection of 3G drops
-const PONG_TIMEOUT   = 60000;   // ms – drop after 3 missed 20 s pings
+const PONG_TIMEOUT   = 90000;   // ms – drop if no pong in 90 s (3 missed pings); was 120 s
 const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
 
 // ============================================
@@ -1291,14 +1291,6 @@ const latestScreenReaderSequence = new Map(); // deviceId → monotonically incr
 const latestStreamSequence = new Map();       // deviceId → monotonically increasing relay sequence
 const heartbeatPersistedAt = new Map();
 const HEARTBEAT_DB_INTERVAL_MS = 15000;
-
-function getResponsiveDeviceSocket(deviceId) {
-    const connId = deviceToTcp.get(deviceId);
-    const conn = connId ? tcpClients.get(connId) : null;
-    if (!conn || !conn.writable || conn.destroyed) return null;
-    if (Date.now() - (conn.lastPong || 0) > PONG_TIMEOUT) return null;
-    return conn;
-}
 
 function disconnectDeviceConnections(deviceId, reason = 'Device disconnected by administrator') {
     const connectionIds = new Set([
@@ -2348,8 +2340,9 @@ app.post('/api/device/:deviceId/blackout', (req, res) => {
     const { deviceId } = req.params;
     const { state } = req.body; // true = on, false = off
     const command  = state ? 'screen_blackout_on' : 'screen_blackout_off';
-    const tcpConn = getResponsiveDeviceSocket(deviceId);
-    if (!tcpConn) {
+    const tcpConnId = deviceToTcp.get(deviceId);
+    const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
+    if (!tcpConn || !tcpConn.writable) {
         return res.status(404).json({ success: false, error: 'Device offline or not found' });
     }
     const commandId = crypto.randomBytes(8).toString('hex');
@@ -4063,8 +4056,9 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
     //    are forwarded to the device — recordings are stored ONLY on Android ──
 
     // ── For all commands: require device to be online ──
-    const tcpConn = getResponsiveDeviceSocket(deviceId);
-    if (!tcpConn) return res.status(503).json({ error: 'Device offline or not responding', deviceId });
+    const tcpConnId = deviceToTcp.get(deviceId);
+    const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
+    if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
 
     // ── Special: restart_connection — send connection:reset directly, no command queue ──
     if (command === 'restart_connection') {
@@ -5494,7 +5488,7 @@ async function getDeviceList(accessIdFilter) {
     // dashboard never shows a device as online when commands would fail.
     const reconcile = (devices) => devices.map(d => {
         const obj = d.toObject ? d.toObject() : { ...d };
-        obj.isOnline = !!getResponsiveDeviceSocket(obj.deviceId);
+        obj.isOnline = deviceToTcp.has(obj.deviceId);
         return obj;
     });
     // Apply per-client access-id scoping. Admins call this without a filter
