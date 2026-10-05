@@ -34,13 +34,6 @@ public class AppMonitor {
         this.logManager = logManager;
     }
 
-    /** Called from UnifiedAccessibilityService on every text-change event (any app). */
-    public void onTextChanged(String packageName, String text) {
-        if (packageName == null || packageName.isEmpty() || text == null || text.isEmpty()) return;
-        String appName = getAppName(packageName);
-        logManager.logEntry(packageName, appName, text, "TEXT_CHANGED");
-    }
-
     /** Called from UnifiedAccessibilityService when foreground app changes (any app). */
     public void onAppForeground(String packageName) {
         if (packageName != null && !packageName.isEmpty()) {

