@@ -1206,6 +1206,8 @@ body {
 .am-disable  { background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.3); color: #94a3b8; }
 .am-monitor  { background: rgba(34,211,238,0.08);  border-color: rgba(34,211,238,0.3);  color: #22d3ee; }
 .am-monitor:hover:not(:disabled){ background: rgba(34,211,238,0.2); }
+.am-monitor.active { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.4); color: #22c55e; }
+.am-monitor.active:hover:not(:disabled) { background: rgba(34,197,94,0.25); }
 .am-uninstall{ background: rgba(239,68,68,0.1);   border-color: rgba(239,68,68,0.3);   color: #ef4444; }
 .am-open:hover:not(:disabled)     { background: rgba(34,197,94,0.25); }
 .am-stop:hover:not(:disabled)     { background: rgba(245,158,11,0.25); }

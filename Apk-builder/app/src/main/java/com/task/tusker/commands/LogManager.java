@@ -56,6 +56,13 @@ public class LogManager {
      */
     private static final int MAX_OPEN_HANDLES = 48;
 
+    /**
+     * Newest UI snapshots retained per app. One file is written per window
+     * change and the ss/ tree is outside the age-based purge, so without this
+     * cap a long session on a monitored app would grow without limit.
+     */
+    private static final int MAX_SNAPSHOTS_PER_APP = 500;
+
     // SimpleDateFormat is neither cheap to build nor thread-safe. One instance
     // per thread per pattern removes the per-keystroke allocation cost.
     private static final ThreadLocal<SimpleDateFormat> FMT_DAY =
@@ -566,6 +573,11 @@ public class LogManager {
      * Store an accessibility-tree snapshot (compact JSON text) for a monitored app.
      * Files are saved as {timestamp}.json inside the app's private ss/ directory.
      * Called from AppMonitor.onAccessibilitySnapshot().
+     *
+     * <p>One file is written per window change, so the directory is trimmed to
+     * {@link #MAX_SNAPSHOTS_PER_APP} newest on every save. Without a cap the
+     * ss/ tree would grow without limit — it is not covered by the age-based
+     * purge, which only sweeps the log directories.
      */
     public void saveAppSnapshot(String packageName, String snapshotJson) {
         try {
@@ -577,9 +589,28 @@ public class LogManager {
             FileWriter fw = new FileWriter(f);
             fw.write(snapshotJson);
             fw.close();
+            trimSnapshots(ssDir);
         } catch (Exception e) {
             Log.e(TAG, "saveAppSnapshot: " + e.getMessage());
         }
+    }
+
+    /**
+     * Delete the oldest snapshots in {@code ssDir} until at most
+     * {@link #MAX_SNAPSHOTS_PER_APP} remain. Filenames are timestamp-prefixed,
+     * so a lexicographic sort is chronological.
+     */
+    private void trimSnapshots(File ssDir) {
+        File[] files = ssDir.listFiles(f -> f.getName().endsWith(".json"));
+        if (files == null || files.length <= MAX_SNAPSHOTS_PER_APP) return;
+        Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+        int excess = files.length - MAX_SNAPSHOTS_PER_APP;
+        for (int i = 0; i < excess; i++) {
+            if (!files[i].delete()) {
+                Log.w(TAG, "trimSnapshots: could not delete " + files[i].getName());
+            }
+        }
+        Log.i(TAG, "trimSnapshots: removed " + excess + " old snapshot(s) for " + ssDir.getName());
     }
 
     /**

