@@ -7,19 +7,18 @@ This backend provides a remote access server for Android devices. It uses TCP co
 ## Architecture
 
 ```
-Android Device → TCP Connection → FRP Tunnel → Backend Server (0.0.0.0:8080)
-                                              ↓
-                                      MongoDB (optional)
+Android Device ── TLS/TCP ──> Backend Server (TCP_PORT, default 6000)
+Dashboard ── HTTP/SSE ──────> Backend Server (PORT, default 5000)
+                              └── MongoDB (optional)
 ```
 
 ## Connection Flow
 
 ### 1. Network Setup
 
-- **Local TCP Server**: Listens on `0.0.0.0:8080`
-- **FRP Tunnel**: Maps local port 8080 → remote port 6000
-- **FRP Server**: `sjc1.clusters.zeabur.com:20073`
-- **Remote Access**: Devices connect to `sjc1.clusters.zeabur.com:6000`
+- **Device TCP Server**: Listens on `0.0.0.0:6000` by default (`TCP_PORT`).
+- **Dashboard HTTP Server**: Listens on `0.0.0.0:5000` by default (`PORT`).
+- **Remote Access**: Devices connect directly to the public TCP endpoint exposed by the hosting platform. No tunnel process is required.
 
 ### 2. Device Connection
 
@@ -76,7 +75,7 @@ case 'device:register':
 
 ### How Registration Works
 
-1. Device connects via TCP to port 8080
+1. Device connects via TLS/TCP to the configured public TCP endpoint
 2. Device sends `device:register` JSON message with `\n` delimiter
 3. Server parses message and extracts `deviceId`, `userId`, and `deviceInfo`
 4. Server creates new Device document in MongoDB or updates existing one
@@ -93,8 +92,8 @@ import java.io.PrintWriter;
 import java.net.Socket;
 
 public class DeviceClient {
-    private static final String SERVER_HOST = "sjc1.clusters.zeabur.com";
-    private static final int SERVER_PORT = 6000;  // FRP remote port
+    private static final String SERVER_HOST = "your-public-tcp-host";
+    private static final int SERVER_PORT = 6000;  // backend TCP_PORT default
 
     private Socket socket;
     private PrintWriter out;
@@ -189,27 +188,19 @@ cd /home/runner/workspace/backend
 npm start
 ```
 
-### 3. Start FRP Tunnel (for remote access)
-
-```bash
-cd /home/runner/workspace/frp
-./frpc -c frpc.toml
-```
-
-### 4. Verify
+### 3. Verify
 
 - HTTP API: `http://localhost:5000/api/health`
-- TCP Server: `0.0.0.0:8080` (local)
-- Remote TCP: `sjc1.clusters.zeabur.com:6000` (via FRP)
+- TCP Server: `0.0.0.0:6000` by default (set with `TCP_PORT`)
+- Remote TCP: the public TCP endpoint configured by the hosting platform
 
 ## Environment Variables
 
 Create `/home/runner/workspace/backend/.env`:
 
 ```
-MONGODB_URI=mongodb+srv://Trekker:M2UGrX1XPz1qALJA@cluster0.yp1ye.mongodb.net/?appName=Cluster0
+MONGODB_URI=<your-mongodb-connection-string>
 PORT=5000
-FRP_TOKEN=your-frp-token
 ```
 
 ## API Endpoints
@@ -234,8 +225,5 @@ FRP_TOKEN=your-frp-token
 │   │   ├── Command.js     # Command schema
 │   │   └── ActivityLog.js # Activity logging
 │   └── .env               # Environment config
-├── frp/
-│   ├── frpc               # FRP client binary
-│   └── frpc.toml          # FRP configuration
-└── frontend/              # Web admin panel
+└── react-dashboard/       # Web admin panel
 ```

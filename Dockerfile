@@ -37,8 +37,6 @@ COPY --from=builder /src/backend/package.json /src/backend/package-lock.json* ./
 RUN cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 COPY --from=builder /src/backend/ ./backend/
-COPY --chmod=0555 frps/ ./frps/
-COPY --chmod=0555 frpc/ ./frpc/
 
 EXPOSE 5000 7000 6009 8070
 

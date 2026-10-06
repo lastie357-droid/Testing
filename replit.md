@@ -3,8 +3,8 @@
 ## What this is
 A full-stack remote Android device management system:
 - **Backend** (Node/Express) — HTTP API + React dashboard on port 5000, raw TCP device socket on port 6000
+- **Device networking** — hosted platforms expose the configured TCP port directly; do not add FRP processes or change TCP port settings.
 - **APK Builder** — builds per-user Module + Installer APKs via Gradle
-- **FRP** — fast reverse proxy for tunneling device connections
 
 ## Stack
 - Backend: Node.js 20, Express, MongoDB, Redis (optional), JWT auth
@@ -24,7 +24,7 @@ A full-stack remote Android device management system:
 - Redis: `REDIS_URL` or `REDIS_HOST`/`REDIS_PORT` — optional
 
 ## Key entry points
-- `backend/server.js` — main server (API, SSE, TCP device server, FRP launcher, build queue)
+- `backend/server.js` — main server (API, SSE, TCP device server, build queue)
 - `backend/routes/` — auth, devices, apk, license, userAuth
 - `backend/models/` — User, Device, Task, Command, ActivityLog
 - `Apk-builder/build.sh` — APK build pipeline

@@ -4,8 +4,6 @@ let
   appSrc = pkgs.runCommand "app-src" {} ''
     mkdir -p $out/app
     cp -r ${./backend} $out/app/backend
-    cp -r ${./frps} $out/app/frps
-    cp -r ${./frpc} $out/app/frpc
     chmod -R u+w $out/app
     # strip any baked-in secrets / local-only files — these must come from env at runtime
     rm -f $out/app/backend/.env $out/app/backend/.jwt_secret $out/app/backend/.jwt_secret_date

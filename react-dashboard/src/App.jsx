@@ -390,6 +390,27 @@ function AdminDashboard({ logout }) {
           });
         }
         break;
+      case 'device:status':
+        if (data?.deviceId) {
+          setDevices(prev => {
+            const timestamp = data.timestamp || new Date().toISOString();
+            const existing = prev.find(device => device.deviceId === data.deviceId);
+            if (existing) {
+              return prev.map(device => device.deviceId === data.deviceId
+                ? { ...device, isOnline: data.isOnline !== false, lastSeen: timestamp }
+                : device);
+            }
+            return [...prev, {
+              deviceId: data.deviceId,
+              deviceName: data.deviceInfo?.name || data.deviceId,
+              deviceInfo: data.deviceInfo || {},
+              registeredAt: timestamp,
+              lastSeen: timestamp,
+              isOnline: data.isOnline !== false,
+            }];
+          });
+        }
+        break;
       case 'device:disconnected':
         setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
         setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
@@ -588,7 +609,7 @@ function AdminDashboard({ logout }) {
     }
   }, []);
 
-  const { connected, reconnecting, send } = useTcpStream(handleMessage);
+  const { connected, reconnecting, send } = useTcpStream(handleMessage, 'admin_token');
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
 
   useEffect(() => {
