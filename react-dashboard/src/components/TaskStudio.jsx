@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
 
+const MAX_TASK_RUN_LOG_ENTRIES = 300;
+const MAX_SEEN_TASK_RESULTS = 1000;
+
+function appendTaskRunLog(previous, entry) {
+  return [...previous, entry].slice(-MAX_TASK_RUN_LOG_ENTRIES);
+}
+
+function rememberTaskResult(seen, id) {
+  if (seen.has(id)) return false;
+  seen.add(id);
+  if (seen.size > MAX_SEEN_TASK_RESULTS) {
+    seen.delete(seen.values().next().value);
+  }
+  return true;
+}
+
 const STEP_TYPES = [
   { type: 'open_app',        label: 'Open App',          icon: '▶️',  color: '#22c55e' },
   { type: 'click_text',      label: 'Click Text',         icon: '👆',  color: '#3b82f6' },
@@ -254,11 +270,14 @@ export default function TaskStudio({
   };
 
   useEffect(() => {
+    seenResults.current.clear();
+    taskCommandIdRef.current = null;
     setWorkflows([]);
     setActiveWfIndex(null);
     setSteps([]);
     setWfName('New Workflow');
     setScheduleOnConnect(false);
+    setRunLog([]);
     fetch(API_TASKS, { headers: taskHeaders() })
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
@@ -275,7 +294,7 @@ export default function TaskStudio({
   useEffect(() => {
     results.forEach(r => {
       if (r.command === 'get_installed_apps' && r.success && r.response && !seenResults.current.has(r.id)) {
-        seenResults.current.add(r.id);
+        rememberTaskResult(seenResults.current, r.id);
         try {
           const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
           const list = (data.apps || data.installedApps || []).filter(a => !(a.packageName || a.package || '').startsWith('com.android.'));
@@ -285,7 +304,7 @@ export default function TaskStudio({
       }
 
       if (r.command === 'task_progress' && !seenResults.current.has(r.id)) {
-        seenResults.current.add(r.id);
+        rememberTaskResult(seenResults.current, r.id);
         const d = typeof r.response === 'object' ? r.response : {};
         if (taskCommandIdRef.current && d.commandId === taskCommandIdRef.current) {
           const ts = formatDateTime(Date.now());
@@ -296,14 +315,14 @@ export default function TaskStudio({
             const label   = allDone
               ? `Task complete — all ${d.completed} step(s) done`
               : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
-            setRunLog(prev => [...prev, { status, message: `[${ts}] ${label}` }]);
+            setRunLog(prev => appendTaskRunLog(prev, { status, message: `[${ts}] ${label}` }));
           } else if (d.stepIndex !== undefined) {
             setRunningIndex(d.stepIndex);
             const stepFailed = d.success === false || d.error || d.failed;
             if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
             if (stepFailed && d.done) setErrorIndex(d.stepIndex);
             const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
-            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
+            if (logMsg) setRunLog(prev => appendTaskRunLog(prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }));
           }
         }
       }
@@ -450,16 +469,16 @@ export default function TaskStudio({
 
       taskCommandIdRef.current = result.commandId;
       const sentTs = formatDateTime(Date.now());
-      setRunLog(prev => [...prev, {
+      setRunLog(prev => appendTaskRunLog(prev, {
         status: 'ok',
         message: `[${sentTs}] ✓ Task sent to device (${enabledSteps.length} steps) — it will run independently`,
-      }]);
+      }));
     } catch (err) {
       const errTs = formatDateTime(Date.now());
-      setRunLog(prev => [...prev, {
+      setRunLog(prev => appendTaskRunLog(prev, {
         status: 'err',
         message: `[${errTs}] Task send failed: ${err.message || String(err)}`,
-      }]);
+      }));
     } finally {
       setSending(false);
     }
