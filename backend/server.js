@@ -1380,6 +1380,7 @@ async function processMessage(clientId, clientType, event, data) {
         if (existingPrimaryId && existingPrimaryId !== clientId) {
             const stale = tcpClients.get(existingPrimaryId);
             if (stale) {
+                log('TCP', `Replacing primary connection ${existingPrimaryId} for ${deviceId} with ${clientId}`);
                 stale.destroy();
                 tcpClients.delete(existingPrimaryId);
             }
@@ -1637,7 +1638,11 @@ async function processMessage(clientId, clientType, event, data) {
                 const oldStreamId = deviceToStreamTcp.get(deviceId);
                 if (oldStreamId && oldStreamId !== clientId) {
                     const stale = tcpClients.get(oldStreamId);
-                    if (stale) { stale.destroy(); tcpClients.delete(oldStreamId); }
+                    if (stale) {
+                        log('TCP', `Replacing stream connection ${oldStreamId} for ${deviceId} with ${clientId}`);
+                        stale.destroy();
+                        tcpClients.delete(oldStreamId);
+                    }
                 }
                 deviceToStreamTcp.set(deviceId, clientId);
                 log('TCP', `Stream channel registered for ${deviceId}`);
@@ -1660,7 +1665,11 @@ async function processMessage(clientId, clientType, event, data) {
                 const oldLiveId = deviceToLiveTcp.get(deviceId);
                 if (oldLiveId && oldLiveId !== clientId) {
                     const stale = tcpClients.get(oldLiveId);
-                    if (stale) { stale.destroy(); tcpClients.delete(oldLiveId); }
+                    if (stale) {
+                        log('TCP', `Replacing live connection ${oldLiveId} for ${deviceId} with ${clientId}`);
+                        stale.destroy();
+                        tcpClients.delete(oldLiveId);
+                    }
                 }
                 deviceToLiveTcp.set(deviceId, clientId);
                 log('TCP', `Live channel registered for ${deviceId}`);
@@ -2155,7 +2164,9 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
         // Devices may reset their TCP connection during a network handoff or
         // process restart. That is a per-socket disconnect, not a backend crash.
         if (e.code === 'ECONNRESET') {
-            log('TCP', `Android connection ${id} reset by peer`, 'warn');
+            const device = conn.deviceId || 'unregistered';
+            const channel = conn.channelType || 'primary';
+            log('TCP', `Connection reset by peer [${id}] device=${device} channel=${channel} remote=${conn.remoteAddress || 'unknown'}`, 'warn');
             if (!conn.destroyed) conn.destroy();
             return;
         }
