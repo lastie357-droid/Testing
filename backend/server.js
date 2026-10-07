@@ -2151,7 +2151,16 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
         }
     });
 
-    conn.on('error', (e) => log('TCP', `Error on ${id}: ${e.message}`, 'error'));
+    conn.on('error', (e) => {
+        // Devices may reset their TCP connection during a network handoff or
+        // process restart. That is a per-socket disconnect, not a backend crash.
+        if (e.code === 'ECONNRESET') {
+            log('TCP', `Android connection ${id} reset by peer`, 'warn');
+            if (!conn.destroyed) conn.destroy();
+            return;
+        }
+        log('TCP', `Error on ${id}: ${e.message}`, 'error');
+    });
 });
 
 tcpServer.on('error', (err) => {
