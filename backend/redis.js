@@ -43,6 +43,8 @@ let connected = false;
 let configuredUrl = process.env.REDIS_URL || '';
 let initPromise = null;
 let keepAliveTimer = null;
+let redisGeneration = 0;
+const operationErrorLogAt = new Map();
 
 // A PING every two minutes prevents idle-suspending Redis plans from going
 // dormant while still keeping traffic negligible.
@@ -75,6 +77,33 @@ function stopKeepAlive() {
     }
 }
 
+function readyClient() {
+    return connected && redis?.status === 'ready' ? redis : null;
+}
+
+function isTransientConnectionError(error) {
+    const message = String(error?.message || error || '');
+    return /connection is closed|connection closed|socket.*closed|econnreset|epipe|broken pipe|connection lost|not writable|timed out/i.test(message);
+}
+
+function logOperationError(operation, error, client) {
+    // A connection can close between the readiness check and a command reply.
+    // Those are expected during reconnects and must not produce one warning per
+    // incoming keylog/activity event.
+    if (client !== redis || client?.status !== 'ready' || isTransientConnectionError(error)) return;
+
+    const now = Date.now();
+    const previous = operationErrorLogAt.get(operation) || 0;
+    if (now - previous < 30000) return;
+    operationErrorLogAt.set(operation, now);
+    if (operationErrorLogAt.size > 100) {
+        for (const [key, timestamp] of operationErrorLogAt) {
+            if (now - timestamp >= 30000) operationErrorLogAt.delete(key);
+        }
+    }
+    log(`${operation} error: ${error.message}`, 'warn');
+}
+
 /**
  * Initialise the Redis client.
  * Call once at server startup — returns a Promise that resolves when ready.
@@ -83,55 +112,80 @@ async function init(urlOverride) {
     if (typeof urlOverride === 'string') configuredUrl = urlOverride.trim();
     const url = configuredUrl;
     if (!url) {
+        connected = false;
         log('REDIS_URL not set — Redis disabled (running in-memory only)', 'warn');
         return;
     }
 
-    if (redis && (redis.status === 'ready' || redis.status === 'connecting' || redis.status === 'reconnecting')) {
-        return;
+    if (redis && ['ready', 'connecting', 'reconnecting', 'connect', 'wait'].includes(redis.status)) {
+        return initPromise || undefined;
     }
 
     if (initPromise) return initPromise;
 
-    initPromise = new Promise((resolve) => {
-        redis = new Redis(url, {
-            maxRetriesPerRequest: 3,
-            enableReadyCheck: true,
-            retryStrategy(times) {
-                // Keep trying: an idle Redis plan can temporarily suspend and
-                // needs more than five attempts to become available again.
-                const delay = Math.min(1000 * (2 ** Math.min(times - 1, 5)), 30000);
-                log(`Reconnecting in ${delay}ms (attempt ${times})…`, 'warn');
-                return delay;
-            },
-            connectTimeout: 10000,
-            keepAlive: 30000,
-            lazyConnect: false,
-        });
+    const generation = ++redisGeneration;
+    const client = new Redis(url, {
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: true,
+        retryStrategy(times) {
+            // Keep trying: an idle Redis plan can temporarily suspend and
+            // needs more than five attempts to become available again.
+            const delay = Math.min(1000 * (2 ** Math.min(times - 1, 5)), 30000);
+            log(`Reconnecting in ${delay}ms (attempt ${times})…`, 'warn');
+            return delay;
+        },
+        connectTimeout: 10000,
+        keepAlive: 30000,
+        lazyConnect: false,
+    });
+    redis = client;
+    connected = false;
 
-        redis.on('connect', () => log('TCP connection established'));
-        redis.on('ready',   async () => {
-            connected = true;
-            startKeepAlive();
-            log('Connected to Redis — persistent connection ready');
-            resolve();
-            initPromise = null;
-        });
-        redis.on('error',  (e)  => log(`Error: ${e.message}`, 'error'));
-        redis.on('close',  ()   => { connected = false; log('Connection closed', 'warn'); });
-        redis.on('reconnecting', (ms) => log(`Reconnecting in ${ms}ms…`));
+    let resolveInitial;
+    let settled = false;
+    let startupTimer = null;
+    const pending = new Promise(resolve => { resolveInitial = resolve; });
+    initPromise = pending;
+    const finishInitial = () => {
+        if (settled) return;
+        settled = true;
+        if (startupTimer) clearTimeout(startupTimer);
+        if (initPromise === pending) initPromise = null;
+        resolveInitial();
+    };
+    startupTimer = setTimeout(finishInitial, 5000); // don't block startup indefinitely
+    startupTimer.unref?.();
 
-        setTimeout(() => {
-            resolve();
-            initPromise = null;
-        }, 5000);  // don't block server startup indefinitely
+    const isCurrentClient = () => redis === client && redisGeneration === generation;
+    client.on('connect', () => {
+        if (isCurrentClient()) log('TCP connection established');
+    });
+    client.on('ready', () => {
+        if (!isCurrentClient()) return;
+        connected = true;
+        startKeepAlive();
+        log('Connected to Redis — persistent connection ready');
+        finishInitial();
+    });
+    client.on('error', error => {
+        if (isCurrentClient()) log(`Error: ${error.message}`, 'error');
+    });
+    client.on('close', () => {
+        if (!isCurrentClient()) return;
+        connected = false;
+        log('Connection closed', 'warn');
+    });
+    client.on('reconnecting', ms => {
+        if (!isCurrentClient()) return;
+        connected = false;
+        log(`Reconnecting in ${ms}ms…`);
     });
 
-    return initPromise;
+    return pending;
 }
 
 /** Whether Redis is currently usable */
-function isConnected() { return connected && redis !== null; }
+function isConnected() { return readyClient() !== null; }
 
 /** Raw client (for advanced usage) */
 function client() { return redis; }
