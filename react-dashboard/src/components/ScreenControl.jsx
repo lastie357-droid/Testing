@@ -199,6 +199,7 @@ export default function ScreenControl({
   }, [streamFrame, paintFrame]);
 
   useEffect(() => () => {
+    if (isStreamingRef.current) sendCommand(deviceId, 'stream_stop');
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     if (streamPollTimerRef.current) clearTimeout(streamPollTimerRef.current);

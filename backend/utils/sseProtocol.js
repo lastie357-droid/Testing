@@ -9,4 +9,25 @@ function dashboardClientMayReceive(client, accessId, deviceScoped) {
     return !!accessId && String(client.accessId || '') === String(accessId);
 }
 
-module.exports = { formatSseDataEvent, dashboardClientMayReceive };
+const DEVICE_STATUS_EVENTS = new Set([
+    'device:list',
+    'device:connected',
+    'device:disconnected',
+    'device:status',
+    'device:heartbeat',
+    'device:latency',
+    'device:pong',
+]);
+
+function dashboardClientMayReceiveEvent(client, accessId, deviceScoped, event, deviceId) {
+    if (!dashboardClientMayReceive(client, accessId, deviceScoped)) return false;
+    if (!deviceId || DEVICE_STATUS_EVENTS.has(event)) return true;
+    const selectedDeviceId = client?.selectedDeviceId;
+    return !!selectedDeviceId && String(selectedDeviceId) === String(deviceId);
+}
+
+module.exports = {
+    formatSseDataEvent,
+    dashboardClientMayReceive,
+    dashboardClientMayReceiveEvent,
+};

@@ -1,6 +1,7 @@
 # Agent Memory Index
 
 - [Dashboard SSE liveness](dashboard-connection-liveness.md) — SSE comment keepalives are invisible to EventSource handlers; use real data heartbeats to detect silent browser streams.
+- [Selected-device event isolation](dashboard-device-event-scope.md) — only selected-device payloads should reach tool views; global inventory and status events remain live.
 - [Socket reliability fixes](socket-reliability-fixes.md) — 6 bugs fixed in SocketManager.java (backoff, setSoTimeout, dead-socket teardown, buffer cap, loop identity, comment).
 - [Idle suspension feature](idle-suspension.md) — IdleSuspensionManager.java + SocketManager hooks: 2-min idle timer suspends streams; camera no-auto-resume; explicit stop while suspended must clear suspendedTypes.
 - [APK workflow side effects](apk-workflow-side-effects.md) — APK builds mutate generated metadata; build the app explicitly, then assemble the installer once after packaging its payload.

