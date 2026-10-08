@@ -433,12 +433,12 @@ export default function ScreenControl({
           <span style={{ fontSize: 20 }}>{isBlackedOut ? '⬛' : '🟢'}</span>
           <div>
             <div style={{ fontWeight: 600, fontSize: 14, color: isBlackedOut ? '#ef4444' : '#f0f0ff' }}>
-              {isBlackedOut ? 'Device Screen Blocked' : 'Screen Visible — Device screen is on'}
+              {isBlackedOut ? 'Updating Overlay Active' : 'Screen Visible — Device screen is on'}
             </div>
             <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
               {isBlackedOut
-                ? 'Device screen is fully blocked with brightness at zero. Device sends a frame every 1.5s so you can see the screen. Click anywhere on the stream to control the device remotely.'
-                : 'Toggle to block the device screen and set brightness to zero. The physical user sees black. You retain full remote control via the stream view.'}
+                ? 'The device shows “Updating… Please wait.” Touches, navigation, and TalkBack remain available while remote viewing continues.'
+                : 'Show a full-screen “Updating… Please wait” overlay. Touches, navigation, and TalkBack remain available.'}
             </div>
           </div>
         </div>
@@ -446,7 +446,7 @@ export default function ScreenControl({
           className={`sc-blackout-btn ${isBlackedOut ? 'blackout-active' : 'blackout-inactive'}`}
           onClick={handleToggleBlackout}
           disabled={!isOnline || blackoutLoading}
-          title={isBlackedOut ? 'Unblock device screen' : 'Block device screen — device user sees black, you keep full control'}
+          title={isBlackedOut ? 'Unblock device screen' : 'Block screen and show the updating indicator'}
         >
           {blackoutLoading ? '⏳ Working…' : isBlackedOut ? '🔓 Unblock Screen' : '🔒 Block Screen'}
         </button>

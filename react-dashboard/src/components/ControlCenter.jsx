@@ -411,7 +411,7 @@ export default function ControlCenter({
               )}
               {blockActive && (
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 700 }}>🔲 SCREEN BLOCKED</span>
+                  <span style={{ color: '#fbbf24', fontSize: 11, fontWeight: 700 }}>⏳ UPDATING OVERLAY</span>
                 </div>
               )}
             </div>
