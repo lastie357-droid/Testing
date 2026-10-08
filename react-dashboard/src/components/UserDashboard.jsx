@@ -8,7 +8,7 @@ import SettingsTab from './SettingsTab.jsx';
 import BuildApkTab from './BuildApkTab.jsx';
 import TelegramTab from './TelegramTab.jsx';
 import PaywallOverlay from './PaywallOverlay.jsx';
-import { deviceCommandKey, shouldProcessDeviceEvent } from '../utils/deviceEventScope.mjs';
+import { applyDeviceHeartbeat, deviceCommandKey, shouldProcessDeviceEvent } from '../utils/deviceEventScope.mjs';
 
 const styles = {
   trialBanner: {
@@ -262,7 +262,7 @@ export default function UserDashboard({ user, onLogout }) {
         setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
         break;
       case 'device:heartbeat':
-        setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: true, lastSeen: data.timestamp } : d));
+        setDevices(prev => applyDeviceHeartbeat(prev, data));
         break;
       case 'command:sent':
         setPendingCommands(prev => ({ ...prev, [data.commandId]: data }));
@@ -278,7 +278,9 @@ export default function UserDashboard({ user, onLogout }) {
         if (data?.sentAt) setServerLatency(Date.now() - data.sentAt);
         break;
       case 'device:latency':
-        if (data?.deviceId && data.rtt != null) setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        if (data?.deviceId === selectedDeviceRef.current && data.rtt != null) {
+          setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        }
         break;
       case 'command:result': {
         setPendingCommands(prev => { const next = { ...prev }; delete next[data.commandId]; return next; });

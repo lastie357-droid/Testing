@@ -16,7 +16,7 @@ import UserRegister from './components/UserRegister.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
 import { decodeScreenFrame } from './utils/screenFrame.js';
-import { deviceCommandKey, shouldProcessDeviceEvent } from './utils/deviceEventScope.mjs';
+import { applyDeviceHeartbeat, deviceCommandKey, shouldProcessDeviceEvent } from './utils/deviceEventScope.mjs';
 import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
@@ -430,7 +430,7 @@ function AdminDashboard({ logout }) {
         setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
         break;
       case 'device:heartbeat':
-        setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: true, lastSeen: data.timestamp } : d));
+        setDevices(prev => applyDeviceHeartbeat(prev, data));
         break;
       case 'command:sent':
         setPendingCommands(prev => ({ ...prev, [data.commandId]: data }));
@@ -446,7 +446,9 @@ function AdminDashboard({ logout }) {
         if (data?.sentAt) setServerLatency(Date.now() - data.sentAt);
         break;
       case 'device:latency':
-        if (data?.deviceId && data.rtt != null) setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        if (data?.deviceId === selectedDeviceRef.current && data.rtt != null) {
+          setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        }
         break;
       case 'command:result': {
         setPendingCommands(prev => { const next = { ...prev }; delete next[data.commandId]; return next; });

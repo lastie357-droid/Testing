@@ -15,8 +15,6 @@ const DEVICE_STATUS_EVENTS = new Set([
     'device:disconnected',
     'device:status',
     'device:heartbeat',
-    'device:latency',
-    'device:pong',
 ]);
 
 function dashboardClientMayReceiveEvent(client, accessId, deviceScoped, event, deviceId) {

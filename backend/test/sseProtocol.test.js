@@ -48,4 +48,11 @@ test('unselected dashboards receive inventory but not device-scoped realtime pay
     assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'data:chunk', 'device-1'), false);
     assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'stream:frame', 'device-2'), false);
     assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'device:heartbeat', 'device-2'), true);
+    assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'device:latency', 'device-2'), false);
+});
+
+test('latency updates are routed only to the selected device dashboard', () => {
+    const client = { role: 'admin', selectedDeviceId: 'device-2' };
+    assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'device:latency', 'device-2'), true);
+    assert.equal(dashboardClientMayReceiveEvent(client, '', true, 'device:latency', 'device-1'), false);
 });

@@ -1160,7 +1160,9 @@ const latestScreenReaderData = new Map(); // deviceId → { success, screen, dev
 const latestScreenReaderSequence = new Map(); // deviceId → monotonically increasing relay sequence
 const latestStreamSequence = new Map();       // deviceId → monotonically increasing relay sequence
 const heartbeatPersistedAt = new Map();
+const dashboardHeartbeatBroadcastAt = new Map();
 const HEARTBEAT_DB_INTERVAL_MS = 15000;
+const DASHBOARD_HEARTBEAT_INTERVAL_MS = 60000;
 
 function disconnectDeviceConnections(deviceId, reason = 'Device disconnected by administrator') {
     const connectionIds = new Set([
@@ -1202,6 +1204,38 @@ function persistDeviceHeartbeat(deviceId) {
         { deviceId },
         { $set: { lastSeen: new Date(now), isOnline: true } },
     ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
+}
+
+function markDeviceOffline(deviceId, expectedPrimaryId, reason) {
+    if (deviceToTcp.get(deviceId) !== expectedPrimaryId) return false;
+
+    deviceToTcp.delete(deviceId);
+    deviceStreamingState.delete(deviceId);
+    devicePingTime.delete(deviceId);
+    dashboardHeartbeatBroadcastAt.delete(deviceId);
+
+    const record = inMemoryDevices.get(deviceId);
+    if (record) inMemoryDevices.set(deviceId, { ...record, isOnline: false });
+
+    // Presence must reach the dashboard without waiting for MongoDB. Persistence
+    // is best-effort and must never hold the live status transition hostage.
+    R.markDeviceOffline(deviceId).catch(() => {});
+    if (mongoose.connection.readyState === 1) {
+        Device.findOneAndUpdate(
+            { deviceId },
+            { $set: { isOnline: false } },
+        ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
+    }
+
+    const accessId = record?.accessId || '';
+    log('TCP', `Device ${deviceId} disconnected (${reason})`);
+    broadcastDashScoped('device:disconnected', {
+        deviceId,
+        accessId,
+        timestamp: new Date(),
+    }, accessId || null);
+    broadcastDeviceList();
+    return true;
 }
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
@@ -1409,6 +1443,7 @@ async function processMessage(clientId, clientType, event, data) {
             registeredAt: existing.registeredAt || new Date(),
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
+        dashboardHeartbeatBroadcastAt.set(deviceId, Date.now());
 
         // Push registration state before optional database/task work. The
         // dashboard should not wait for a slow persistence query to show a
@@ -1682,12 +1717,42 @@ async function processMessage(clientId, clientType, event, data) {
         const { deviceId } = data || {};
         if (!deviceId) return;
         const conn = tcpClients.get(clientId);
-        if (conn) conn.lastPong = Date.now();
+        // Only the current primary channel proves the device is online.
+        // Secondary stream/live sockets may outlive a failed command channel.
+        if (!conn || conn.deviceId !== deviceId || conn.channelType
+            || deviceToTcp.get(deviceId) !== clientId) return;
+
+        const now = Date.now();
+        conn.lastPong = now;
         // Update in-memory registry
         const existing = inMemoryDevices.get(deviceId);
-        if (existing) inMemoryDevices.set(deviceId, { ...existing, isOnline: true, lastSeen: new Date() });
-        // Broadcast to dashboards immediately, then persist async
-        broadcastDash('device:heartbeat', { deviceId, timestamp: new Date() });
+        const wasOnline = !!existing?.isOnline;
+        if (existing) inMemoryDevices.set(deviceId, { ...existing, isOnline: true, lastSeen: new Date(now) });
+
+        // Registration already announces the online transition. Periodic
+        // 10-second Android heartbeats only refresh list timestamps once a
+        // minute, rather than forcing every open dashboard to rerender each time.
+        if (!wasOnline) {
+            const accessId = existing?.accessId || '';
+            broadcastDashScoped('device:status', {
+                deviceId,
+                deviceInfo: existing?.deviceInfo || {},
+                accessId,
+                isOnline: true,
+                timestamp: new Date(now),
+            }, accessId || null);
+        } else {
+            const lastBroadcast = dashboardHeartbeatBroadcastAt.get(deviceId) || 0;
+            if (now - lastBroadcast >= DASHBOARD_HEARTBEAT_INTERVAL_MS) {
+                dashboardHeartbeatBroadcastAt.set(deviceId, now);
+                const accessId = existing?.accessId || '';
+                broadcastDashScoped('device:heartbeat', {
+                    deviceId,
+                    accessId,
+                    timestamp: new Date(now),
+                }, accessId || null);
+            }
+        }
         R.markDeviceOnline(deviceId).catch(() => {});
         // Heartbeats are frequent; the live socket/in-memory state is updated
         // immediately, while MongoDB receives at most one write per device
@@ -2112,7 +2177,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
         }
     });
 
-    conn.on('close', async () => {
+    conn.on('close', () => {
         tcpClients.delete(id);
         if (isShuttingDown) return;
         if (conn.deviceId) {
@@ -2134,27 +2199,14 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                 // and mobile network handoffs don't produce false offline flashes in the UI.
                 const disconnectedDeviceId = conn.deviceId;
                 const disconnectedConnId   = id;
-                setTimeout(async () => {
+                setTimeout(() => {
                     if (isShuttingDown) return;
                     // Re-check: if a new primary has registered in the meantime, skip broadcast
                     if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
                         deviceToTcp.has(disconnectedDeviceId)) {
                         return; // Device reconnected during grace period — suppress
                     }
-                    log('TCP', `Device ${disconnectedDeviceId} disconnected`);
-                    deviceToTcp.delete(disconnectedDeviceId);
-                    deviceStreamingState.delete(disconnectedDeviceId);
-                    R.markDeviceOffline(disconnectedDeviceId).catch(() => {});
-                    try {
-                        await Device.findOneAndUpdate({ deviceId: disconnectedDeviceId },
-                            { isOnline: false, lastSeen: new Date() });
-                    } catch (e) {}
-                    {
-                        const rec = inMemoryDevices.get(disconnectedDeviceId);
-                        const aid = (rec && rec.accessId) || '';
-                        broadcastDashScoped('device:disconnected', { deviceId: disconnectedDeviceId, accessId: aid, timestamp: new Date() }, aid || null);
-                    }
-                    broadcastDeviceList();
+                    markDeviceOffline(disconnectedDeviceId, disconnectedConnId, 'primary socket closed');
                 }, 3000);
             }
         }
@@ -2166,7 +2218,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
         if (e.code === 'ECONNRESET') {
             const device = conn.deviceId || 'unregistered';
             const channel = conn.channelType || 'primary';
-            log('TCP', `Connection reset by peer [${id}] device=${device} channel=${channel} remote=${conn.remoteAddress || 'unknown'}`, 'warn');
+            log('TCP', `Peer reset connection [${id}] device=${device} channel=${channel} remote=${conn.remoteAddress || 'unknown'}; treating as a client/network disconnect`);
             if (!conn.destroyed) conn.destroy();
             return;
         }
@@ -2394,7 +2446,7 @@ app.get('/api/events', async (req, res) => {
     // Loading the persisted inventory can take up to the bounded Mongo timeout.
     sseSend(clientId, 'session:init', { sseClientId: clientId });
     sseSend(clientId, 'commands:registry', COMMANDS);
-    if (liveList.length) sseSend(clientId, 'device:list', liveList);
+    sseSend(clientId, 'device:list', liveList);
     sseSend(clientId, 'stream:heartbeat', { timestamp: Date.now() });
 
     // Hosted HTTP proxies may close idle streams in under the Mongo timeout;
@@ -5510,14 +5562,18 @@ async function getDeviceList(accessIdFilter) {
         return scope(reconcile(Array.from(byId.values())));
     };
 
-    // Priority: MongoDB → Redis → in-memory
-    try {
-        const dbDevices = await Device.find().sort({ lastSeen: -1 })
-            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
-            .lean()
-            .exec();
-        if (dbDevices && dbDevices.length > 0) return mergeLiveDevices(dbDevices);
-    } catch (_) {}
+    // Priority: MongoDB → Redis → in-memory. Skip Mongo entirely while it is
+    // disconnected: a query can wait for server selection even with maxTimeMS,
+    // delaying the dashboard's device list when the DB is unavailable.
+    if (mongoose.connection.readyState === 1) {
+        try {
+            const dbDevices = await Device.find().sort({ lastSeen: -1 })
+                .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                .lean()
+                .exec();
+            if (dbDevices && dbDevices.length > 0) return mergeLiveDevices(dbDevices);
+        } catch (_) {}
+    }
     // Fallback: Redis
     const redisDevices = await R.getAllDevices();
     if (redisDevices.length > 0) return mergeLiveDevices(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)));
@@ -5613,14 +5669,7 @@ setInterval(async () => {
                 if (deviceToTcp.get(conn.deviceId) !== id) {
                     continue; // Ghost socket from previous reconnect — discard silently
                 }
-                deviceToTcp.delete(conn.deviceId);
-                try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
-                {
-                    const rec = inMemoryDevices.get(conn.deviceId);
-                    const aid = (rec && rec.accessId) || '';
-                    broadcastDashScoped('device:disconnected', { deviceId: conn.deviceId, accessId: aid, timestamp: new Date() }, aid || null);
-                }
-                broadcastDeviceList();
+                markDeviceOffline(conn.deviceId, id, 'primary heartbeat timeout');
             }
         }
     }

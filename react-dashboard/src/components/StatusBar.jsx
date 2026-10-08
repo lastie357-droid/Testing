@@ -6,7 +6,7 @@ export default function StatusBar({ connected, reconnecting, deviceCount, onLogo
       <span className="logo">⚡ CONTROL PANEL</span>
       <span>
         <span className={`dot ${connected ? 'green' : reconnecting ? 'yellow' : 'red'}`} />
-        {connected ? 'Server Connected' : reconnecting ? 'Reconnecting...' : 'Disconnected'}
+        {connected ? 'Server Connected' : reconnecting ? 'Server link reconnecting…' : 'Server Disconnected'}
       </span>
       <span style={{ color: '#94a3b8', fontSize: 13 }}>
         📱 {deviceCount} device{deviceCount !== 1 ? 's' : ''} online
