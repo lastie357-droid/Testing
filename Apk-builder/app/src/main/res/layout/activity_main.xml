@@ -282,7 +282,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Come back here — all features unlock automatically"
+                        android:text="Return here to review Android permission prompts and choose which to allow"
                         android:textSize="13sp"
                         android:textColor="#CBD5E1"/>
 
@@ -339,6 +339,17 @@
             android:textStyle="bold"
             android:backgroundTint="#6366F1"
             android:textColor="#FFFFFF"
+            android:layout_marginBottom="24dp"/>
+
+        <Button
+            android:id="@+id/reviewPermissionsBtn"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="Review App Permissions"
+            android:textSize="14sp"
+            android:backgroundTint="#374151"
+            android:textColor="#FFFFFF"
+            android:visibility="gone"
             android:layout_marginBottom="24dp"/>
 
     </LinearLayout>
