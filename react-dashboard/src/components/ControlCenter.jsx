@@ -35,7 +35,12 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected }) {
+export default function ControlCenter({
+  device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency,
+  onTabChange, screenReaderPushData, offlineRecordingVersion, connected,
+  isActive = true, canStartScreenStream = true,
+  onScreenStreamStarted, onScreenStreamStopped,
+}) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -95,7 +100,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const rafRef          = useRef(null);
   const idleTimerRef    = useRef(null);
   const paintGenerationRef = useRef(0);
-  const lastPollTs      = useRef(0);
   const screenshotHandledRef = useRef(new Set());
   const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [screenshotStatus, setScreenshotStatus] = useState('');
@@ -139,9 +143,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   // ── SSE frame — paint immediately when SSE delivers a frame ──────────
   useEffect(() => {
-    if (!streamFrame) return;
+    if (!streamFrame || !streaming || !isActive) return;
     paintFrame(streamFrame);
-  }, [streamFrame, paintFrame]);
+  }, [streamFrame, streaming, isActive, paintFrame]);
 
   // A single screenshot is returned as a normal command result. Paint it in
   // the same phone canvas used by the live stream.
@@ -174,46 +178,13 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     sendCommand(deviceId, 'take_screenshot');
   }, [deviceId, isOnline, screenshotLoading, sendCommand]);
 
-  // ── Async latest-frame watcher ───────────────────────────────────────
-  // Keep checking the latest server frame while the stream is active. The
-  // timestamp guard below prevents repainting the same JPEG repeatedly.
-  useEffect(() => {
-    if (!streaming || !isOnline) return;
-    let stopped = false;
-    let timer = null;
-    const poll = async () => {
-      try {
-        const token = localStorage.getItem('admin_token');
-        const r = await fetch(
-          `/api/stream/latest/${deviceId}?token=${encodeURIComponent(token)}`,
-          { cache: 'no-store' }
-        );
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d.success && d.frameData && (d._ts || 0) > lastPollTs.current) {
-          lastPollTs.current = d._ts || Date.now();
-          paintFrame(d.frameData);
-        }
-      } catch (_) {}
-      finally {
-        if (!stopped) timer = setTimeout(poll, 75);
-      }
-    };
-    poll();
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [streaming, isOnline, deviceId, paintFrame]);
-
   const startStream = useCallback(() => {
-    if (streamingRef.current) return;
-    // Use stream_start (JPEG frames via stream:frame events) — same intervalMs pattern
-    // as screen_reader_stream_start but produces JPEG data polled at /api/stream/latest.
-    sendCommand(deviceId, 'stream_start', { intervalMs: 150 });
+    if (streamingRef.current || !isActive || !canStartScreenStream) return;
+    if (onScreenStreamStarted && onScreenStreamStarted() === false) return;
+    streamingRef.current = true;
+    sendCommand(deviceId, 'stream_start', { intervalMs: 1000 });
     setStreaming(true);
     frameCountRef.current = 0;
-    lastPollTs.current = 0;
     setFps(0);
     setHasFrame(false);
     setStreamIdle(false);
@@ -221,25 +192,38 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     autoStopRef.current = setTimeout(() => {
       if (streamingRef.current) {
         sendCommand(deviceId, 'stream_stop');
+        streamingRef.current = false;
         setStreaming(false);
         setFps(0);
+        onScreenStreamStopped?.();
       }
     }, 5 * 60 * 1000);
-  }, [deviceId, sendCommand]);
+  }, [deviceId, sendCommand, isActive, canStartScreenStream, onScreenStreamStarted, onScreenStreamStopped]);
 
   const stopStream = useCallback(() => {
+    if (!streamingRef.current) return;
     sendCommand(deviceId, 'stream_stop');
+    streamingRef.current = false;
     setStreaming(false);
     setFps(0);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
-  }, [deviceId, sendCommand]);
+    onScreenStreamStopped?.();
+  }, [deviceId, sendCommand, onScreenStreamStopped]);
+
+  useEffect(() => {
+    if (isActive || !streamingRef.current) return;
+    stopStream();
+  }, [isActive, stopStream]);
 
   useEffect(() => () => {
-    if (streamingRef.current) sendCommand(deviceId, 'stream_stop');
+    if (streamingRef.current) {
+      sendCommand(deviceId, 'stream_stop');
+      onScreenStreamStopped?.();
+    }
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-  }, []);
+  }, [deviceId, sendCommand, onScreenStreamStopped]);
 
   // ── Screen touch on stream ────────────────────────────────────────────
   const handleStreamClick = useCallback((e) => {
@@ -436,7 +420,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', paddingBottom: 4 }}>
               <button
                 onClick={streaming ? stopStream : startStream}
-                disabled={!isOnline}
+                disabled={!isOnline || !canStartScreenStream || !isActive}
                 style={{ ...smallBtn(streaming ? '#7f1d1d' : '#166534'), fontSize: 11 }}
               >
                 {streaming ? '⏹ Stop' : '▶ Start'}

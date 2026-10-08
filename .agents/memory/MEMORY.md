@@ -22,3 +22,4 @@
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
 - [Installer package flow](installer-package-flow.md) — keep the installer singleTop and launch ACTION_INSTALL_PACKAGE through its task with a FileProvider URI.
 - [Help tutorial replay](help-tutorial-loop.md) — resume WebView timers on reopen and give the final animation step a positive delay before looping.
+- [Screen stream ownership](screen-stream-ownership.md) — keep the three TCP channels and allow only one active persistent screen stream.

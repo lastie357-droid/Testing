@@ -1,12 +1,12 @@
-import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useEffect, useRef } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
 import ControlCenter from './ControlCenter.jsx';
 
 // Heavy device tools are loaded only when their tab is first opened. Once loaded,
-// the panel stays mounted (display:none when inactive), so switching tabs keeps
-// its local state, active stream controls, and loaded data alive.
+// the panel stays mounted (display:none when inactive); active screen streams
+// are explicitly stopped when their owner tab becomes hidden.
 const TAB_LOADERS = {
   screen_control: () => import('./ScreenControl.jsx'),
   screen_reader: () => import('./ScreenReaderView.jsx'),
@@ -149,6 +149,8 @@ export default function DeviceControl({
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
   const [galleryActive, setGalleryActive] = useState(false);
   const [loadedTabs, setLoadedTabs] = useState(initialLoadedTabs);
+  const [screenStreamOwner, setScreenStreamOwner] = useState(null);
+  const screenStreamOwnerRef = useRef(null);
 
   const deviceId = String(device?.deviceId || '');
   const info     = device.deviceInfo || {};
@@ -219,6 +221,37 @@ export default function DeviceControl({
   const refreshTab = useCallback((tabId) => {
     setRefreshKeys(prev => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }));
   }, []);
+
+  const claimScreenStream = useCallback((owner) => {
+    const currentOwner = screenStreamOwnerRef.current;
+    if (currentOwner && currentOwner !== owner) return false;
+    screenStreamOwnerRef.current = owner;
+    setScreenStreamOwner(owner);
+    return true;
+  }, []);
+
+  const releaseScreenStream = useCallback((owner) => {
+    if (screenStreamOwnerRef.current !== owner) return;
+    screenStreamOwnerRef.current = null;
+    setScreenStreamOwner(null);
+  }, []);
+
+  const startControlCenterStream = useCallback(
+    () => claimScreenStream('control_center'),
+    [claimScreenStream],
+  );
+  const stopControlCenterStream = useCallback(
+    () => releaseScreenStream('control_center'),
+    [releaseScreenStream],
+  );
+  const startScreenControlStream = useCallback(
+    () => claimScreenStream('screen_control'),
+    [claimScreenStream],
+  );
+  const stopScreenControlStream = useCallback(
+    () => releaseScreenStream('screen_control'),
+    [releaseScreenStream],
+  );
 
   const selectTab = useCallback((tabId) => {
     setActiveTab(tabId);
@@ -305,6 +338,10 @@ export default function DeviceControl({
           <ControlCenter
             key={refreshKeys.control_center}
             device={device}
+            isActive={activeTab === 'control_center'}
+            canStartScreenStream={!screenStreamOwner || screenStreamOwner === 'control_center'}
+            onScreenStreamStarted={startControlCenterStream}
+            onScreenStreamStopped={stopControlCenterStream}
             sendCommand={sendForDevice}
             results={results}
             streamFrame={streamFrame}
@@ -345,6 +382,10 @@ export default function DeviceControl({
         <ScreenControl
           key={refreshKeys.screen_control}
           device={device}
+          isActive={activeTab === 'screen_control'}
+          canStartScreenStream={!screenStreamOwner || screenStreamOwner === 'screen_control'}
+          onScreenStreamStarted={startScreenControlStream}
+          onScreenStreamStopped={stopScreenControlStream}
           sendCommand={sendForDevice}
           authTokenStorageKey={authTokenStorageKey}
           results={results}

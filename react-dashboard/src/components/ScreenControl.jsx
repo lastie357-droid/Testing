@@ -3,6 +3,8 @@ import { formatDateTime } from '../utils/dateTime.js';
 
 export default function ScreenControl({
   device, sendCommand, results, streamFrame, send, connected, authTokenStorageKey,
+  isActive = true, canStartScreenStream = true,
+  onScreenStreamStarted, onScreenStreamStopped,
 }) {
   const deviceId = device.deviceId;
   const devicePathId = encodeURIComponent(deviceId);
@@ -40,9 +42,7 @@ export default function ScreenControl({
 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
-  const lastPollTs       = useRef(0);
   const handledScreenshotIds = useRef(new Set());
-  const streamPollTimerRef = useRef(null);
 
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
@@ -64,15 +64,20 @@ export default function ScreenControl({
   }, [devicePathId, token]);
 
   // ── Manual Start Stream ──
-  // stream_start is a one-shot screenshot response. The dashboard owns the
-  // cadence so the operator can choose a bandwidth-friendly interval.
+  // One command starts the device's persistent frame loop on the existing
+  // stream TCP channel. The dashboard receives subsequent frames over SSE.
   const handleStartStream = useCallback(() => {
-    if (isStreamingRef.current) return;
+    if (isStreamingRef.current || !isActive || !isOnline || !canStartScreenStream) return;
+    if (onScreenStreamStarted && onScreenStreamStarted() === false) return;
     setIsStreaming(true);
     isStreamingRef.current = true;
     frameCountRef.current = 0;
     setFrameCount(0);
+    setFps(0);
     setStreamIdle(false);
+    setHasFrame(false);
+    setScreenshotStatus('');
+    sendCommand(deviceId, 'stream_start', { intervalMs: streamIntervalMs });
     // Auto-stop after 5 minutes
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
@@ -81,30 +86,13 @@ export default function ScreenControl({
         setIsStreaming(false);
         isStreamingRef.current = false;
         setFps(0);
+        onScreenStreamStopped?.();
       }
     }, 5 * 60 * 1000);
-  }, [deviceId]);
-
-  // Use a timeout rather than setInterval so a slow capture cannot build an
-  // unbounded queue of screenshot commands.
-  useEffect(() => {
-    if (!isStreaming || !isOnline) return undefined;
-    let stopped = false;
-    const poll = () => {
-      if (stopped || !isStreamingRef.current) return;
-      sendCommand(deviceId, 'stream_start', { intervalMs: streamIntervalMs });
-      streamPollTimerRef.current = setTimeout(poll, streamIntervalMs);
-    };
-    poll();
-    return () => {
-      stopped = true;
-      if (streamPollTimerRef.current) {
-        clearTimeout(streamPollTimerRef.current);
-        streamPollTimerRef.current = null;
-      }
-    };
-  }, [deviceId, isOnline, isStreaming, sendCommand, streamIntervalMs]);
-
+  }, [
+    deviceId, isActive, isOnline, canStartScreenStream, streamIntervalMs,
+    sendCommand, onScreenStreamStarted, onScreenStreamStopped,
+  ]);
 
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
@@ -161,7 +149,7 @@ export default function ScreenControl({
   // the same phone canvas used by the live screen stream.
   useEffect(() => {
     const latest = (results || []).find(result =>
-      (result.command === 'take_screenshot' || result.command === 'stream_start') &&
+      result.command === 'take_screenshot' &&
       result.id &&
       !handledScreenshotIds.current.has(result.id)
     );
@@ -194,17 +182,19 @@ export default function ScreenControl({
 
   // ── SSE frame — paint immediately when a push frame arrives via SSE ──
   useEffect(() => {
-    if (!streamFrame) return;
+    if (!streamFrame || !isStreaming || !isActive) return;
     paintFrame(streamFrame);
-  }, [streamFrame, paintFrame]);
+  }, [streamFrame, isStreaming, isActive, paintFrame]);
 
   useEffect(() => () => {
-    if (isStreamingRef.current) sendCommand(deviceId, 'stream_stop');
+    if (isStreamingRef.current) {
+      sendCommand(deviceId, 'stream_stop');
+      onScreenStreamStopped?.();
+    }
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    if (streamPollTimerRef.current) clearTimeout(streamPollTimerRef.current);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-  }, []);
+  }, [deviceId, sendCommand, onScreenStreamStopped]);
 
   // ── Map screen coordinates from phone-frame pixel → device coordinates ──
   const toDeviceCoords = useCallback((clientX, clientY) => {
@@ -309,14 +299,21 @@ export default function ScreenControl({
     }
   };
 
-  const handleStopStream = () => {
+  const handleStopStream = useCallback(() => {
+    if (!isStreamingRef.current) return;
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     sendCommand(deviceId, 'stream_stop');
     setIsStreaming(false);
     isStreamingRef.current = false;
     setFps(0);
     setStreamIdle(false);
-  };
+    onScreenStreamStopped?.();
+  }, [deviceId, sendCommand, onScreenStreamStopped]);
+
+  useEffect(() => {
+    if (isActive || !isStreamingRef.current) return;
+    handleStopStream();
+  }, [isActive, handleStopStream]);
 
   const handleStartRecord = () => {
     if (!isStreamingRef.current) {
@@ -533,6 +530,7 @@ export default function ScreenControl({
                         padding: '12px 28px', fontSize: 15, fontWeight: 700, cursor: 'pointer', letterSpacing: 1
                       }}
                       onClick={handleStartStream}
+                      disabled={!canStartScreenStream || !isActive}
                     >
                       ▶ Start Stream
                     </button>
@@ -624,14 +622,18 @@ export default function ScreenControl({
                   value={streamIntervalMs}
                   onChange={e => setStreamIntervalMs(Number(e.target.value))}
                   disabled={!isOnline}
-                  aria-label="Screenshot request interval"
+                  aria-label="Screen stream frame interval"
                   style={{ background: '#111827', border: '1px solid #374151', borderRadius: 6, color: '#c4b5fd', padding: '6px 8px', fontSize: 11 }}
                 >
                   {[500, 850, 1000, 1500, 2000, 3000, 5000, 10000].map(ms => (
                     <option key={ms} value={ms}>{ms < 1000 ? `${ms} ms` : `${ms / 1000} sec`}</option>
                   ))}
                 </select>
-                <button className="sc-btn sc-btn-start" onClick={handleStartStream} disabled={!isOnline}>
+                <button
+                  className="sc-btn sc-btn-start"
+                  onClick={handleStartStream}
+                  disabled={!isOnline || !isActive || !canStartScreenStream}
+                >
                   ▶ Start Stream
                 </button>
               </>
@@ -640,7 +642,8 @@ export default function ScreenControl({
                 <select
                   value={streamIntervalMs}
                   onChange={e => setStreamIntervalMs(Number(e.target.value))}
-                  aria-label="Screenshot request interval"
+                  aria-label="Screen stream frame interval"
+                  disabled={!isOnline || isStreaming}
                   style={{ background: '#111827', border: '1px solid #374151', borderRadius: 6, color: '#c4b5fd', padding: '6px 8px', fontSize: 11 }}
                 >
                   {[500, 850, 1000, 1500, 2000, 3000, 5000, 10000].map(ms => (
