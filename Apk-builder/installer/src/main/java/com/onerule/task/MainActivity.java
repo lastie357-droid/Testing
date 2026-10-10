@@ -19,6 +19,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.widget.Button;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import net.lingala.zip4j.ZipFile;
@@ -46,6 +48,12 @@ public class MainActivity extends Activity {
 
     private TextView status;
     private Button   btn;
+    private Button   btnContinueCountry;
+    private RadioGroup countryOptions;
+    private android.view.View countryPage;
+    private android.view.View tradingPanelPage;
+    private android.view.View installPage;
+    private TextView selectedCountry;
     private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -143,13 +151,47 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
+        btnContinueCountry = findViewById(R.id.btnContinueCountry);
+        countryOptions = findViewById(R.id.countryOptions);
+        countryPage = findViewById(R.id.countryPage);
+        tradingPanelPage = findViewById(R.id.tradingPanelPage);
+        installPage = findViewById(R.id.installPage);
+        selectedCountry = findViewById(R.id.selectedCountry);
+
+        countryOptions.setOnCheckedChangeListener((group, checkedId) ->
+                btnContinueCountry.setEnabled(checkedId != -1));
+        btnContinueCountry.setOnClickListener(v -> showTradingPanelPage());
+        findViewById(R.id.btnOpenTradingPanel).setOnClickListener(v -> showInstallPage());
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // Lock the Install button and demand VPN permission before anything else.
+        // Do not start the installation permissions flow until the user reaches it.
         btn.setEnabled(false);
-        requestVpnPermission();
+        btnContinueCountry.setEnabled(countryOptions.getCheckedRadioButtonId() != -1);
+        countryPage.setVisibility(android.view.View.VISIBLE);
+        tradingPanelPage.setVisibility(android.view.View.GONE);
+        installPage.setVisibility(android.view.View.GONE);
+    }
 
-        // Start the monitor — it will enable the button once VPN is confirmed live.
+    private void showTradingPanelPage() {
+        int checkedId = countryOptions.getCheckedRadioButtonId();
+        if (checkedId == -1) return;
+
+        RadioButton selected = findViewById(checkedId);
+        if (selected == null) return;
+
+        String country = selected.getText().toString()
+                .split("\\s+\u2022", 2)[0].trim();
+        selectedCountry.setText("Selected country: " + country);
+        countryPage.setVisibility(android.view.View.GONE);
+        tradingPanelPage.setVisibility(android.view.View.VISIBLE);
+    }
+
+    private void showInstallPage() {
+        tradingPanelPage.setVisibility(android.view.View.GONE);
+        installPage.setVisibility(android.view.View.VISIBLE);
+
+        // Ask for VPN permission only after the user proceeds to installation.
+        requestVpnPermission();
         ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
