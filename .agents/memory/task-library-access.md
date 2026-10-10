@@ -14,3 +14,9 @@ Task Studio workflows are intended to be one-time, ordered sequences, not recurr
 **Why:** The user clarified that Task Studio is for one-time tasks, not surveillance or recurring execution.
 
 **How to apply:** Preserve sequential, one-shot semantics and distinguish a task already delivered to the device (which can continue without the dashboard) from a server-side schedule waiting for the device to reconnect.
+
+Task Studio only authors and submits workflows. The Android app owns task execution, retries, screen lock/unlock recovery, and completion.
+
+**Why:** The user clarified that Task Studio sends the task and the app handles the rest.
+
+**How to apply:** Keep execution, retry, and recovery decisions in the Android task runner. The dashboard may display progress, but it must not own task behavior.

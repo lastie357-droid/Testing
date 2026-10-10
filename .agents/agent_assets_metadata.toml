@@ -22,3 +22,17 @@ mtime_ms = 1789642842654
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:d85afeea-64c4-4d45-b37b-e5a1bc98a0b8/1380cd60-70cc-4f06-baa2-cd2859699915/b0af38d1-264c-4ed7-a7f5-85bef60bd36c"
 storage_version_token = "1789642852608385"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "AKhsjLkQgwDytm_ZW_9DP"
+uri = "file://Apk-builder/app/build/outputs/apk/debug/app-debug.apk"
+type = "unspecified"
+title = "Task runner test APK"
+description = "Debug build with app-side screen lock/unlock recovery and 7-second missing-text retries. Install on a test device to verify the updated behavior."
+logical_id = "8fcd6bae-617b-49a4-b250-cdf4f7a688ca"
+content_hash = "sha256:2b7648b6322f66cf2744edd41fd2b3a32082a65db1ffa04b6e74fd243ede40d3"
+size = 6567909
+mtime_ms = 1791651719557
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:36cc5b82-9eb7-4f3f-9fba-c58c4a391cc7/8fcd6bae-617b-49a4-b250-cdf4f7a688ca/af76d8ed-79b2-4307-b45a-dea41db09aea"
+storage_version_token = "1791652019113145"
+content_type = "application/octet-stream"
