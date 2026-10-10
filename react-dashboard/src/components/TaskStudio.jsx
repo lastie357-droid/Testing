@@ -145,10 +145,13 @@ function StepEditor({ step, apps, onChange }) {
       );
     case 'paste_text':
       return (
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {field('Text to Paste',
-            input({ placeholder: 'Text that will be pasted into the active field…', value: step.text, onChange: e => onChange({ ...step, text: e.target.value }) })
+            input({ placeholder: 'Text to send to the focused input…', value: step.text, onChange: e => onChange({ ...step, text: e.target.value }) })
           )}
+          <div style={{ fontSize: 11, color: '#64748b' }}>
+            Sends immediately to the input focused in the active window when this step runs.
+          </div>
         </div>
       );
     case 'close_app':

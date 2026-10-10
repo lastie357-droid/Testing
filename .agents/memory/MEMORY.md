@@ -1,5 +1,7 @@
 # Agent Memory Index
 
+- [Immediate Task Studio paste](task-studio-paste.md) — paste steps should target the active window's current input directly, without scanning and polling for fields.
+
 - [Dashboard SSE liveness](dashboard-connection-liveness.md) — SSE comment keepalives are invisible to EventSource handlers; use real data heartbeats to detect silent browser streams.
 - [Selected-device event isolation](dashboard-device-event-scope.md) — only selected-device payloads should reach tool views; global inventory and status events remain live.
 - [Socket reliability fixes](socket-reliability-fixes.md) — 6 bugs fixed in SocketManager.java (backoff, setSoTimeout, dead-socket teardown, buffer cap, loop identity, comment).
