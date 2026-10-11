@@ -379,8 +379,34 @@ public class SocketManager {
     private JSONArray currentTaskSteps;
     private long nextTaskGeneration;
     private long currentTaskGeneration;
+    private static final long TASK_UNLOCK_CHECK_WINDOW_MS = 10_000L;
+    private static final long TASK_UNLOCK_CHECK_INTERVAL_MS = 250L;
+    private volatile long taskUnlockCheckDeadlineUptime;
     private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
     private android.content.BroadcastReceiver taskLockReceiver;
+    private android.app.KeyguardManager taskKeyguardManager;
+    private android.app.KeyguardManager.KeyguardLockedStateListener taskKeyguardStateListener;
+    private final Runnable taskUnlockCheck = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (taskLock) {
+                if (waitingTasks.isEmpty()) {
+                    taskUnlockCheckDeadlineUptime = 0L;
+                    return;
+                }
+            }
+
+            if (!isTaskExecutionBlocked()) {
+                taskUnlockCheckDeadlineUptime = 0L;
+                resumeWaitingTasksIfAvailable();
+                return;
+            }
+
+            if (android.os.SystemClock.uptimeMillis() < taskUnlockCheckDeadlineUptime) {
+                taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
+            }
+        }
+    };
 
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
@@ -4152,14 +4178,24 @@ public class SocketManager {
                 if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
                     // Pause immediately, even on devices where the keyguard
                     // state is delayed or the screen turns off without a lock.
+                    cancelTaskUnlockCheck();
                     requestTaskRestartForPause();
                 } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
-                    resumeWaitingTasksIfAvailable();
+                    // The device may have remained interactive while the
+                    // keyguard was visible. Treat unlock as a fresh start from
+                    // step 1, then wait until both keyguard and screen are ready.
+                    requestTaskRestartForPause();
+                    scheduleTaskUnlockCheck();
                 } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
-                    // Covers devices that wake without delivering USER_PRESENT.
-                    // The delayed check allows keyguard state to settle first.
+                    // A lit screen may still be locked. Check after keyguard
+                    // settles, pausing active work if the lock screen remains.
                     taskLockHandler.postDelayed(() -> {
-                        if (!isTaskExecutionBlocked()) resumeWaitingTasksIfAvailable();
+                        if (isDeviceLocked()) {
+                            cancelTaskUnlockCheck();
+                            requestTaskRestartForPause();
+                        } else {
+                            scheduleTaskUnlockCheck();
+                        }
                     }, 300L);
                 }
             }
@@ -4178,6 +4214,52 @@ public class SocketManager {
         } catch (Exception e) {
             Log.e(TAG, "registerTaskLockReceiver: " + e.getMessage());
         }
+
+        registerTaskKeyguardStateListener();
+    }
+
+    private void registerTaskKeyguardStateListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || taskKeyguardStateListener != null) return;
+
+        try {
+            taskKeyguardManager = (android.app.KeyguardManager)
+                    context.getSystemService(Context.KEYGUARD_SERVICE);
+            if (taskKeyguardManager == null) {
+                Log.w(TAG, "KeyguardManager unavailable; relying on screen broadcasts");
+                return;
+            }
+
+            taskKeyguardStateListener = isLocked -> {
+                if (isLocked) {
+                    cancelTaskUnlockCheck();
+                    requestTaskRestartForPause();
+                } else {
+                    scheduleTaskUnlockCheck();
+                }
+            };
+            taskKeyguardManager.addKeyguardLockedStateListener(
+                    command -> taskLockHandler.post(command),
+                    taskKeyguardStateListener);
+        } catch (Exception e) {
+            taskKeyguardStateListener = null;
+            Log.w(TAG, "Unable to register keyguard state listener: " + e.getMessage());
+        }
+    }
+
+    private void cancelTaskUnlockCheck() {
+        taskUnlockCheckDeadlineUptime = 0L;
+        taskLockHandler.removeCallbacks(taskUnlockCheck);
+    }
+
+    private void scheduleTaskUnlockCheck() {
+        synchronized (taskLock) {
+            if (waitingTasks.isEmpty()) return;
+        }
+        taskUnlockCheckDeadlineUptime =
+                android.os.SystemClock.uptimeMillis() + TASK_UNLOCK_CHECK_WINDOW_MS;
+        taskLockHandler.removeCallbacks(taskUnlockCheck);
+        taskLockHandler.post(taskUnlockCheck);
     }
 
     private boolean isDeviceLocked() {

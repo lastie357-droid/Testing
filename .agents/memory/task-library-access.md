@@ -21,6 +21,12 @@ Task Studio only authors and submits workflows. The Android app owns task execut
 
 **How to apply:** Keep execution, retry, and recovery decisions in the Android task runner. The dashboard may display progress, but it must not own task behavior.
 
+Screen-on is not equivalent to unlocked. Pause on keyguard lock even if the display remains interactive, and restart the current task from step 1 only after both the keyguard is clear and the display is interactive.
+
+**Why:** The user reported that the phone can remain lit while locked, so a screen-on event alone must not resume task actions.
+
+**How to apply:** Treat keyguard state and display interactivity as separate conditions. Use the keyguard transition and unlock broadcasts to trigger a fresh state check; keep the task paused if either condition is still blocked.
+
 When a new task arrives, replace the current or waiting task only if its executable ordered steps differ. A duplicate of the ongoing task is a no-op, regardless of its transport command ID; ignore dashboard-only `enabled` and `originalIndex` fields when comparing steps.
 
 **Why:** The user wants a repeated delivery of the same task to leave its current run undisturbed, while genuinely different work replaces it.
