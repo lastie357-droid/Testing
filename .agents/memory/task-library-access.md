@@ -20,3 +20,9 @@ Task Studio only authors and submits workflows. The Android app owns task execut
 **Why:** The user clarified that Task Studio sends the task and the app handles the rest.
 
 **How to apply:** Keep execution, retry, and recovery decisions in the Android task runner. The dashboard may display progress, but it must not own task behavior.
+
+When a new task arrives, replace the current or waiting task only if its executable ordered steps differ. A duplicate of the ongoing task is a no-op, regardless of its transport command ID; ignore dashboard-only `enabled` and `originalIndex` fields when comparing steps.
+
+**Why:** The user wants a repeated delivery of the same task to leave its current run undisturbed, while genuinely different work replaces it.
+
+**How to apply:** Compare the active task's ordered step content before cancelling workers or changing the current-task slot. Keep equality scoped to the task that is currently running or waiting, not previously completed tasks.
