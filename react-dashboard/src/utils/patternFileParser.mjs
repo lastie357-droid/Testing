@@ -158,6 +158,13 @@ export function parsePatternFileContents(contents, fileName = 'pattern.json') {
     throw new Error('Could not determine the screen dimensions from the file');
   }
 
+  const sourceDeviceIds = [...new Set(
+    frames.map(frame => frame?.deviceId).filter(id => typeof id === 'string' && id.length > 0),
+  )];
+  if (sourceDeviceIds.length > 1) {
+    throw new Error('The recording contains frames from more than one device');
+  }
+
   return {
     fileName,
     cells: sequence,
@@ -166,5 +173,29 @@ export function parsePatternFileContents(contents, fileName = 'pattern.json') {
     screenHeight,
     frameCount: frames.length,
     simultaneousGroups,
+    deviceId: sourceDeviceIds[0] || null,
+  };
+}
+
+export function buildNormalizedPatternGesture(pattern) {
+  if (!pattern?.screenWidth || !pattern?.screenHeight || !Array.isArray(pattern.cells)) {
+    throw new Error('Pattern screen dimensions or cell order are missing');
+  }
+
+  const coordsByCell = new Map((pattern.cellCoords || []).map(cell => [cell.cell, cell]));
+  const nodes = pattern.cells.map(cellNumber => {
+    const cell = coordsByCell.get(cellNumber);
+    if (!cell) throw new Error(`Cell ${cellNumber} is missing its recorded bounds`);
+    return {
+      nx: cell.cx / pattern.screenWidth,
+      ny: cell.cy / pattern.screenHeight,
+      node: cellNumber - 1,
+    };
+  });
+
+  if (nodes.length < 2) throw new Error('A pattern needs at least two cells');
+  return {
+    nodes,
+    sequence: pattern.cells.map(cellNumber => cellNumber - 1),
   };
 }

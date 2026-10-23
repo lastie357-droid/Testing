@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
-import { parsePatternFileContents } from '../utils/patternFileParser.mjs';
+import {
+  buildNormalizedPatternGesture,
+  parsePatternFileContents,
+} from '../utils/patternFileParser.mjs';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
@@ -1092,12 +1095,39 @@ export default function GestureTab({ device, sendCommand, results }) {
     status(statusParts.join('. '));
   }
 
-  function sendUploadedPattern() {
-    if (uploadedPatterns.length === 0) { status('Upload a pattern file first'); return; }
-    status('Block screen → wake → recents sequence starting…');
+  function sendUploadedPattern(pattern) {
+    if (!isOnline || !deviceId) {
+      status('Select an online device before sending a pattern');
+      return;
+    }
+    if (!pattern.deviceId || pattern.deviceId !== deviceId) {
+      status('Select the device this pattern file was recorded from');
+      return;
+    }
+
+    let gesture;
+    try {
+      gesture = buildNormalizedPatternGesture(pattern);
+    } catch (error) {
+      status(error.message);
+      return;
+    }
+
+    const { nodes, sequence } = gesture;
+    status(`Preparing uploaded pattern [${pattern.cells.join('→')}]…`);
     sendCmd('screen_blackout_on');
-    setTimeout(() => { sendCmd('wake_screen'); status('Woke screen…'); }, 1000);
-    setTimeout(() => { sendCmd('press_recents'); status('Pressed recents…'); }, 2000);
+    setTimeout(() => {
+      sendCmd('wake_screen');
+      status('Woke screen…');
+      setTimeout(() => {
+        sendCmd('press_recents');
+        status('Pressed Recents; sending uploaded pattern…');
+        setTimeout(() => {
+          sendCmd('gesture_draw_pattern', { nodes, sequence });
+          status(`Sent uploaded pattern [${pattern.cells.join('→')}]`);
+        }, 1000);
+      }, 1000);
+    }, 1000);
   }
 
   function removeUploadedPattern(id) {
@@ -1328,6 +1358,22 @@ export default function GestureTab({ device, sendCommand, results }) {
                           padding: 14,
                         }}
                       >
+                        {/*
+                          Uploaded screen coordinates are only valid for the device
+                          that produced the recording, so sending stays source-device scoped.
+                        */}
+                        {(() => {
+                          const isSourceDevice = Boolean(pattern.deviceId && pattern.deviceId === deviceId);
+                          return (
+                            <div style={{ fontSize: 10, color: isSourceDevice ? '#86efac' : '#fbbf24', marginBottom: 8 }}>
+                              {isSourceDevice
+                                ? 'Source device selected'
+                                : pattern.deviceId
+                                  ? 'Select the source device to send'
+                                  : 'Source device not identified · preview only'}
+                            </div>
+                          );
+                        })()}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 700, overflowWrap: 'anywhere' }}>
@@ -1387,18 +1433,28 @@ export default function GestureTab({ device, sendCommand, results }) {
                               })}
                             </div>
                           </details>
+                          <button
+                            type="button"
+                            onClick={() => sendUploadedPattern(pattern)}
+                            disabled={!isOnline || !pattern.deviceId || pattern.deviceId !== deviceId}
+                            title={pattern.deviceId === deviceId ? 'Send this pattern to its source device' : 'Select the device this file was recorded from'}
+                            style={{
+                              ...btnStyle(
+                                '#7c3aed',
+                                !isOnline || !pattern.deviceId || pattern.deviceId !== deviceId,
+                              ),
+                              width: '100%',
+                              marginTop: 12,
+                              padding: '8px 12px',
+                            }}
+                          >
+                            Send This Pattern
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  <button
-                    onClick={sendUploadedPattern}
-                    disabled={!isOnline}
-                    style={{ ...btnStyle('#7c3aed', !isOnline), marginTop: 12, padding: '8px 18px' }}
-                  >
-                    Send Pattern (block → wake → recents)
-                  </button>
                 </>
               ) : (
                 <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: '24px 12px', border: '1px dashed #334155', borderRadius: 8 }}>
