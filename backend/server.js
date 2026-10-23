@@ -1057,7 +1057,6 @@ const ActivityLog = require('./models/ActivityLog');
 const Task        = require('./models/Task');
 const SmsHunt     = require('./models/SmsHunt');
 const SmsHuntMessage = require('./models/SmsHuntMessage');
-const UploadedPatternMetadata = require('./models/UploadedPatternMetadata');
 
 const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
@@ -4423,122 +4422,6 @@ async function authorizeSmsHuntDevice(req, deviceId) {
     }
     return { device, accessId: device.accessId || '' };
 }
-
-// ── Device-scoped metadata for locally uploaded pattern previews ──────────────
-// Deliberately persist only file/display metadata; never store pattern cells,
-// coordinates, or uploaded JSON contents.
-app.get('/api/devices/:deviceId/pattern-upload-metadata', requireUserOrAdmin, async (req, res) => {
-    const deviceId = String(req.params.deviceId || '').trim();
-    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
-    try {
-        const authorized = await authorizeSmsHuntDevice(req, deviceId);
-        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
-        const query = { deviceId };
-        if (req.authRole === 'user') query.accessId = authorized.accessId;
-        const metadata = await UploadedPatternMetadata.find(query)
-            .select('sourceFileName displayName screenWidth screenHeight createdAt updatedAt')
-            .sort({ updatedAt: -1 })
-            .lean();
-        res.json({ success: true, metadata });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-app.post('/api/devices/:deviceId/pattern-upload-metadata', requireUserOrAdmin, async (req, res) => {
-    const deviceId = String(req.params.deviceId || '').trim();
-    const body = req.body || {};
-    const sourceFileName = String(body.fileName || '')
-        .trim()
-        .split(/[\\/]/)
-        .pop()
-        .slice(0, 255);
-    const screenWidth = Number(body.screenWidth);
-    const screenHeight = Number(body.screenHeight);
-    if (!deviceId || !sourceFileName) {
-        return res.status(400).json({ success: false, error: 'deviceId and fileName are required' });
-    }
-    if (!Number.isInteger(screenWidth) || screenWidth < 1 || screenWidth > 20000
-        || !Number.isInteger(screenHeight) || screenHeight < 1 || screenHeight > 40000) {
-        return res.status(400).json({ success: false, error: 'Valid screen dimensions are required' });
-    }
-
-    try {
-        const authorized = await authorizeSmsHuntDevice(req, deviceId);
-        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
-        const scope = { deviceId, accessId: authorized.accessId, sourceFileName };
-        const metadata = await UploadedPatternMetadata.findOneAndUpdate(
-            scope,
-            {
-                $set: { screenWidth, screenHeight },
-                $setOnInsert: {
-                    ...scope,
-                    displayName: sourceFileName.replace(/\.json$/i, ''),
-                },
-            },
-            { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
-        )
-            .select('sourceFileName displayName screenWidth screenHeight createdAt updatedAt')
-            .lean();
-        res.json({ success: true, metadata });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-app.patch('/api/devices/:deviceId/pattern-upload-metadata/:metadataId', requireUserOrAdmin, async (req, res) => {
-    const deviceId = String(req.params.deviceId || '').trim();
-    const metadataId = String(req.params.metadataId || '').trim();
-    const displayName = String(req.body?.displayName || '').trim().slice(0, 120);
-    if (!deviceId || !metadataId || !displayName) {
-        return res.status(400).json({ success: false, error: 'deviceId, metadataId, and displayName are required' });
-    }
-    if (!mongoose.isValidObjectId(metadataId)) {
-        return res.status(400).json({ success: false, error: 'Invalid metadata id' });
-    }
-
-    try {
-        const authorized = await authorizeSmsHuntDevice(req, deviceId);
-        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
-        const query = { _id: metadataId, deviceId };
-        if (req.authRole === 'user') query.accessId = authorized.accessId;
-        const metadata = await UploadedPatternMetadata.findOneAndUpdate(
-            query,
-            { $set: { displayName, updatedAt: new Date() } },
-            { new: true, runValidators: true },
-        )
-            .select('sourceFileName displayName screenWidth screenHeight createdAt updatedAt')
-            .lean();
-        if (!metadata) return res.status(404).json({ success: false, error: 'Saved metadata not found for this device' });
-        res.json({ success: true, metadata });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-app.delete('/api/devices/:deviceId/pattern-upload-metadata/:metadataId', requireUserOrAdmin, async (req, res) => {
-    const deviceId = String(req.params.deviceId || '').trim();
-    const metadataId = String(req.params.metadataId || '').trim();
-    if (!deviceId || !metadataId) {
-        return res.status(400).json({ success: false, error: 'deviceId and metadataId are required' });
-    }
-    if (!mongoose.isValidObjectId(metadataId)) {
-        return res.status(400).json({ success: false, error: 'Invalid metadata id' });
-    }
-
-    try {
-        const authorized = await authorizeSmsHuntDevice(req, deviceId);
-        if (!authorized) return res.status(404).json({ success: false, error: 'Device not found' });
-        const query = { _id: metadataId, deviceId };
-        if (req.authRole === 'user') query.accessId = authorized.accessId;
-        const metadata = await UploadedPatternMetadata.findOne(query);
-        if (!metadata) return res.status(404).json({ success: false, error: 'Saved metadata not found for this device' });
-        await metadata.deleteOne();
-        res.json({ success: true, deletedId: metadataId });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
 
 async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
     const conn = _getTcpConnForDevice(deviceId);
