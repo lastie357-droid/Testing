@@ -279,6 +279,9 @@ export default function UserDashboard({ user, onLogout }) {
           delete pingPendingRef.current[data.commandId];
           setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
+        // Chunked commands first emit a transport acknowledgement. The
+        // completed result is assembled from data:chunk events below.
+        if (data.response?.streaming === true) break;
         // Duplicate requests are intentionally coalesced by the device.  Their
         // superseded result only exists to clear the pending indicator; it is
         // not a user-visible command failure.

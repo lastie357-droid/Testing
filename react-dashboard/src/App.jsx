@@ -416,6 +416,9 @@ function AdminDashboard({ logout }) {
           delete pingPendingRef.current[data.commandId];
           setDeviceLatencies(prev => prev[deviceId] != null ? prev : { ...prev, [deviceId]: Date.now() - sentAt });
         }
+        // Chunked commands first emit a transport acknowledgement. The
+        // completed result is assembled from data:chunk events below.
+        if (data.response?.streaming === true) break;
         // The server emits a result for discarded duplicate commands so the
         // UI can remove their waiters.  Do not show those internal coalescing
         // acknowledgements as command failures.
