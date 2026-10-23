@@ -2300,9 +2300,8 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
 
 tcpServer.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-        log('TCP', `Port ${TCP_PORT} in use — killing and retrying…`, 'warn');
-        try { require('child_process').execSync(`fuser -k ${TCP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-        setTimeout(() => tcpServer.listen(TCP_PORT, '0.0.0.0'), 1500);
+        log('TCP', `Cannot listen on port ${TCP_PORT}: another process already owns it`, 'error');
+        void gracefulShutdown('TCP port conflict', 1);
     } else {
         log('TCP', `Server error: ${err.message}`, 'error');
     }
@@ -5817,20 +5816,13 @@ setInterval(async () => {
 // START
 // ============================================
 
-// Kill any stale process holding our ports before binding
-const { execSync } = require('child_process');
-try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-try { execSync(`fuser -k ${TCP_PORT}/tcp  2>/dev/null`); } catch (_) {}
-
 server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-        log('HTTP', `Port ${HTTP_PORT} still in use — retrying in 2s…`);
-        setTimeout(() => {
-            try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
-            server.listen(HTTP_PORT);
-        }, 2000);
+        log('HTTP', `Cannot listen on port ${HTTP_PORT}: another process already owns it`, 'error');
+        void gracefulShutdown('HTTP port conflict', 1);
     } else {
-        throw err;
+        log('HTTP', `Server error: ${err.message}`, 'error');
+        void gracefulShutdown('HTTP server error', 1);
     }
 });
 
@@ -5956,11 +5948,21 @@ R.init().then(() => {
     });
 });
 
-async function gracefulShutdown(signal) {
+let shutdownPromise = null;
+async function gracefulShutdown(signal, exitCode = 0) {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
     log('SHUTDOWN', `${signal} received — closing…`);
+    // These child processes outlive Node unless explicitly stopped. Leaving
+    // them behind makes a later workflow start collide on the FRP ports.
+    for (const controller of [frpRuntime.frpc.controller, frpRuntime.frps.controller]) {
+        try { controller?.stop(); } catch (_) {}
+    }
     try { await R.quit(); } catch (_) {}
     try { await mongoose.connection.close(); } catch (_) {}
-    process.exit(0);
+    process.exit(exitCode);
+    })();
+    return shutdownPromise;
 }
 
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
