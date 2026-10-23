@@ -957,12 +957,16 @@ export default function GestureTab({ device, sendCommand, results }) {
         }
         if (!chosen) { status('No pattern cells found in file'); return; }
         const cells = chosen.filter(el => (el.contentDescription || el.text || '').startsWith('Cell'));
-        const lost = cells.filter(c => c.clickable !== true).map(c => {
-          const num = parseInt((c.contentDescription || c.text || '').match(/Cell\s*(\d+)/)?.[1] || '0', 10);
-          const b = c.bounds;
-          return { cell: num, cx: Math.round((b.left + b.right) / 2), cy: Math.round((b.top + b.bottom) / 2), bounds: b };
-        }).filter(c => c.cell >= 1 && c.cell <= 9);
-        lost.sort((a, b) => a.cell - b.cell);
+        const lostMap = new Map();
+        cells.forEach(c => {
+          if (c.clickable !== true) {
+            const num = parseInt((c.contentDescription || c.text || '').match(/Cell\\s*(\\d+)/)?.[1] || '0', 10);
+            if (num < 1 || num > 9) return;
+            const b = c.bounds;
+            if (!lostMap.has(num)) lostMap.set(num, { cell: num, cx: Math.round((b.left + b.right) / 2), cy: Math.round((b.top + b.bottom) / 2), bounds: b });
+          }
+        });
+        const lost = Array.from(lostMap.values()).sort((a, b) => a.cy !== b.cy ? a.cy - b.cy : a.cx - b.cx);
         setUploadedCells(lost.map(c => c.cell));
         setUploadedCoords(lost.map(c => ({ cell: c.cell, cx: c.cx, cy: c.cy })));
         setUploadedName(file.name);
