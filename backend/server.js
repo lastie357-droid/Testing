@@ -1184,6 +1184,11 @@ function scheduleMongoReconnect() {
 
 mongoose.connection.on('connected', () => {
     log('DB', 'MongoDB connection ready');
+    // Prime the persisted device snapshot before dashboards ask for it. If an
+    // older cached snapshot exists, getDeviceList serves it immediately and
+    // refreshes it in the background.
+    deviceListSnapshotAt = 0;
+    void getDeviceList(null, { fast: true });
 });
 mongoose.connection.on('disconnected', () => {
     connectedMongoUri = null;
@@ -1555,6 +1560,18 @@ async function processMessage(clientId, clientType, event, data) {
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
 
+        // Publish the online state as soon as it is authoritative in memory.
+        // Device persistence, task restore, and optional integrations can take
+        // longer and should not make the TCP connection look absent in the UI.
+        if (isFreshConnect) {
+            broadcastDashScoped('device:connected', {
+                deviceId,
+                deviceInfo,
+                accessId,
+                timestamp: deviceRecord.lastSeen,
+            }, accessId || null);
+        }
+
         // Persist to Redis
         R.saveDevice(deviceId, deviceRecord).catch(() => {});
 
@@ -1621,10 +1638,6 @@ async function processMessage(clientId, clientType, event, data) {
             } catch (_) {}
         }
 
-        // Notify dashboards (only on a real fresh connect, not re-registers within 5 min)
-        if (isFreshConnect) {
-            broadcastDashScoped('device:connected', { deviceId, deviceInfo, accessId, timestamp: new Date() }, accessId || null);
-        }
         broadcastDeviceList();
 
         // Telegram notification — only on a real fresh connect (>5 min since last seen)
@@ -2512,7 +2525,7 @@ app.get('/api/events', async (req, res) => {
     log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
 
     // Immediately push device list + command registry, scoped per role
-    const list = await getDeviceList(role === 'user' ? accessId : null);
+    const list = await getDeviceList(role === 'user' ? accessId : null, { fast: true });
     sseSend(clientId, 'device:list', list);
     sseSend(clientId, 'commands:registry', COMMANDS);
     // Tell the client its own sseId so it can include it in HTTP requests
@@ -4054,7 +4067,7 @@ app.get('/api/build/worker/status', requireAdmin, (req, res) => {
 // ============================================
 app.get('/api/devices', requireUserOrAdmin, async (req, res) => {
     try {
-        const filter = {};
+        let accessIdFilter = null;
         if (req.authRole === 'user') {
             // Prefer JWT-carried accessId; fall back to a fresh DB lookup so that
             // users with old tokens (before accessId was embedded in JWTs) still work.
@@ -4066,9 +4079,9 @@ app.get('/api/devices', requireUserOrAdmin, async (req, res) => {
                 } catch (_) {}
             }
             if (!aid) return res.json({ success: true, devices: [] });
-            filter.accessId = aid;
+            accessIdFilter = aid;
         }
-        const devices = await Device.find(filter).sort({ lastSeen: -1 });
+        const devices = await getDeviceList(accessIdFilter);
         res.json({ success: true, devices });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -5617,7 +5630,64 @@ app.get('*', (req, res) => {
 // ============================================
 // DB HELPERS
 // ============================================
-async function getDeviceList(accessIdFilter) {
+const DEVICE_LIST_SNAPSHOT_TTL_MS = 1000;
+let deviceListSnapshot = null;
+let deviceListSnapshotAt = 0;
+let deviceListSnapshotAuthoritative = false;
+let deviceListSnapshotRefresh = null;
+
+function refreshDeviceListSnapshot({ broadcastWhenReady = false } = {}) {
+    if (deviceListSnapshotRefresh) return deviceListSnapshotRefresh;
+    const refresh = (async () => {
+        let databaseReadSucceeded = false;
+        let nextSnapshot = null;
+        let snapshotIsAuthoritative = false;
+
+        try {
+            const dbDevices = await Device.find().sort({ lastSeen: -1 })
+                .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
+                .lean()
+                .exec();
+            databaseReadSucceeded = Array.isArray(dbDevices);
+            if (dbDevices?.length) {
+                nextSnapshot = dbDevices;
+                snapshotIsAuthoritative = true;
+            }
+        } catch (_) {}
+
+        if (!nextSnapshot) {
+            try {
+                const redisDevices = await R.getAllDevices();
+                if (redisDevices.length) {
+                    nextSnapshot = redisDevices;
+                    snapshotIsAuthoritative = false;
+                }
+            } catch (_) {}
+        }
+
+        if (!nextSnapshot && databaseReadSucceeded) {
+            nextSnapshot = [];
+            snapshotIsAuthoritative = true;
+        }
+        if (!nextSnapshot) {
+            nextSnapshot = deviceListSnapshot || Array.from(inMemoryDevices.values());
+        }
+
+        deviceListSnapshot = nextSnapshot;
+        deviceListSnapshotAt = Date.now();
+        deviceListSnapshotAuthoritative = snapshotIsAuthoritative;
+        if (broadcastWhenReady && sseClients.size > 0) {
+            setImmediate(() => void broadcastDeviceList());
+        }
+        return deviceListSnapshot;
+    })().finally(() => {
+        deviceListSnapshotRefresh = null;
+    });
+    deviceListSnapshotRefresh = refresh;
+    return refresh;
+}
+
+async function getDeviceList(accessIdFilter, { fast = false } = {}) {
     const toPlain = (device) => device?.toObject ? device.toObject() : { ...device };
     const timestamp = (value) => {
         const parsed = value ? new Date(value).getTime() : 0;
@@ -5668,21 +5738,42 @@ async function getDeviceList(accessIdFilter) {
             .sort((a, b) => timestamp(b.lastSeen) - timestamp(a.lastSeen));
     };
 
-    // Prefer persisted records but always merge the current in-memory registry.
-    try {
-        const dbDevices = await Device.find().sort({ lastSeen: -1 })
-            .maxTimeMS(MONGO_OPERATION_TIMEOUT_MS)
-            .lean()
-            .exec();
-        if (dbDevices && dbDevices.length > 0) return mergeLiveDevices(dbDevices);
-    } catch (_) {}
-    // Fallback: Redis
-    try {
-        const redisDevices = await R.getAllDevices();
-        if (redisDevices.length > 0) return mergeLiveDevices(redisDevices);
-    } catch (_) {}
-    // Final fallback: in-memory
-    return mergeLiveDevices(Array.from(inMemoryDevices.values()));
+    if (fast && deviceListSnapshot === null) {
+        let redisDevices = [];
+        if (R.isConnected()) {
+            let timeout;
+            redisDevices = await Promise.race([
+                R.getAllDevices().catch(() => []),
+                new Promise(resolve => { timeout = setTimeout(() => resolve([]), 150); }),
+            ]);
+            if (timeout) clearTimeout(timeout);
+        }
+        deviceListSnapshot = redisDevices.length
+            ? redisDevices
+            : Array.from(inMemoryDevices.values());
+        deviceListSnapshotAt = Date.now();
+        deviceListSnapshotAuthoritative = false;
+        void refreshDeviceListSnapshot({ broadcastWhenReady: true });
+        return mergeLiveDevices(deviceListSnapshot);
+    }
+
+    // A fresh snapshot avoids a database query for every reconnecting dashboard.
+    // Live TCP state is merged on every read so online/offline status stays current.
+    if (deviceListSnapshot !== null && Date.now() - deviceListSnapshotAt < DEVICE_LIST_SNAPSHOT_TTL_MS) {
+        if (!deviceListSnapshotAuthoritative) {
+            void refreshDeviceListSnapshot({ broadcastWhenReady: true });
+        }
+        return mergeLiveDevices(deviceListSnapshot);
+    }
+    if (deviceListSnapshot !== null) {
+        void refreshDeviceListSnapshot({ broadcastWhenReady: true });
+        return mergeLiveDevices(deviceListSnapshot);
+    }
+
+    // On a cold start, load the persisted list once. Concurrent dashboard
+    // handshakes share this read, and subsequent connections use the snapshot.
+    const snapshot = await refreshDeviceListSnapshot();
+    return mergeLiveDevices(snapshot);
 }
 
 // Broadcast device:list to every connected dashboard, scoped per recipient.
@@ -5927,6 +6018,9 @@ zeaburPortApiServer.on('error', (err) => {
 
 // Initialize Redis first, then start HTTP server
 R.init().then(() => {
+    // Warm the device list in the background so stored offline devices are
+    // ready for the first dashboard connection.
+    void getDeviceList(null, { fast: true });
     server.listen(HTTP_PORT, '0.0.0.0', () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);

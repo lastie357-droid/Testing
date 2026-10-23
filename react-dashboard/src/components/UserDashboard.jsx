@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useTcpStream } from '../hooks/useTcpStream.js';
+import { useBatchedDeviceEvents } from '../hooks/useBatchedDeviceEvents.js';
 import Sidebar from './Sidebar.jsx';
 import DeviceControl from './DeviceControl.jsx';
 import Overview from './Overview.jsx';
@@ -179,6 +180,7 @@ export default function UserDashboard({ user, onLogout }) {
   const chunkStreamsRef = useRef({});
   const selectedDeviceRef = useRef(null);
   const streamSenderRef = useRef(null);
+  const enqueueDeviceEvent = useBatchedDeviceEvents(setDevices, setActivityLog);
 
   const updateSelectedDevice = useCallback((deviceId) => {
     if (deviceId === selectedDeviceRef.current) return;
@@ -233,28 +235,13 @@ export default function UserDashboard({ user, onLogout }) {
         setDevices(Array.isArray(data) ? data : []);
         break;
       case 'device:connected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'connect', text: `Device connected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
-        if (data.deviceId && data.deviceInfo) {
-          setDevices(prev => {
-            const exists = prev.find(d => d.deviceId === data.deviceId);
-            if (exists) return prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: true, deviceInfo: { ...(d.deviceInfo || {}), ...data.deviceInfo } } : d);
-            return [...prev, {
-              deviceId: data.deviceId,
-              deviceName: data.deviceInfo.name || data.deviceId,
-              deviceInfo: data.deviceInfo,
-              registeredAt: data.timestamp || new Date().toISOString(),
-              lastSeen: data.timestamp || new Date().toISOString(),
-              isOnline: true,
-            }];
-          });
-        }
+        enqueueDeviceEvent(event, data);
         break;
       case 'device:disconnected':
-        setActivityLog(prev => [{ id: Date.now(), type: 'disconnect', text: `Device disconnected: ${data.deviceId}`, time: new Date() }, ...prev].slice(0, 100));
-        setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: false } : d));
+        enqueueDeviceEvent(event, data);
         break;
       case 'device:heartbeat':
-        setDevices(prev => prev.map(d => d.deviceId === data.deviceId ? { ...d, isOnline: true, lastSeen: data.timestamp } : d));
+        enqueueDeviceEvent(event, data);
         break;
       case 'command:sent':
         setPendingCommands(prev => ({ ...prev, [data.commandId]: data }));

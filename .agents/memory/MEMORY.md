@@ -11,6 +11,7 @@
 - [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
 - [Event-driven accessibility protection](event-driven-accessibility.md) — keep the service bound but sleep expensive node traversal until monitored, unlock, installer, or security-center events.
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.
+- [Device-list snapshots](device-list-snapshot.md) — send cached/live records immediately; refresh Mongo snapshots in the background without hiding offline devices.
 - [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
 - [MongoDB free-tier resilience](mongodb-free-tier-resilience.md) — keep pooled connections bounded per server and fail fast to preserve in-memory/Redis fallbacks during outages.
 - [Redis connection resilience](redis-connection-resilience.md) — keep hosted Redis warm with periodic PINGs, indefinite bounded reconnects, and no startup-wide flush.
