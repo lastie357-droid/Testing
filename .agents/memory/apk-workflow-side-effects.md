@@ -1,13 +1,13 @@
 ---
-name: APK workflow side effects
-description: Generated files and secret rotation behavior to account for when running the APK build workflow.
+name: Workflow side effects
+description: Generated project changes that can result from running or restarting backend and APK workflows.
 ---
 
-The APK build workflow can rewrite tracked build metadata and rotate the backend JWT secret as part of its setup.
+Backend and APK workflow runs can rewrite tracked signing/build metadata, rotate the backend JWT secret, and add Replit port mappings when they discover auxiliary listeners.
 
-**Why:** Running the APK workflow during dashboard work caused unrelated generated changes and a JWT secret mutation after the dashboard verification had already passed.
+**Why:** Workflow setup is not isolated to its configured build command; restarting the backend during dashboard work has also changed signing material and `.replit` port configuration.
 
-**How to apply:** For dashboard-only work, stop the APK workflow before final diff review. If it ran, inspect and restore only the generated side effects before completing the task; never include or expose secret contents.
+**How to apply:** After workflow restarts, inspect generated configuration and signing changes before final review. Keep port mappings only when the exposed listener is required, restore accidental generated changes, and never include or expose secret contents.
 
 APK verification can also be blocked by the shared `/tmp/android-sdk` cache: the workflow may fail while provisioning an NDK or report cached Build Tools as corrupted before compiling source.
 

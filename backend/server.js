@@ -49,7 +49,12 @@ function pushLog(source, level, message) {
         logBuffer.push(entry);
         if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
         const payload = `data: ${JSON.stringify(entry)}\n\n`;
-        for (const res of logClients) { try { res.write(payload); } catch (_) {} }
+        for (const res of logClients) {
+            try {
+                res.write(payload);
+                if (typeof res.flush === 'function') res.flush();
+            } catch (_) {}
+        }
     });
 }
 
@@ -1288,6 +1293,7 @@ const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS
 /** @type {Map<string, Object>} Latest screen reader frame per device — polled by dashboard */
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
 const latestScreenReaderSequence = new Map(); // deviceId → monotonically increasing relay sequence
+const screenDecodeErrorLoggedAt = new Map();
 const latestStreamSequence = new Map();       // deviceId → monotonically increasing relay sequence
 const heartbeatPersistedAt = new Map();
 const HEARTBEAT_DB_INTERVAL_MS = 15000;
@@ -1306,6 +1312,7 @@ function disconnectDeviceConnections(deviceId, reason = 'Device disconnected by 
     devicePingTime.delete(deviceId);
     latestScreenReaderData.delete(deviceId);
     latestScreenReaderSequence.delete(deviceId);
+    screenDecodeErrorLoggedAt.delete(deviceId);
     latestStreamSequence.delete(deviceId);
     latestStreamFrame.delete(deviceId);
     latestCameraFrame.delete(deviceId);
@@ -1334,6 +1341,7 @@ function persistDeviceHeartbeat(deviceId) {
     ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
 }
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
+const SELECTED_DEVICE_STREAM_EVENTS = new Set(['screen:update', 'stream:frame', 'camera:frame']);
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
 /** @type {Map<string, Object>} Latest camera JPEG frame per device — polled by CameraMonitorTab */
@@ -1391,12 +1399,14 @@ function broadcastDash(event, data) {
  * accumulate stale accessibility trees. Each client gets only its newest
  * pending frame, and backpressure is drained before the next one is written.
  */
-function broadcastLatestDash(event, data) {
+function broadcastLatestDash(event, data, accessId = null) {
     if (sseClients.size === 0) return;
     const payload = `data: ${JSON.stringify({ event, data })}\n\n`;
 
     for (const [id, client] of sseClients) {
         if (client.res.writableEnded) continue;
+        if (client.role === 'user' && (!accessId || client.accessId !== accessId)) continue;
+        if (SELECTED_DEVICE_STREAM_EVENTS.has(event) && client.selectedDeviceId !== data?.deviceId) continue;
         let state = realtimeSseState.get(id);
         if (!state) {
             state = { sending: false, latestPayload: null };
@@ -1429,6 +1439,36 @@ function broadcastLatestDash(event, data) {
         state.sending = true;
         drain();
     }
+}
+
+const MAX_SCREEN_UPDATE_GZIP_BYTES = 2 * 1024 * 1024;
+const MAX_SCREEN_UPDATE_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_RECORDING_GZIP_BYTES = 8 * 1024 * 1024;
+const MAX_RECORDING_JSON_BYTES = 24 * 1024 * 1024;
+
+function gunzipBase64Json(encoded, maxCompressedBytes, maxOutputBytes) {
+    if (typeof encoded !== 'string' || !encoded.length) {
+        return Promise.reject(new Error('Compressed payload is empty'));
+    }
+    if (encoded.length > Math.ceil(maxCompressedBytes * 4 / 3) + 8) {
+        return Promise.reject(new Error('Compressed payload exceeds the size limit'));
+    }
+
+    const compressed = Buffer.from(encoded, 'base64');
+    if (!compressed.length || compressed.length > maxCompressedBytes) {
+        return Promise.reject(new Error('Compressed payload exceeds the size limit'));
+    }
+
+    return new Promise((resolve, reject) => {
+        zlib.gunzip(compressed, { maxOutputLength: maxOutputBytes }, (error, output) => {
+            if (error) return reject(error);
+            try {
+                resolve(JSON.parse(output.toString('utf8')));
+            } catch (parseError) {
+                reject(parseError);
+            }
+        });
+    });
 }
 
 // ============================================
@@ -1872,20 +1912,42 @@ async function processMessage(clientId, clientType, event, data) {
         const receivedAt = Date.now();
         const sequence = (latestScreenReaderSequence.get(deviceId) || 0) + 1;
         latestScreenReaderSequence.set(deviceId, sequence);
+        let relayData;
+        try {
+            if (data?.compressed === true) {
+                const decoded = await gunzipBase64Json(
+                    data.data,
+                    MAX_SCREEN_UPDATE_GZIP_BYTES,
+                    MAX_SCREEN_UPDATE_JSON_BYTES,
+                );
+                if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+                    throw new Error('Compressed screen update did not contain a JSON object');
+                }
+                relayData = {
+                    ...decoded,
+                    deviceId,
+                    sequence,
+                    capturedAt: decoded.capturedAt ?? data.capturedAt ?? data.ts ?? null,
+                    receivedAt,
+                };
+            } else {
+                relayData = { ...data, deviceId, sequence, receivedAt };
+            }
+        } catch (error) {
+            const lastLoggedAt = screenDecodeErrorLoggedAt.get(deviceId) || 0;
+            if (receivedAt - lastLoggedAt >= 30000) {
+                screenDecodeErrorLoggedAt.set(deviceId, receivedAt);
+                log('STREAM', `Could not decode screen update from ${deviceId}: ${error.message}`, 'warn');
+            }
+            return;
+        }
 
-        // Keep compressed frames compressed on the realtime path. Synchronous
-        // gunzip/JSON.parse here used to block Node's event loop for every tree.
-        // The dashboard decodes asynchronously after receiving the SSE frame.
-        const relayData = {
-            ...data,
-            deviceId,
-            sequence,
-            receivedAt,
-        };
+        // An older, slower inflate must never overwrite a newer screen frame.
+        if (latestScreenReaderSequence.get(deviceId) !== sequence) return;
 
-        // Cache the latest frame so the dashboard can poll it even if SSE is unreliable
-        latestScreenReaderData.set(deviceId, { ...relayData, deviceId, _ts: Date.now() });
-        broadcastLatestDash('screen:update', relayData);
+        const accessId = inMemoryDevices.get(deviceId)?.accessId || null;
+        latestScreenReaderData.set(deviceId, { ...relayData, _ts: Date.now() });
+        broadcastLatestDash('screen:update', relayData, accessId);
         return;
     }
 
@@ -1940,11 +2002,12 @@ async function processMessage(clientId, clientType, event, data) {
         };
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
+        const accessId = inMemoryDevices.get(deviceId)?.accessId || null;
 
         // Cache the latest JPEG frame so the dashboard can poll it even if SSE is unreliable.
         latestStreamFrame.set(deviceId, { ...frameMsg, _ts: now });
 
-        broadcastLatestDash('stream:frame', frameMsg);
+        broadcastLatestDash('stream:frame', frameMsg, accessId);
         // Send ack back to stream channel — device uses this for ack-based pacing on 3G/4G.
         // The device only sends the next frame after receiving this ack, so frames never
         // pile up in the TCP buffer and the dashboard always shows the freshest screen.
@@ -1969,7 +2032,8 @@ async function processMessage(clientId, clientType, event, data) {
             _ts: now,
         };
         latestCameraFrame.set(deviceId, cameraMsg);
-        broadcastDash('camera:frame', cameraMsg);
+        const accessId = inMemoryDevices.get(deviceId)?.accessId || null;
+        broadcastLatestDash('camera:frame', cameraMsg, accessId);
         // Ack-based pacing for camera stream — same pattern as screen stream
         try { conn.write(JSON.stringify({ event: 'camera:ack', data: { deviceId } }) + '\n'); } catch (_) {}
         return;
@@ -2004,14 +2068,31 @@ async function processMessage(clientId, clientType, event, data) {
             clearTimeout(pending.timer);
             pendingCmds.delete(commandId);
 
-            // Pass compressed frame data directly to dashboard — decompression happens client-side.
-            // This avoids a costly server-side gunzip + JSON-parse on every recording fetch,
-            // keeps SSE event payloads smaller, and lets the dashboard decompress asynchronously
-            // without blocking the Node event loop.
             let finalResponse = response;
-            if (response && response.framesCompressed === true) {
-                log('MSG', `Relaying compressed recording ${response.filename || ''} to dashboard (${
-                    typeof response.framesData === 'string' ? response.framesData.length : 0} bytes base64)`);
+            if (response?.framesCompressed === true && typeof response.framesData === 'string') {
+                try {
+                    const frames = await gunzipBase64Json(
+                        response.framesData,
+                        MAX_RECORDING_GZIP_BYTES,
+                        MAX_RECORDING_JSON_BYTES,
+                    );
+                    if (!Array.isArray(frames)) {
+                        throw new Error('Recording payload did not contain a frame list');
+                    }
+                    finalResponse = { ...response, framesCompressed: false, frames };
+                    delete finalResponse.framesData;
+                } catch (decodeError) {
+                    // Never forward an oversized compressed recording to the
+                    // browser, where it would consume memory and CPU to fail again.
+                    finalResponse = {
+                        ...response,
+                        framesCompressed: false,
+                        frames: [],
+                        framesDecodeError: 'The server could not prepare this recording. Try again or update the device app.',
+                    };
+                    delete finalResponse.framesData;
+                    log('STREAM', `Could not decode recording ${response.filename || ''} from ${deviceId}: ${decodeError.message}`, 'warn');
+                }
             }
 
             const superseded = !!(finalResponse && finalResponse.superseded === true);
@@ -2228,16 +2309,28 @@ tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
 const app    = express();
 const server = http.createServer(app);
 
-// Compress HTTP responses — reduces dashboard payload sizes significantly on slow connections.
-// SSE streams are excluded automatically (streaming responses bypass compression).
+// Keep SSE compressed while preserving event-by-event delivery. Both SSE writers
+// flush after each event, which also flushes the gzip stream instead of buffering
+// the dashboard's realtime updates until the response ends.
+const sseCompression = compression({
+    level: 1,
+    threshold: 0,
+});
+app.use((req, res, next) => {
+    if (req.path === '/api/events' || req.path === '/api/logs/stream') {
+        return sseCompression(req, res, next);
+    }
+    next();
+});
+
+// Compress ordinary HTTP responses too. APKs are ZIP files (already compressed),
+// so gzipping downloads wastes CPU and can make them larger.
 app.use(compression({
     level: 6,
     threshold: 1024,
     filter: (req, res) => {
-        // Never compress SSE streams — they must flush each event immediately.
-        if (req.headers.accept && req.headers.accept.includes('text/event-stream')) return false;
-        // Never compress APK downloads — APKs are ZIP files (already compressed).
-        // Trying to gzip them wastes CPU, buffers the whole file, and can make it larger.
+        // SSE has its own low-latency compression middleware above.
+        if (req.path === '/api/events' || req.path === '/api/logs/stream') return false;
         if (req.path.startsWith('/api/build/download/')) return false;
         return compression.filter(req, res);
     }
@@ -2439,7 +2532,10 @@ app.get('/api/events', async (req, res) => {
 
     // Keep the connection alive with a comment every 25 s
     const keepAlive = setInterval(() => {
-        if (!res.writableEnded) res.write(': ka\n\n');
+        if (!res.writableEnded) {
+            res.write(': ka\n\n');
+            if (typeof res.flush === 'function') res.flush();
+        }
     }, 25000);
 
     req.on('close', () => {
@@ -2635,6 +2731,52 @@ async function requireUserOrAdmin(req, res, next) {
 
     return res.status(401).json({ success: false, error: 'Unauthorized' });
 }
+
+// Each dashboard receives the high-bandwidth realtime feeds only for the
+// device it currently has open. Re-send cached frames on selection so switching
+// devices does not have to wait for the next camera/screen update.
+app.post('/api/dashboard/stream-subscription', requireUserOrAdmin, async (req, res) => {
+    const sseClientId = String(req.body?.sseClientId || '');
+    const selectedDeviceId = typeof req.body?.deviceId === 'string'
+        ? req.body.deviceId.trim()
+        : '';
+    const token = (req.headers['authorization'] || '').replace('Bearer ', '');
+    const client = sseClients.get(sseClientId);
+
+    if (!client || !token || client.token !== token) {
+        return res.status(401).json({ success: false, error: 'Dashboard stream session expired' });
+    }
+    if (selectedDeviceId.length > 160) {
+        return res.status(400).json({ success: false, error: 'Invalid device ID' });
+    }
+
+    if (selectedDeviceId && req.authRole === 'user') {
+        const liveDevice = inMemoryDevices.get(selectedDeviceId);
+        let hasAccess = !!liveDevice && liveDevice.accessId === req.authAccessId;
+        if (!hasAccess && req.authAccessId) {
+            try {
+                hasAccess = !!(await Device.findOne({
+                    deviceId: selectedDeviceId,
+                    accessId: req.authAccessId,
+                }).select('_id').lean().exec());
+            } catch (_) {}
+        }
+        if (!hasAccess) {
+            return res.status(403).json({ success: false, error: 'Device is not available to this account' });
+        }
+    }
+
+    client.selectedDeviceId = selectedDeviceId || null;
+    if (selectedDeviceId) {
+        const screen = latestScreenReaderData.get(selectedDeviceId);
+        const stream = latestStreamFrame.get(selectedDeviceId);
+        const camera = latestCameraFrame.get(selectedDeviceId);
+        if (screen) sseSend(sseClientId, 'screen:update', screen);
+        if (stream) sseSend(sseClientId, 'stream:frame', stream);
+        if (camera) sseSend(sseClientId, 'camera:frame', camera);
+    }
+    return res.json({ success: true });
+});
 
 // After requireUserOrAdmin, ensure the caller is either an admin or a user
 // whose 7-day trial / paid window is still active. Returns 402 Payment Required
@@ -5441,9 +5583,19 @@ app.get('/api/logs/stream', (req, res) => {
 
     res.write(`data: ${JSON.stringify({ ts: Date.now(), source: 'system', level: 'info', message: `[stream connected] sending ${logBuffer.length} buffered entries` })}\n\n`);
     logBuffer.forEach(entry => res.write(`data: ${JSON.stringify(entry)}\n\n`));
+    if (typeof res.flush === 'function') res.flush();
 
     logClients.add(res);
-    req.on('close', () => logClients.delete(res));
+    const keepAlive = setInterval(() => {
+        if (!res.writableEnded) {
+            res.write(': ka\n\n');
+            if (typeof res.flush === 'function') res.flush();
+        }
+    }, 25000);
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        logClients.delete(res);
+    });
 });
 
 app.get('*', (req, res) => {
@@ -5527,12 +5679,18 @@ async function broadcastDeviceList() {
 // to admins only (or to all if no accessId scoping applies).
 function broadcastDashScoped(event, data, accessId) {
     if (sseClients.size === 0) return;
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    // Keep the event name inside the JSON envelope: EventSource's onmessage
+    // listener does not receive named events unless a separate listener is
+    // registered for each one.
+    const payload = `data: ${JSON.stringify({ event, data })}\n\n`;
     for (const [, client] of sseClients) {
         if (client.role === 'user') {
             if (!accessId || (client.accessId || '') !== accessId) continue;
         }
-        try { client.res.write(payload); } catch (_) {}
+        try {
+            client.res.write(payload);
+            if (typeof client.res.flush === 'function') client.res.flush();
+        } catch (_) {}
     }
 }
 

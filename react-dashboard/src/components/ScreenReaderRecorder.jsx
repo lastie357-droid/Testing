@@ -79,28 +79,6 @@ function renderFrameElements(screenData, devW, devH) {
     });
 }
 
-async function decompressFramesData(base64Data) {
-  const binary = atob(base64Data);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const stream = new DecompressionStream('gzip');
-  const writer = stream.writable.getWriter();
-  writer.write(bytes);
-  writer.close();
-  const chunks = [];
-  const reader = stream.readable.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  const total = chunks.reduce((acc, c) => acc + c.length, 0);
-  const out = new Uint8Array(total);
-  let pos = 0;
-  for (const c of chunks) { out.set(c, pos); pos += c.length; }
-  return JSON.parse(new TextDecoder().decode(out));
-}
-
 export default function ScreenReaderRecorder({ device, sendCommand, results, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -123,6 +101,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [lastFetched, setLastFetched] = useState(null);
   const [loadingFile, setLoadingFile] = useState({});
+  const [recordingLoadError, setRecordingLoadError] = useState(null);
   const seenResultIds = useRef(new Set());
 
   // ── Playback ──
@@ -195,6 +174,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
 
         if (r.command === 'get_screen_recording' && data.filename) {
           const buildAndStore = (frames) => {
+            setRecordingLoadError(null);
             const rec = {
               id:         data.filename,
               filename:   data.filename,
@@ -213,12 +193,11 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             setPendingPlay(data.filename);
           };
 
-          if (data.framesCompressed && data.framesData) {
-            decompressFramesData(data.framesData)
-              .then(frames => buildAndStore(Array.isArray(frames) ? frames : []))
-              .catch(() => {
-                setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
-              });
+          if (data.framesDecodeError || data.framesCompressed) {
+            setRecordingLoadError(
+              data.framesDecodeError || 'The server could not prepare this recording. Try again.',
+            );
+            setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
           } else if (data.frames) {
             buildAndStore(data.frames);
           }
@@ -733,6 +712,29 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             {loadingRecs ? 'Loading…' : 'Get Recordings'}
           </button>
         </div>
+
+        {recordingLoadError && (
+          <div
+            role="alert"
+            style={{
+              padding: '9px 12px',
+              borderRadius: 8,
+              border: '1px solid rgba(248,113,113,0.35)',
+              background: 'rgba(127,29,29,0.22)',
+              color: '#fca5a5',
+              fontSize: 11,
+            }}
+          >
+            {recordingLoadError}
+            <button
+              type="button"
+              onClick={() => setRecordingLoadError(null)}
+              style={{ float: 'right', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Info banner when device is recording */}
         {deviceRecording && (

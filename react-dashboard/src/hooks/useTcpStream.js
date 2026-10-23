@@ -22,8 +22,26 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
   const generationRef = useRef(0);
   const disposedRef   = useRef(false);
   const sseIdRef      = useRef(null);   // assigned by server via session:init
+  const selectedDeviceRef = useRef(null);
+  const syncStreamSubscriptionRef = useRef(null);
   const onMessageRef  = useRef(onMessage);
   onMessageRef.current = onMessage;
+
+  const syncStreamSubscription = useCallback((token, sseClientId) => {
+    if (!token || !sseClientId) return;
+    fetch('/api/dashboard/stream-subscription', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sseClientId,
+        deviceId: selectedDeviceRef.current,
+      }),
+    }).catch(() => {});
+  }, []);
+  syncStreamSubscriptionRef.current = syncStreamSubscription;
 
   const connect = useCallback(() => {
     if (disposedRef.current) return;
@@ -60,6 +78,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
         if (msg.event === 'session:init' && msg.data?.sseClientId) {
           sseIdRef.current = msg.data.sseClientId;
           sessionStorage.setItem('sseClientId', msg.data.sseClientId);
+          syncStreamSubscriptionRef.current?.(token, msg.data.sseClientId);
         }
         onMessageRef.current(msg.event, msg.data);
       } catch (_) {}
@@ -136,6 +155,14 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
         .catch(err => {
           onMessageRef.current('command:error', { message: err.message });
         });
+      return;
+    }
+
+    // Subscribe the backend to only the selected device's high-bandwidth
+    // screen/camera feeds. The latest cached frame is replayed on selection.
+    if (event === 'dashboard:select-device') {
+      selectedDeviceRef.current = data?.deviceId || null;
+      syncStreamSubscriptionRef.current?.(token, sseIdRef.current);
       return;
     }
 

