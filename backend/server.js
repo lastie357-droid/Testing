@@ -2427,7 +2427,7 @@ app.post('/api/admin/login', (req, res) => {
     }
     const adminUser = (process.env.ADMIN_USERNAME || '').trim();
     const adminPass = (process.env.ADMIN_PASSWORD || '').trim();
-    log('AUTH', `Admin login attempt — user="${username}" configured=${!!adminUser && !!adminPass}`);
+    log('AUTH', `Admin login attempt — credentials configured=${!!adminUser && !!adminPass}`);
     if (!adminUser || !adminPass) {
         log('AUTH', 'ADMIN_USERNAME/ADMIN_PASSWORD not set in environment', 'error');
         return res.status(500).json({ success: false, error: 'Admin credentials not configured on server.' });
@@ -2436,7 +2436,7 @@ app.post('/api/admin/login', (req, res) => {
         const token = crypto.randomBytes(32).toString('hex');
         if (!global._adminTokens) global._adminTokens = new Map();
         global._adminTokens.set(token, Date.now() + 86400000);
-        log('AUTH', `Admin login successful for "${username}"`);
+        log('AUTH', 'Admin login successful');
         return res.json({ success: true, token });
     }
     log('AUTH', `Admin login failed — credentials mismatch`, 'warn');
