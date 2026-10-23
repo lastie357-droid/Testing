@@ -200,7 +200,6 @@ function PatternDrawer({ onSend, isOnline, sizePreset }) {
       return { nx: x / FRAME_W, ny: y / FRAME_H, node: idx };
     });
     onSend(nodes, sequence);
-    setSequence([]);
   };
 
   const buildPath = (seq) => {
