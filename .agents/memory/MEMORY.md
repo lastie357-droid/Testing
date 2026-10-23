@@ -20,3 +20,4 @@
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
 - [SSE streaming](sse-streaming.md) — keep SSE uncompressed and attach disconnect cleanup before awaited history replay.
 - [Backend TCP reconnect grace](backend-tcp-reconnect-grace.md) — defer offline broadcasts while a replacement primary registration is in flight.
+- [Pattern upload storage](pattern-upload-storage.md) — save device-scoped metadata only; keep uploaded pattern cells and file contents out of persistent storage.

