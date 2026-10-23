@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function StatusBar({ connected, reconnecting, deviceCount, onLogout }) {
+export default function StatusBar({ connected, reconnecting, deviceCount, devicesLoaded = true, onLogout }) {
   return (
     <div className="status-bar">
       <span className="logo">⚡ CONTROL PANEL</span>
@@ -9,7 +9,7 @@ export default function StatusBar({ connected, reconnecting, deviceCount, onLogo
         {connected ? 'Server Connected' : reconnecting ? 'Reconnecting...' : 'Disconnected'}
       </span>
       <span style={{ color: '#94a3b8', fontSize: 13 }}>
-        📱 {deviceCount} device{deviceCount !== 1 ? 's' : ''} online
+        {devicesLoaded ? `📱 ${deviceCount} device${deviceCount !== 1 ? 's' : ''} online` : '📱 Loading device list…'}
       </span>
       <button
         onClick={onLogout}

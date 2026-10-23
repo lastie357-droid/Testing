@@ -14,6 +14,7 @@ export default function Overview({
   onBulkDeviceAction,
   bulkActionBusy,
   connected,
+  devicesLoaded = true,
 }) {
   const online = devices.filter(d => d.isOnline).length;
   const blocked = devices.filter(d => d.blocked).length;
@@ -46,11 +47,11 @@ export default function Overview({
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-label">Total Devices</div>
-          <div className="stat-value">{devices.length}</div>
+          <div className="stat-value">{devicesLoaded ? devices.length : '—'}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Online Now</div>
-          <div className="stat-value" style={{ color: online > 0 ? '#22c55e' : '#ef4444' }}>{online}</div>
+          <div className="stat-value" style={{ color: online > 0 ? '#22c55e' : '#ef4444' }}>{devicesLoaded ? online : '—'}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Server Status</div>
@@ -60,9 +61,14 @@ export default function Overview({
         </div>
         <div className="stat-card">
           <div className="stat-label">Offline Devices</div>
-          <div className="stat-value" style={{ color: '#94a3b8' }}>{devices.length - online}</div>
+          <div className="stat-value" style={{ color: '#94a3b8' }}>{devicesLoaded ? devices.length - online : '—'}</div>
         </div>
       </div>
+      {!devicesLoaded && (
+        <div role="status" style={{ margin: '0 0 18px', color: '#94a3b8', fontSize: 12 }}>
+          Waiting for the live device snapshot…
+        </div>
+      )}
 
       <div style={{
         marginBottom: 24,

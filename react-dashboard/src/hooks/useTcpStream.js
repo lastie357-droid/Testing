@@ -65,6 +65,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
 
     es.onopen = () => {
       if (generation !== generationRef.current || disposedRef.current) return;
+    onMessageRef.current('sse:connected', {});
       setConnected(true);
       setReconnecting(false);
       clearTimeout(retryRef.current);
@@ -86,6 +87,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
 
     es.onerror = () => {
       if (generation !== generationRef.current || disposedRef.current) return;
+    onMessageRef.current('sse:disconnected', {});
       setConnected(false);
       setReconnecting(true);
       es.close();

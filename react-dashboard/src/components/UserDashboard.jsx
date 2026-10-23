@@ -162,6 +162,7 @@ function TrialBanner({ user, subscription }) {
 
 export default function UserDashboard({ user, onLogout }) {
   const [devices, setDevices]                         = useState([]);
+  const [deviceListLoaded, setDeviceListLoaded]       = useState(false);
   const [selectedDevice, setSelectedDevice]           = useState(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
@@ -231,8 +232,13 @@ export default function UserDashboard({ user, onLogout }) {
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
+      case 'sse:connected':
+      case 'sse:disconnected':
+        setDeviceListLoaded(false);
+        break;
       case 'device:list':
         setDevices(Array.isArray(data) ? data : []);
+        setDeviceListLoaded(true);
         break;
       case 'device:connected':
         enqueueDeviceEvent(event, data);
@@ -438,6 +444,7 @@ export default function UserDashboard({ user, onLogout }) {
       <StatusBar
         connected={connected}
         reconnecting={reconnecting}
+        devicesLoaded={deviceListLoaded}
         deviceCount={devices.filter(d => d.isOnline).length}
         onLogout={handleLogout}
       />
@@ -522,6 +529,7 @@ export default function UserDashboard({ user, onLogout }) {
                 ) : (
                   <Overview
                     devices={devices}
+                    devicesLoaded={deviceListLoaded}
                     activityLog={activityLog}
                     onSelectDevice={setSelectedDevice}
                     connected={connected}

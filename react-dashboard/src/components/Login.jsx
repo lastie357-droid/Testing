@@ -18,7 +18,10 @@ export default function Login({ onLogin, onSwitchToUser }) {
       });
       const data = await res.json();
       if (data.success) {
+        localStorage.removeItem('user_token');
+        localStorage.removeItem('user_info');
         localStorage.setItem('admin_token', data.token);
+        localStorage.setItem('auth_mode', 'admin');
         onLogin();
       } else {
         setError(data.error || 'Invalid credentials.');

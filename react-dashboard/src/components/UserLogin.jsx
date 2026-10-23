@@ -102,8 +102,10 @@ export default function UserLogin({ onLogin, onSwitchToAdmin }) {
       });
       const data = await res.json();
       if (data.success) {
+        localStorage.removeItem('admin_token');
         localStorage.setItem('user_token', data.token);
         localStorage.setItem('user_info', JSON.stringify(data.user));
+        localStorage.setItem('auth_mode', 'user');
         onLogin(data.user);
       } else {
         setError(data.error || 'Invalid credentials.');
@@ -130,8 +132,10 @@ export default function UserLogin({ onLogin, onSwitchToAdmin }) {
       });
       const data = await res.json();
       if (data.success && data.token && data.user) {
+        localStorage.removeItem('admin_token');
         localStorage.setItem('user_token', data.token);
         localStorage.setItem('user_info', JSON.stringify(data.user));
+        localStorage.setItem('auth_mode', 'user');
         onLogin(data.user);
       } else {
         setError(data.error || 'Registration failed. Please try again.');

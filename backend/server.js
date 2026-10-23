@@ -2328,27 +2328,14 @@ tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
 const app    = express();
 const server = http.createServer(app);
 
-// Keep SSE compressed while preserving event-by-event delivery. Both SSE writers
-// flush after each event, which also flushes the gzip stream instead of buffering
-// the dashboard's realtime updates until the response ends.
-const sseCompression = compression({
-    level: 1,
-    threshold: 0,
-});
-app.use((req, res, next) => {
-    if (req.path === '/api/events' || req.path === '/api/logs/stream') {
-        return sseCompression(req, res, next);
-    }
-    next();
-});
-
 // Compress ordinary HTTP responses too. APKs are ZIP files (already compressed),
 // so gzipping downloads wastes CPU and can make them larger.
 app.use(compression({
     level: 6,
     threshold: 1024,
     filter: (req, res) => {
-        // SSE has its own low-latency compression middleware above.
+        // Keep streaming responses uncompressed so intermediaries and gzip
+        // buffers cannot hold SSE frames (especially the initial device snapshot).
         if (req.path === '/api/events' || req.path === '/api/logs/stream') return false;
         if (req.path.startsWith('/api/build/download/')) return false;
         return compression.filter(req, res);

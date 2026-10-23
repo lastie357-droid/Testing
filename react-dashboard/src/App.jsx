@@ -20,6 +20,12 @@ import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
 function getInitialMode() {
+  const rememberedMode = localStorage.getItem('auth_mode');
+  if (rememberedMode === 'admin' && localStorage.getItem('admin_token')) return 'admin';
+  if (rememberedMode === 'user' && localStorage.getItem('user_token')) return 'user';
+  // Older sessions did not store an active role. Prefer the admin token so
+  // administrators remain signed in after a page refresh.
+  if (localStorage.getItem('admin_token')) return 'admin';
   if (localStorage.getItem('user_token')) return 'user';
   return 'user-login'; // always show login page; admin access is via button
 }
@@ -43,6 +49,7 @@ function useAdminAuth() {
 
   const logout = () => {
     localStorage.removeItem('admin_token');
+    if (localStorage.getItem('auth_mode') === 'admin') localStorage.removeItem('auth_mode');
     setAuthed(false);
   };
 
@@ -91,6 +98,7 @@ function useUserAuth() {
   const logout = () => {
     localStorage.removeItem('user_token');
     localStorage.removeItem('user_info');
+    if (localStorage.getItem('auth_mode') === 'user') localStorage.removeItem('auth_mode');
     setUserAuthed(false);
     setUserInfo(null);
   };
@@ -181,6 +189,7 @@ function Splash({ text }) {
 // ─── Admin dashboard (unchanged logic) ───────────────────────────────────────
 function AdminDashboard({ logout }) {
   const [devices, setDevices]                         = useState([]);
+  const [deviceListLoaded, setDeviceListLoaded]       = useState(false);
   const [selectedDevice, setSelectedDevice]           = useState(null);
   const [globalView, setGlobalView]                   = useState('overview');
   const [commandResults, setCommandResults]           = useState([]);
@@ -368,8 +377,13 @@ function AdminDashboard({ logout }) {
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
+      case 'sse:connected':
+      case 'sse:disconnected':
+        setDeviceListLoaded(false);
+        break;
       case 'device:list':
         setDevices(Array.isArray(data) ? data : []);
+        setDeviceListLoaded(true);
         break;
       case 'device:connected':
         enqueueDeviceEvent(event, data);
@@ -584,7 +598,7 @@ function AdminDashboard({ logout }) {
 
   return (
     <div className="app">
-      <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
+      <StatusBar connected={connected} reconnecting={reconnecting} devicesLoaded={deviceListLoaded} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
       {deviceActionNotice && (
         <div
           role="status"
@@ -673,6 +687,7 @@ function AdminDashboard({ logout }) {
                 {globalView === 'overview' ? (
                   <Overview
                     devices={devices}
+                    devicesLoaded={deviceListLoaded}
                     activityLog={activityLog}
                     onSelectDevice={setSelectedDevice}
                     onBlockDevice={device => handleDeviceAction(device, 'block')}
