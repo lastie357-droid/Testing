@@ -953,7 +953,7 @@ main()
       `${cleanup.failed} cleanup failures.`,
     );
     primaryClients = [];
-    streamClient = null;
+    streamClients = [];
     feed = null;
 
     if (cleanup.failed) {

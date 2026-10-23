@@ -18,4 +18,5 @@
 - [Chunked command acknowledgements](chunked-command-results.md) — streamed device commands emit a transport ack and a separate completed aggregate; UI consumers must distinguish both.
 - [Backend and dashboard scope](backend-frontend-scope.md) — keep integration work in backend and React dashboard, preserve required APIs, and leave Android sources untouched.
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
-- [SSE streaming](sse-streaming.md) — keep dashboard SSE uncompressed; gzip buffering can delay the initial device snapshot even when the connection returns HTTP 200.
+- [SSE streaming](sse-streaming.md) — keep SSE uncompressed and attach disconnect cleanup before awaited history replay.
+- [Backend TCP reconnect grace](backend-tcp-reconnect-grace.md) — defer offline broadcasts while a replacement primary registration is in flight.
