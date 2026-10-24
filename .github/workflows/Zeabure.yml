@@ -61,11 +61,17 @@ jobs:
 
           docker run --detach --name "$container" \
             --publish 5000:5000 \
+            --publish 7500:7500 \
+            --publish 8070:8070 \
             "${IMAGE}:${GITHUB_SHA}"
 
           for attempt in {1..30}; do
-            if curl --fail --silent --show-error \
-              --max-time 3 http://127.0.0.1:5000/api/health >/tmp/health.json; then
+            if curl --fail --silent --show-error --max-time 3 \
+              http://127.0.0.1:5000/api/health >/tmp/health.json \
+              && curl --fail --silent --show-error --max-time 3 \
+                http://127.0.0.1:7500/api/health >/dev/null \
+              && curl --fail --silent --show-error --max-time 3 \
+                http://127.0.0.1:8070/api >/dev/null; then
               cat /tmp/health.json
               exit 0
             fi

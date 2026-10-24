@@ -6536,11 +6536,7 @@ zeaburPortApiServer.on('error', (err) => {
     log('HTTP', `Zeabur endpoint API port ${ZEABUR_PORT_API_PORT} error: ${err.message}`, 'warn');
 });
 
-// Initialize Redis first, then start HTTP server
-R.init().then(() => {
-    // Warm the device list in the background so stored offline devices are
-    // ready for the first dashboard connection.
-    void getDeviceList(null, { fast: true });
+function startDashboard() {
     server.listen(HTTP_PORT, '0.0.0.0', () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
@@ -6551,16 +6547,14 @@ R.init().then(() => {
         _logBuildWorkerStatus();
         _syncGitHubCallbackSecrets().catch(e => log('BUILD', `[GH-SYNC] Unexpected error: ${e.message}`, 'warn'));
     });
-}).catch((err) => {
-    log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
-    server.listen(HTTP_PORT, '0.0.0.0', () => {
-        log('HTTP', `Server running on port ${HTTP_PORT}`);
-        log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
-        log('TCP',  `Android devices → localhost:${TCP_PORT}`);
-        _logBuildWorkerStatus();
-        _syncGitHubCallbackSecrets().catch(e => log('BUILD', `[GH-SYNC] Unexpected error: ${e.message}`, 'warn'));
-    });
-});
+}
+
+// Bind immediately so slow external Redis or MongoDB providers cannot hold the
+// first public request hostage. Optional services warm in the background.
+startDashboard();
+void R.init()
+    .then(() => void getDeviceList(null, { fast: true }))
+    .catch((err) => log('REDIS', `Init error: ${err.message} — continuing without Redis`, 'warn'));
 
 let shutdownPromise = null;
 async function gracefulShutdown(signal, exitCode = 0) {

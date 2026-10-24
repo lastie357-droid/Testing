@@ -39,8 +39,11 @@ pkgs.dockerTools.streamLayeredImage {
     ];
     ExposedPorts = {
       "5000/tcp" = {};
-      "7000/tcp" = {};
+      "6000/tcp" = {};
       "6009/tcp" = {};
+      "7000/tcp" = {};
+      "7500/tcp" = {};
+      "8070/tcp" = {};
     };
   };
 }
