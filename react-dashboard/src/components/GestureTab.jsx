@@ -817,6 +817,7 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [detectedBox, setDetectedBox]   = useState(null);
   const pendingPatternRef               = useRef(null);
   const waitingForScreenRef             = useRef(false);
+  const pendingSwipeLabelsRef            = useRef([]);
 
   // ── Live Stream ────────────────────────────────────────────────────────────
   const [liveActive, setLiveActive]           = useState(false);
@@ -911,6 +912,12 @@ export default function GestureTab({ device, sendCommand, results }) {
       }
       if (r.command === 'gesture_draw_pattern') {
         status(data.success ? 'Pattern sent to device' : 'Pattern failed: ' + (data.error || ''));
+      }
+      if (r.command === 'swipe' && pendingSwipeLabelsRef.current.length) {
+        const swipeLabel = pendingSwipeLabelsRef.current.shift();
+        status(data.success
+          ? `${swipeLabel} completed on device.`
+          : `${swipeLabel} failed: ` + (data.error || 'The device rejected the gesture.'));
       }
 
       // Live Stream responses
@@ -1042,6 +1049,31 @@ export default function GestureTab({ device, sendCommand, results }) {
         }
       }, 1000);
     }, 1000);
+  }
+
+  function sendVerticalSwipe(label, startRatio, endRatio, duration) {
+    if (!isOnline) return;
+
+    // Use Screen Reader's existing swipe command with a path based on the
+    // current device dimensions; Long Swipe uses a wider, slower path.
+    const midX = Math.round(deviceW / 2);
+    pendingSwipeLabelsRef.current.push(label);
+    sendCmd('swipe', {
+      x1: midX,
+      y1: Math.round(deviceH * startRatio),
+      x2: midX,
+      y2: Math.round(deviceH * endRatio),
+      duration,
+    });
+    status(`Sending ${label} across the ${deviceW}×${deviceH} device screen…`);
+  }
+
+  function sendSwipeUp() {
+    sendVerticalSwipe('Swipe Up', 0.8, 0.2, 400);
+  }
+
+  function sendLongSwipe() {
+    sendVerticalSwipe('Long Swipe', 0.9, 0.1, 700);
   }
 
   function replay(filename) {
@@ -1318,6 +1350,28 @@ export default function GestureTab({ device, sendCommand, results }) {
                 title="Turn on / wake the device screen"
               >
                 💡 Wake Screen
+              </button>
+              <button
+                onClick={sendSwipeUp}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#7c3aed', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Swipe up through the center of the device screen"
+              >
+                ⬆️ Swipe Up
+              </button>
+              <button
+                onClick={sendLongSwipe}
+                disabled={!isOnline}
+                style={{
+                  ...btnStyle('#6d28d9', !isOnline),
+                  padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                title="Swipe farther and more slowly from the lower to upper screen"
+              >
+                ⬆️ Long Swipe
               </button>
               <button
                 onClick={() => { sendCmd('screen_off'); status('Locking / turning screen off…'); }}
