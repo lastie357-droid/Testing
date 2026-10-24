@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { formatDateTime, formatTime } from '../utils/dateTime.js';
+import ScreenInteractionLock from './ScreenInteractionLock.jsx';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -14,7 +15,7 @@ const SCREEN_READER_INTERVAL_OPTIONS = [
   { value: 10000, label: '10 sec' },
 ];
 
-export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected }) {
+export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected, isActive }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
@@ -120,22 +121,29 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     const relY = clientY - rect.top;
     const sx = devW / rect.width;
     const sy = devH / rect.height;
-    return { x: Math.round(relX * sx), y: Math.round(relY * sy) };
+    return {
+      x: Math.max(0, Math.min(devW, Math.round(relX * sx))),
+      y: Math.max(0, Math.min(devH, Math.round(relY * sy))),
+    };
   }, [devW, devH]);
 
   const handlePointerDown = useCallback((e) => {
-    if (!isOnline) return;
+    if (!isOnline || !e.isPrimary || e.button !== 0) return;
     e.preventDefault();
-    touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    touchStartRef.current = { x: e.clientX, y: e.clientY, time: performance.now(), pointerId: e.pointerId };
   }, [isOnline]);
 
   const handlePointerUp = useCallback((e) => {
-    if (!isOnline || !touchStartRef.current) return;
+    const start = touchStartRef.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    touchStartRef.current = null;
+    if (!isOnline) return;
     e.preventDefault();
-    const dx = e.clientX - touchStartRef.current.x;
-    const dy = e.clientY - touchStartRef.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const duration = Date.now() - touchStartRef.current.time;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dist = Math.hypot(dx, dy);
+    const duration = performance.now() - start.time;
 
     if (dist < 8) {
       const { x, y } = toDeviceCoords(e.clientX, e.clientY);
@@ -143,14 +151,15 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
       sendCommand(deviceId, 'touch', { x, y, duration: 100 });
       setTimeout(() => setTouchHint(null), 600);
     } else {
-      const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
+      const from = toDeviceCoords(start.x, start.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
-      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
+      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
     }
-    touchStartRef.current = null;
   }, [isOnline, toDeviceCoords, deviceId, sendCommand, scaleX, scaleY]);
 
-  const handlePointerCancel = useCallback(() => { touchStartRef.current = null; }, []);
+  const handlePointerCancel = useCallback((e) => {
+    if (touchStartRef.current?.pointerId === e.pointerId) touchStartRef.current = null;
+  }, []);
 
   const handleElementClick = (el) => {
     if (!el.bounds || !isOnline) return;
@@ -241,7 +250,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
       style={{
         width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden',
         background: screenData ? '#101828' : '#0f172a',
-        borderRadius: 8, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none',
+        borderRadius: 8, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none', touchAction: 'none',
       }}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
@@ -293,7 +302,6 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
                   display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
                   padding: '1px 2px',
                 }}
-                onClick={(e) => { e.stopPropagation(); if (el.clickable) handleElementClick(el); }}
                 title={`[${(el.className || '').split('.').pop()}] ${label}`}
               >
                 {height > 10 && label && (
@@ -363,6 +371,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
 
   return (
     <div className="screen-control sr-light">
+      <ScreenInteractionLock isActive={isActive} />
       <div className="sc-layout">
         <div className="sc-viewer-col">
 

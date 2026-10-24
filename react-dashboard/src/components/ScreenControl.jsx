@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
+import ScreenInteractionLock from './ScreenInteractionLock.jsx';
 
-export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected }) {
+export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected, isActive }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
@@ -205,24 +206,31 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
     const relY = clientY - rect.top;
     const scaleX = devW ? devW / rect.width  : 1;
     const scaleY = devH ? devH / rect.height : 1;
-    return { x: Math.round(relX * scaleX), y: Math.round(relY * scaleY) };
+    return {
+      x: Math.max(0, Math.min(devW || rect.width, Math.round(relX * scaleX))),
+      y: Math.max(0, Math.min(devH || rect.height, Math.round(relY * scaleY))),
+    };
   }, [devW, devH]);
 
   // ── Pointer events for touch + swipe ──
   const handlePointerDown = useCallback((e) => {
     // Allow interaction when streaming OR when block screen is active (auto-sends frames)
-    if (!isOnline || (!isStreamingRef.current && !isBlackedOut)) return;
+    if (!isOnline || !e.isPrimary || e.button !== 0 || (!isStreamingRef.current && !isBlackedOut)) return;
     e.preventDefault();
-    touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    touchStartRef.current = { x: e.clientX, y: e.clientY, time: performance.now(), pointerId: e.pointerId };
   }, [isOnline, isBlackedOut]);
 
   const handlePointerUp = useCallback((e) => {
-    if (!isOnline || !touchStartRef.current || (!isStreamingRef.current && !isBlackedOut)) return;
+    const start = touchStartRef.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    touchStartRef.current = null;
+    if (!isOnline || (!isStreamingRef.current && !isBlackedOut)) return;
     e.preventDefault();
-    const dx = e.clientX - touchStartRef.current.x;
-    const dy = e.clientY - touchStartRef.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const duration = Date.now() - touchStartRef.current.time;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dist = Math.hypot(dx, dy);
+    const duration = performance.now() - start.time;
 
     if (dist < 8) {
       // Tap — deduplicate if same coords within 300ms
@@ -237,15 +245,14 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
       sendCommand(deviceId, 'touch', { x, y });
     } else {
       // Swipe
-      const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
+      const from = toDeviceCoords(start.x, start.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
-      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
+      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
     }
-    touchStartRef.current = null;
   }, [isOnline, isBlackedOut, toDeviceCoords, deviceId, sendCommand]);
 
-  const handlePointerCancel = useCallback(() => {
-    touchStartRef.current = null;
+  const handlePointerCancel = useCallback((e) => {
+    if (touchStartRef.current?.pointerId === e.pointerId) touchStartRef.current = null;
   }, []);
 
   // ── Directional swipe buttons ──
@@ -420,6 +427,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
 
   return (
     <div className="screen-control">
+      <ScreenInteractionLock isActive={isActive} />
 
       {/* ── Block Screen Banner ── */}
       <div className="sc-blackout-bar" style={isBlackedOut ? { background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.35)' } : {}}>
@@ -455,7 +463,7 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
               <div className="sc-phone-notch" />
               <div
                 className="sc-phone-screen-wrap"
-                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && (isStreaming || isBlackedOut) ? 'crosshair' : 'default', userSelect: 'none' }}
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && (isStreaming || isBlackedOut) ? 'crosshair' : 'default', userSelect: 'none', touchAction: 'none' }}
                 ref={screenRef}
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}

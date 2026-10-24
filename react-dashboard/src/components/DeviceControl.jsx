@@ -242,6 +242,7 @@ export default function DeviceControl({
           streamFrame={streamFrame}
           send={send}
           connected={connected}
+          isActive={activeTab === 'screen_control'}
         />
       </div>}
 
@@ -265,6 +266,7 @@ export default function DeviceControl({
           results={results}
           screenPushData={screenReaderPushData}
           connected={connected}
+          isActive={activeTab === 'screen_reader'}
         />
       </div>}
 
