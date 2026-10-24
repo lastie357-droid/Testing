@@ -81,26 +81,6 @@ function inferScreenSize(frames) {
   };
 }
 
-function orderByNearestCenter(candidates, startingCell, knownCells) {
-  const remaining = [...candidates];
-  const ordered = [];
-  let previous = startingCell == null ? null : knownCells.get(startingCell);
-
-  while (remaining.length) {
-    remaining.sort((a, b) => {
-      if (!previous) return a.cell - b.cell;
-      const distanceA = Math.hypot(a.cx - previous.cx, a.cy - previous.cy);
-      const distanceB = Math.hypot(b.cx - previous.cx, b.cy - previous.cy);
-      return distanceA - distanceB || a.cell - b.cell;
-    });
-    const next = remaining.shift();
-    ordered.push(next);
-    previous = next;
-  }
-
-  return ordered;
-}
-
 export function parsePatternFileContents(contents, fileName = 'pattern.json') {
   let data;
   try {
@@ -119,6 +99,7 @@ export function parsePatternFileContents(contents, fileName = 'pattern.json') {
   const knownCells = new Map();
   const seenTouchedCells = new Set();
   const sequence = [];
+  const activationFrames = [];
   const simultaneousGroups = [];
 
   frames.forEach(frame => {
@@ -138,12 +119,10 @@ export function parsePatternFileContents(contents, fileName = 'pattern.json') {
       simultaneousGroups.push(newlyTouched.map(record => record.cell));
     }
 
-    const ordered = orderByNearestCenter(
-      newlyTouched,
-      sequence.length ? sequence[sequence.length - 1] : null,
-      knownCells,
-    );
-    ordered.forEach(record => {
+    // Preserve the screen-reader element order for cells first seen in this frame.
+    // Frames themselves are processed chronologically, so new activations always follow prior frames.
+    activationFrames.push(newlyTouched.map(record => record.cell));
+    newlyTouched.forEach(record => {
       sequence.push(record.cell);
       seenTouchedCells.add(record.cell);
     });
@@ -172,6 +151,7 @@ export function parsePatternFileContents(contents, fileName = 'pattern.json') {
     screenWidth,
     screenHeight,
     frameCount: frames.length,
+    activationFrames,
     simultaneousGroups,
     deviceId: sourceDeviceIds[0] || null,
   };

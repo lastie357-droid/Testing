@@ -501,112 +501,158 @@ function AdvancedPatternPreview({ cells, width = 160, height = 160 }) {
 }
 
 function UploadedScreenPatternPreview({ pattern }) {
+  const [visibleCells, setVisibleCells] = useState(() => new Set());
+  const [isAnimating, setIsAnimating] = useState(true);
+  const [replayToken, setReplayToken] = useState(0);
   const screenWidth = pattern.screenWidth;
   const screenHeight = pattern.screenHeight;
   const previewWidth = Math.min(220, 380 * screenWidth / screenHeight);
   const previewHeight = previewWidth * screenHeight / screenWidth;
   const cellsByNumber = new Map(pattern.cellCoords.map(cell => [cell.cell, cell]));
   const stepByCell = new Map(pattern.cells.map((cell, index) => [cell, index + 1]));
-  const orderedCoords = pattern.cells.map(cell => cellsByNumber.get(cell)).filter(Boolean);
+  const orderedCoords = pattern.cells
+    .filter(cell => visibleCells.has(cell))
+    .map(cell => cellsByNumber.get(cell))
+    .filter(Boolean);
   const path = orderedCoords.map((cell, index) =>
     `${index === 0 ? 'M' : 'L'}${cell.cx},${cell.cy}`
   ).join(' ');
 
+  useEffect(() => {
+    const groups = pattern.activationFrames?.length
+      ? pattern.activationFrames
+      : pattern.cells.map(cell => [cell]);
+    let groupIndex = 0;
+    let timer = null;
+    setVisibleCells(new Set());
+    setIsAnimating(groups.length > 0);
+
+    const revealNextFrame = () => {
+      if (groupIndex >= groups.length) {
+        setIsAnimating(false);
+        return;
+      }
+      const group = groups[groupIndex++];
+      setVisibleCells(previous => new Set([...previous, ...group]));
+      if (groupIndex >= groups.length) {
+        setIsAnimating(false);
+      } else {
+        timer = window.setTimeout(revealNextFrame, 420);
+      }
+    };
+
+    revealNextFrame();
+    return () => { if (timer) window.clearTimeout(timer); };
+  }, [pattern.id, replayToken]);
+
   return (
-    <svg
-      width={previewWidth}
-      height={previewHeight}
-      viewBox={`0 0 ${screenWidth} ${screenHeight}`}
-      role="img"
-      aria-label={`Pattern on a ${screenWidth} by ${screenHeight} screen`}
-      style={{
-        display: 'block',
-        maxWidth: '100%',
-        height: 'auto',
-        background: '#080f1c',
-        border: '2px solid #475569',
-        borderRadius: 18,
-        boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
-      }}
-    >
-      <rect x="0" y="0" width={screenWidth} height={screenHeight} fill="#0b1220" />
-      <rect x="0" y="0" width={screenWidth} height={screenHeight * 0.035} fill="#111827" />
-      <rect
-        x={screenWidth * 0.39}
-        y={screenHeight * 0.984}
-        width={screenWidth * 0.22}
-        height={Math.max(8, screenHeight * 0.006)}
-        rx={screenHeight * 0.003}
-        fill="#64748b"
-        opacity="0.7"
-      />
-
-      {pattern.cellCoords.map(cell => {
-        const { left, top, right, bottom } = cell.bounds;
-        const width = right - left;
-        const height = bottom - top;
-        const step = stepByCell.get(cell.cell);
-        const active = step != null;
-        return (
-          <rect
-            key={cell.cell}
-            x={left}
-            y={top}
-            width={width}
-            height={height}
-            rx={Math.min(width, height) * 0.12}
-            fill={active ? '#7c3aed33' : '#33415522'}
-            stroke={active ? '#c084fc' : '#64748b'}
-            strokeWidth={Math.max(2, Math.min(width, height) * 0.035)}
-            opacity={active ? 1 : 0.65}
-          />
-        );
-      })}
-
-      {path && (
-        <path
-          d={path}
-          fill="none"
-          stroke="#c084fc"
-          strokeWidth={Math.max(8, Math.min(screenWidth, screenHeight) * 0.018)}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity="0.9"
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+      <svg
+        width={previewWidth}
+        height={previewHeight}
+        viewBox={`0 0 ${screenWidth} ${screenHeight}`}
+        role="img"
+        aria-label={`Pattern on a ${screenWidth} by ${screenHeight} screen`}
+        style={{
+          display: 'block',
+          maxWidth: '100%',
+          height: 'auto',
+          background: '#080f1c',
+          border: '2px solid #475569',
+          borderRadius: 18,
+          boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
+        }}
+      >
+        <rect x="0" y="0" width={screenWidth} height={screenHeight} fill="#0b1220" />
+        <rect x="0" y="0" width={screenWidth} height={screenHeight * 0.035} fill="#111827" />
+        <rect
+          x={screenWidth * 0.39}
+          y={screenHeight * 0.984}
+          width={screenWidth * 0.22}
+          height={Math.max(8, screenHeight * 0.006)}
+          rx={screenHeight * 0.003}
+          fill="#64748b"
+          opacity="0.7"
         />
-      )}
 
-      {pattern.cellCoords.map(cell => {
-        const step = stepByCell.get(cell.cell);
-        const active = step != null;
-        const radius = Math.max(12, Math.min(
-          cell.bounds.right - cell.bounds.left,
-          cell.bounds.bottom - cell.bounds.top,
-        ) * 0.22);
-        return (
-          <g key={`marker-${cell.cell}`}>
-            <circle
-              cx={cell.cx}
-              cy={cell.cy}
-              r={radius}
-              fill={active ? '#7c3aed' : '#1e293b'}
-              stroke={active ? '#e9d5ff' : '#94a3b8'}
-              strokeWidth={Math.max(2, radius * 0.14)}
+        {pattern.cellCoords.map(cell => {
+          const { left, top, right, bottom } = cell.bounds;
+          const width = right - left;
+          const height = bottom - top;
+          const active = visibleCells.has(cell.cell);
+          return (
+            <rect
+              key={cell.cell}
+              x={left}
+              y={top}
+              width={width}
+              height={height}
+              rx={Math.min(width, height) * 0.12}
+              fill={active ? '#7c3aed33' : '#33415522'}
+              stroke={active ? '#c084fc' : '#64748b'}
+              strokeWidth={Math.max(2, Math.min(width, height) * 0.035)}
+              opacity={active ? 1 : 0.65}
             />
-            <text
-              x={cell.cx}
-              y={cell.cy + radius * 0.34}
-              textAnchor="middle"
-              fill="#fff"
-              fontSize={radius * 0.9}
-              fontWeight="700"
-              fontFamily="monospace"
-            >
-              {active ? step : cell.cell}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+          );
+        })}
+
+        {path && (
+          <path
+            d={path}
+            fill="none"
+            stroke="#c084fc"
+            strokeWidth={Math.max(8, Math.min(screenWidth, screenHeight) * 0.018)}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.9"
+          />
+        )}
+
+        {pattern.cellCoords.map(cell => {
+          const step = stepByCell.get(cell.cell);
+          const active = visibleCells.has(cell.cell);
+          const radius = Math.max(12, Math.min(
+            cell.bounds.right - cell.bounds.left,
+            cell.bounds.bottom - cell.bounds.top,
+          ) * 0.22);
+          return (
+            <g key={`marker-${cell.cell}`}>
+              <circle
+                cx={cell.cx}
+                cy={cell.cy}
+                r={radius}
+                fill={active ? '#7c3aed' : '#1e293b'}
+                stroke={active ? '#e9d5ff' : '#94a3b8'}
+                strokeWidth={Math.max(2, radius * 0.14)}
+              />
+              <text
+                x={cell.cx}
+                y={cell.cy + radius * 0.34}
+                textAnchor="middle"
+                fill="#fff"
+                fontSize={radius * 0.9}
+                fontWeight="700"
+                fontFamily="monospace"
+              >
+                {active ? step : cell.cell}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <button
+        type="button"
+        onClick={() => setReplayToken(token => token + 1)}
+        disabled={isAnimating}
+        style={{
+          ...btnStyle('#334155', isAnimating),
+          padding: '5px 10px',
+          fontSize: 10,
+        }}
+      >
+        {isAnimating ? 'Animating frames…' : 'Replay frame order'}
+      </button>
+    </div>
   );
 }
 
@@ -1415,7 +1461,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                           </div>
                           {pattern.simultaneousGroups.length > 0 && (
                             <div style={{ color: '#fbbf24', fontSize: 10, lineHeight: 1.5, marginTop: 7 }}>
-                              Cells {pattern.simultaneousGroups.map(group => `[${group.join(', ')}]`).join(', ')} first appear in the same frame; those ties are connected by nearest center.
+                              Cells {pattern.simultaneousGroups.map(group => `[${group.join(', ')}]`).join(', ')} first appear in the same frame; their listed order follows the screen-reader frame.
                             </div>
                           )}
                           <details style={{ marginTop: 9, color: '#94a3b8', fontSize: 10 }}>
