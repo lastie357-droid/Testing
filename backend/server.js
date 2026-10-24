@@ -38,6 +38,7 @@ const {
     MAX_TEXT_WATCH_MATCHES,
     findTextWatchMatches,
     isBlockedTextWatchScreen,
+    textWatchTapPoint,
     validateTextWatchTargets,
 } = require('./textWatchUtils');
 
@@ -4454,11 +4455,7 @@ function requestTaskTextWatchRead(session) {
             return;
         }
 
-        const deviceInfo = inMemoryDevices.get(session.deviceId)?.deviceInfo || {};
-        const matches = findTextWatchMatches(screen, session.targets, {
-            width: deviceInfo.screenWidth,
-            height: deviceInfo.screenHeight,
-        });
+        const matches = findTextWatchMatches(screen, session.targets);
 
         if (!matches.length) {
             scheduleTaskTextWatchRead(session);
@@ -4507,8 +4504,7 @@ function dispatchNextTaskTextWatchTouch(session) {
     }
 
     const match = session.matches[index];
-    const x = Math.round((match.bounds.left + match.bounds.right) / 2);
-    const y = Math.round((match.bounds.top + match.bounds.bottom) / 2);
+    const { x, y } = textWatchTapPoint(match.bounds);
     dispatchTaskTextWatchCommand(session, 'touch', { x, y, duration: 100 }, (response, error) => {
         if (error || response?.success === false) {
             finishTextWatchSession(session, 'failed', `Tap ${index + 1} failed; no further clicks were sent.`);

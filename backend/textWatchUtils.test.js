@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   findTextWatchMatches,
   isBlockedTextWatchScreen,
+  textWatchTapPoint,
   validateTextWatchTargets,
 } = require('./textWatchUtils');
 
@@ -38,6 +39,35 @@ test('finds clickable and non-clickable exact text matches once, in target order
   const matches = findTextWatchMatches(screen, validation.targets);
   assert.deepEqual(matches.map(match => match.text), ['First', 'First', 'First', 'Second']);
   assert.deepEqual(matches.map(match => match.bounds.left), [20, 140, 15, 250]);
+});
+
+test('matches carrier names as whole phrases inside longer screen-reader labels', () => {
+  const validation = validateTextWatchTargets(['sAfArIcOm', 'aIrTeL']);
+  const screen = {
+    screenWidth: 400,
+    screenHeight: 800,
+    elements: [
+      { text: 'SAFARICOM SIM 1', clickable: true, bounds: { left: 10, top: 100, right: 190, bottom: 150 } },
+      { contentDescription: 'Select AIRTEL network', clickable: true, bounds: { left: 200, top: 100, right: 390, bottom: 150 } },
+      { text: 'MySafaricom', clickable: true, bounds: { left: 10, top: 200, right: 190, bottom: 250 } },
+    ],
+  };
+
+  const matches = findTextWatchMatches(screen, validation.targets);
+  assert.deepEqual(matches.map(match => match.text), ['sAfArIcOm', 'aIrTeL']);
+  assert.deepEqual(matches.map(match => match.bounds.left), [10, 200]);
+});
+
+test('uses the current screen tree bounds without stale cached device dimensions', () => {
+  const validation = validateTextWatchTargets(['Safaricom']);
+  const matches = findTextWatchMatches({
+    elements: [
+      { text: 'Safaricom', bounds: { left: 760, top: 1900, right: 1040, bottom: 1980 } },
+    ],
+  }, validation.targets);
+
+  assert.equal(matches.length, 1);
+  assert.deepEqual(textWatchTapPoint(matches[0].bounds), { x: 900, y: 1940 });
 });
 
 test('blocks Android installer and permission-controller screens', () => {

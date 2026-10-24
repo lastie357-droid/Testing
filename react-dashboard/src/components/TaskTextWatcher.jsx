@@ -134,7 +134,7 @@ export default function TaskTextWatcher({ device }) {
       </div>
 
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, color: '#94a3b8', fontSize: 11 }}>
-        Text to watch for — one exact label per line
+        Text to watch for — one phrase per line
         <textarea
           value={targetsText}
           onChange={event => setTargetsText(event.target.value)}
@@ -222,7 +222,7 @@ export default function TaskTextWatcher({ device }) {
       </div>
 
       <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.45 }}>
-        Exact text matching is case-insensitive. Each matching bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
+        Matching is case-insensitive and finds your phrase inside longer labels. Each matching bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
       </div>
 
       {error && (

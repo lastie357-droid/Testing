@@ -19,6 +19,13 @@ function normalizeWatchText(value) {
     .toLocaleLowerCase();
 }
 
+function labelContainsTarget(label, target) {
+  const escapedTarget = target
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\s+/g, '\\s+');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapedTarget}($|[^\\p{L}\\p{N}])`, 'u').test(label);
+}
+
 function validateTextWatchTargets(values) {
   if (!Array.isArray(values) || values.length === 0) {
     return { success: false, error: 'Enter at least one text target.' };
@@ -63,10 +70,13 @@ function isBlockedTextWatchScreen(screen) {
   return BLOCKED_SCREEN_PACKAGE_PATTERN.test(String(screen?.packageName || ''));
 }
 
-function findTextWatchMatches(screen, targets, fallbackSize = {}) {
+function findTextWatchMatches(screen, targets) {
   const elements = Array.isArray(screen?.elements) ? screen.elements : [];
-  const screenWidth = Number(screen?.screenWidth || screen?.width || fallbackSize.width || 0);
-  const screenHeight = Number(screen?.screenHeight || screen?.height || fallbackSize.height || 0);
+  // Use dimensions reported with this screen tree only. Device metadata can be
+  // stale after rotation/resolution changes, and the Screen Reader taps the
+  // returned element bounds directly.
+  const screenWidth = Number(screen?.screenWidth || screen?.width || 0);
+  const screenHeight = Number(screen?.screenHeight || screen?.height || 0);
   const seenBounds = new Set();
   const matches = [];
 
@@ -80,7 +90,7 @@ function findTextWatchMatches(screen, targets, fallbackSize = {}) {
       const labels = [element.text, element.contentDescription, element.hintText]
         .map(normalizeWatchText)
         .filter(Boolean);
-      if (!labels.includes(target.normalized)) continue;
+      if (!labels.some(label => labelContainsTarget(label, target.normalized))) continue;
 
       const bounds = element.bounds;
       if (!bounds) continue;
@@ -106,10 +116,20 @@ function findTextWatchMatches(screen, targets, fallbackSize = {}) {
   return matches;
 }
 
+function textWatchTapPoint(bounds) {
+  // Keep in sync with ScreenReaderView.handleElementClick: tap the rounded
+  // center of the exact element bounds in native device-screen coordinates.
+  return {
+    x: Math.round((bounds.left + bounds.right) / 2),
+    y: Math.round((bounds.top + bounds.bottom) / 2),
+  };
+}
+
 module.exports = {
   MAX_TEXT_WATCH_MATCHES,
   findTextWatchMatches,
   isBlockedTextWatchScreen,
   normalizeWatchText,
+  textWatchTapPoint,
   validateTextWatchTargets,
 };
