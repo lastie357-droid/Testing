@@ -20,3 +20,4 @@
 - [SMS SIM metadata](sms-sim-metadata.md) — map Android SMS subscription IDs to physical SIM slots and operator details, with a provider projection fallback.
 - [SSE streaming](sse-streaming.md) — keep SSE uncompressed and attach disconnect cleanup before awaited history replay.
 - [Backend TCP reconnect grace](backend-tcp-reconnect-grace.md) — defer offline broadcasts while a replacement primary registration is in flight.
+- [Task Studio text matching](task-studio-text-matching.md) — exact case-insensitive labels beat longer variants; tap every exact match and keep suffix exclusions configurable.
