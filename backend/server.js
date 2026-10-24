@@ -4481,7 +4481,7 @@ function requestTaskTextWatchRead(session) {
         session.matches = matches.map(match => ({ ...match, clicked: false }));
         session.nextMatchIndex = 0;
         session.status = 'clicking';
-        session.message = `Found ${matches.length} clickable match(es); screen polling stopped.`;
+        session.message = `Found ${matches.length} matching text bound(s); screen polling stopped.`;
         session.updatedAt = Date.now();
         dispatchNextTaskTextWatchTouch(session);
     }, () => {
@@ -4890,7 +4890,7 @@ app.post('/api/task-studio/text-watch/start', requireUserOrAdmin, requireActiveS
         accessId: req.authRole === 'user' ? String(req.authAccessId || '') : '',
         targets: validation.targets,
         status: 'searching',
-        message: 'Waiting for the requested clickable text. Screen polling stops as soon as a match is found.',
+        message: 'Waiting for the requested exact text. Screen polling stops as soon as a match is found.',
         packageName: '',
         matches: [],
         clickedCount: 0,

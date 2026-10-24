@@ -130,7 +130,7 @@ export default function TaskTextWatcher({ device }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 10, minHeight: 0 }}>
       <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.5 }}>
-        The backend reads the screen and taps clickable text at its reported bounds. This is separate from saved task steps.
+        The backend reads the screen and taps exact text you list at its reported bounds, including text nodes not marked clickable. This is separate from saved task steps.
       </div>
 
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, color: '#94a3b8', fontSize: 11 }}>
@@ -222,7 +222,7 @@ export default function TaskTextWatcher({ device }) {
       </div>
 
       <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.45 }}>
-        Exact text matching is case-insensitive. Each clickable bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
+        Exact text matching is case-insensitive. Each matching bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
       </div>
 
       {error && (

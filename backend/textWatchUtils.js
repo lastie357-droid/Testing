@@ -72,7 +72,10 @@ function findTextWatchMatches(screen, targets, fallbackSize = {}) {
 
   for (const target of targets) {
     for (const element of elements) {
-      if (!element || element.clickable !== true || element.enabled === false) continue;
+      // Match the exact requested label even when the accessibility node itself
+      // is not marked clickable; some apps expose text nodes inside a clickable
+      // parent without propagating that flag. Keep disabled nodes excluded.
+      if (!element || element.enabled === false) continue;
 
       const labels = [element.text, element.contentDescription, element.hintText]
         .map(normalizeWatchText)

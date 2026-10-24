@@ -18,7 +18,7 @@ test('validates exact text targets and rejects confirmation or sensitive labels'
   }
 });
 
-test('finds every clickable exact match once, in target order, using the given bounds', () => {
+test('finds clickable and non-clickable exact text matches once, in target order, using the given bounds', () => {
   const validation = validateTextWatchTargets(['First', 'Second']);
   const screen = {
     screenWidth: 400,
@@ -36,8 +36,8 @@ test('finds every clickable exact match once, in target order, using the given b
   };
 
   const matches = findTextWatchMatches(screen, validation.targets);
-  assert.deepEqual(matches.map(match => match.text), ['First', 'First', 'Second']);
-  assert.deepEqual(matches.map(match => match.bounds.left), [20, 140, 250]);
+  assert.deepEqual(matches.map(match => match.text), ['First', 'First', 'First', 'Second']);
+  assert.deepEqual(matches.map(match => match.bounds.left), [20, 140, 15, 250]);
 });
 
 test('blocks Android installer and permission-controller screens', () => {
