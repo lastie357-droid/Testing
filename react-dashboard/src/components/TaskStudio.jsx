@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
+import TaskTextWatcher from './TaskTextWatcher.jsx';
 
 const STEP_TYPES = [
   { type: 'open_app',        label: 'Open App',          icon: '▶️',  color: '#22c55e' },
@@ -240,6 +241,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
 
   const [showNewWf, setShowNewWf] = useState(false);
   const [newWfName, setNewWfName] = useState('');
+  const [rightPanel, setRightPanel] = useState('runLog');
 
   const seenResults      = useRef(new Set());
   const pendingResolvers = useRef(new Map());
@@ -742,31 +744,61 @@ export default function TaskStudio({ device, sendCommand, results }) {
         )}
       </div>
 
-      {/* ── Right: Run Log ── */}
-      <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 10, overflow: 'hidden', flex: 1 }}>
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid #2d2d4e', fontWeight: 700, fontSize: 13, color: '#a78bfa', display: 'flex', justifyContent: 'space-between' }}>
-            <span>📋 Run Log</span>
-            {runLog.length > 0 && (
-              <button onClick={() => setRunLog([])} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 11 }}>Clear</button>
-            )}
+      {/* ── Right: Run Log and live text watcher ── */}
+      <div style={{ width: 270, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
+        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 10, overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', gap: 4, padding: 7, borderBottom: '1px solid #2d2d4e' }}>
+            <button
+              type="button"
+              onClick={() => setRightPanel('runLog')}
+              aria-pressed={rightPanel === 'runLog'}
+              style={{
+                flex: 1, border: '1px solid #2d2d4e', borderRadius: 6, padding: '6px 5px',
+                background: rightPanel === 'runLog' ? 'rgba(124,58,237,.2)' : 'transparent',
+                color: rightPanel === 'runLog' ? '#c4b5fd' : '#94a3b8',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >📋 Run Log</button>
+            <button
+              type="button"
+              onClick={() => setRightPanel('textWatch')}
+              aria-pressed={rightPanel === 'textWatch'}
+              style={{
+                flex: 1, border: '1px solid #2d2d4e', borderRadius: 6, padding: '6px 5px',
+                background: rightPanel === 'textWatch' ? 'rgba(5,150,105,.18)' : 'transparent',
+                color: rightPanel === 'textWatch' ? '#6ee7b7' : '#94a3b8',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >📺 Text Watch</button>
           </div>
-          <div style={{ padding: 10, overflowY: 'auto', maxHeight: 400, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {runLog.length === 0 && (
-              <div style={{ color: '#64748b', fontSize: 11, textAlign: 'center', paddingTop: 20 }}>
-                {isOnline ? 'Run a workflow to see logs' : 'Device offline — logs appear when device is online'}
-              </div>
-            )}
-            {runLog.map((entry, i) => (
-              <div key={i} style={{ fontSize: 11, color: entry.status === 'err' ? '#ef4444' : entry.status === 'cancelled' ? '#f59e0b' : '#22c55e', fontFamily: 'monospace', lineHeight: 1.4 }}>
-                {entry.message}
-              </div>
-            ))}
+
+          <div style={{ display: rightPanel === 'runLog' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid #2d2d4e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 700, fontSize: 12, color: '#a78bfa' }}>Workflow output</span>
+              {runLog.length > 0 && (
+                <button onClick={() => setRunLog([])} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 11 }}>Clear</button>
+              )}
+            </div>
+            <div style={{ padding: 10, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {runLog.length === 0 && (
+                <div style={{ color: '#64748b', fontSize: 11, textAlign: 'center', paddingTop: 20 }}>
+                  {isOnline ? 'Run a workflow to see logs' : 'Device offline — logs appear when device is online'}
+                </div>
+              )}
+              {runLog.map((entry, i) => (
+                <div key={i} style={{ fontSize: 11, color: entry.status === 'err' ? '#ef4444' : entry.status === 'cancelled' ? '#f59e0b' : '#22c55e', fontFamily: 'monospace', lineHeight: 1.4 }}>
+                  {entry.message}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: rightPanel === 'textWatch' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            <TaskTextWatcher key={deviceId} device={device} />
           </div>
         </div>
 
-        {/* Scheduled workflows info */}
-        {scheduledCount > 0 && (
+        {rightPanel === 'runLog' && scheduledCount > 0 && (
           <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '10px 12px', fontSize: 11 }}>
             <div style={{ color: '#22c55e', fontWeight: 700, marginBottom: 4 }}>⚡ {scheduledCount} Auto Workflow{scheduledCount !== 1 ? 's' : ''}</div>
             <div style={{ color: '#94a3b8', lineHeight: 1.5 }}>
@@ -775,8 +807,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
           </div>
         )}
 
-        {/* Summary */}
-        {(completedIndices.length > 0 || errorIndex >= 0) && !running && (
+        {rightPanel === 'runLog' && (completedIndices.length > 0 || errorIndex >= 0) && !running && (
           <div style={{
             background: errorIndex >= 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
             border: `1px solid ${errorIndex >= 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,

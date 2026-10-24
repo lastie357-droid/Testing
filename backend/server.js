@@ -34,6 +34,12 @@ mongoose.set('bufferTimeoutMS', 5000);
 
 const { getJwtSecret } = require('./jwtSecret');
 const { formatDateTime } = require('./utils/dateTime');
+const {
+    MAX_TEXT_WATCH_MATCHES,
+    findTextWatchMatches,
+    isBlockedTextWatchScreen,
+    validateTextWatchTargets,
+} = require('./textWatchUtils');
 
 // ============================================
 // RUNTIME LOG CAPTURE
@@ -1312,6 +1318,15 @@ function clearPendingPrimaryRegistration(deviceId, clientId) {
 /** @type {Map<string, {sseId:string, command:string, deviceId:string, timer:NodeJS.Timeout, order:number}>} */
 const pendingCmds = new Map();         // commandId → pending info
 let pendingCommandOrder = 0;
+const taskTextWatchSessions = new Map(); // sessionId → short-lived server-side watcher state
+const taskTextWatchByDevice = new Map(); // deviceId → latest watcher sessionId
+const TASK_TEXT_WATCH_POLL_MS = 1000;
+const TASK_TEXT_WATCH_COMMAND_TIMEOUT_MS = 12000;
+const TASK_TEXT_WATCH_MAX_AGE_MS = 5 * 60 * 1000;
+const TASK_TEXT_WATCH_RETENTION_MS = 60 * 60 * 1000;
+const TASK_TEXT_WATCH_MAX_READ_ERRORS = 3;
+const TASK_TEXT_WATCH_MAX_ACTIVE_SESSIONS = 20;
+const TASK_TEXT_WATCH_TERMINAL = new Set(['completed', 'stopped', 'failed', 'expired']);
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
 /** @type {Set<string>} Devices that have an active legacy push-stream session */
@@ -1357,6 +1372,7 @@ function disconnectDeviceConnections(deviceId, reason = 'Device disconnected by 
     const pending = [...pendingCmds.entries()]
         .filter(([, entry]) => entry.deviceId === deviceId);
     removePendingCommands(pending, reason);
+    stopTextWatchForDevice(deviceId, reason);
     return connectionIds.size;
 }
 
@@ -2192,6 +2208,11 @@ async function processMessage(clientId, clientType, event, data) {
                              timestamp: new Date() };
             // Route device data only to admins and the owning user's dashboard.
             broadcastDeviceScoped('command:result', result);
+            if (typeof pending.onResponse === 'function') {
+                try { pending.onResponse(finalResponse, error || null, result); } catch (callbackError) {
+                    log('TASK', `Text watcher callback failed for ${commandId}: ${callbackError.message}`, 'error');
+                }
+            }
 
             if (!superseded) {
                 broadcastDeviceScoped('activity:log', {
@@ -2372,6 +2393,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                         return;
                     }
                     log('TCP', `Device ${disconnectedDeviceId} disconnected`);
+                    stopTextWatchForDevice(disconnectedDeviceId, 'Device went offline; watcher stopped.');
                     deviceToTcp.delete(disconnectedDeviceId);
                     deviceStreamingState.delete(disconnectedDeviceId);
                     R.markDeviceOffline(disconnectedDeviceId).catch(() => {});
@@ -4208,6 +4230,9 @@ function supersedeOlderPendingCommands(deviceId, command, completedOrder) {
     for (const [cid, pending] of stale) {
         clearTimeout(pending.timer);
         pendingCmds.delete(cid);
+        if (typeof pending.onCancelled === 'function') {
+            try { pending.onCancelled('superseded by a newer command'); } catch (_) {}
+        }
         broadcastDeviceScoped('command:result', {
             commandId: cid,
             command: pending.command,
@@ -4227,6 +4252,9 @@ function removePendingCommands(entries, reason) {
     for (const [cid, pending] of entries) {
         clearTimeout(pending.timer);
         pendingCmds.delete(cid);
+        if (typeof pending.onCancelled === 'function') {
+            try { pending.onCancelled(reason); } catch (_) {}
+        }
         broadcastDeviceScoped('command:result', {
             commandId: cid,
             command: pending.command,
@@ -4238,6 +4266,262 @@ function removePendingCommands(entries, reason) {
         });
     }
     return entries.length;
+}
+
+function isTextWatchActive(session) {
+    return !!session && !TASK_TEXT_WATCH_TERMINAL.has(session.status);
+}
+
+function textWatchSessionSummary(session) {
+    if (!session) return null;
+    return {
+        id: session.id,
+        deviceId: session.deviceId,
+        status: session.status,
+        message: session.message,
+        targets: session.targets.map(target => target.text),
+        packageName: session.packageName || '',
+        matches: session.matches.map(match => ({
+            text: match.text,
+            bounds: { ...match.bounds },
+            clicked: !!match.clicked,
+        })),
+        clickedCount: session.clickedCount,
+        startedAt: session.startedAt,
+        updatedAt: session.updatedAt,
+        expiresAt: session.expiresAt,
+    };
+}
+
+function cancelTextWatchPendingCommand(session) {
+    const commandId = session?.pendingCommandId;
+    if (!commandId) return;
+    const pending = pendingCmds.get(commandId);
+    if (pending?.textWatchSessionId === session.id) {
+        clearTimeout(pending.timer);
+        pendingCmds.delete(commandId);
+    }
+    session.pendingCommandId = null;
+}
+
+function finishTextWatchSession(session, status, message) {
+    if (!session || TASK_TEXT_WATCH_TERMINAL.has(session.status)) return;
+    session.status = status;
+    session.message = message;
+    session.updatedAt = Date.now();
+    session.finishedAt = session.updatedAt;
+    clearTimeout(session.pollTimer);
+    clearTimeout(session.expiryTimer);
+    session.pollTimer = null;
+    session.expiryTimer = null;
+    cancelTextWatchPendingCommand(session);
+    log('TASK', `Text watcher ${session.id} for ${session.deviceId}: ${status} — ${message}`);
+}
+
+function stopTextWatchForDevice(deviceId, message = 'Device disconnected.') {
+    const sessionId = taskTextWatchByDevice.get(deviceId);
+    const session = sessionId ? taskTextWatchSessions.get(sessionId) : null;
+    if (isTextWatchActive(session)) finishTextWatchSession(session, 'stopped', message);
+}
+
+function pruneTextWatchSessions() {
+    const cutoff = Date.now() - TASK_TEXT_WATCH_RETENTION_MS;
+    for (const [sessionId, session] of taskTextWatchSessions) {
+        if (TASK_TEXT_WATCH_TERMINAL.has(session.status) && session.finishedAt < cutoff) {
+            taskTextWatchSessions.delete(sessionId);
+            if (taskTextWatchByDevice.get(session.deviceId) === sessionId) {
+                taskTextWatchByDevice.delete(session.deviceId);
+            }
+        }
+    }
+}
+
+function dispatchTaskTextWatchCommand(session, command, params, onResponse, onTimeout) {
+    if (!isTextWatchActive(session)) return;
+    const connId = deviceToTcp.get(session.deviceId);
+    const conn = connId ? tcpClients.get(connId) : null;
+    if (!conn || !conn.writable) {
+        finishTextWatchSession(session, 'stopped', 'Device went offline; watcher stopped.');
+        return;
+    }
+
+    const commandId = crypto.randomBytes(12).toString('hex');
+    const order = ++pendingCommandOrder;
+    const timer = setTimeout(() => {
+        const pending = pendingCmds.get(commandId);
+        if (!pending) return;
+        pendingCmds.delete(commandId);
+        if (session.pendingCommandId === commandId) session.pendingCommandId = null;
+        broadcastDeviceScoped('command:result', {
+            commandId,
+            command,
+            deviceId: session.deviceId,
+            success: false,
+            error: 'Text watcher command timed out',
+            timestamp: new Date(),
+        });
+        if (typeof pending.onTimeout === 'function') {
+            try { pending.onTimeout(); } catch (error) {
+                finishTextWatchSession(session, 'failed', `Watcher error: ${error.message}`);
+            }
+        }
+    }, TASK_TEXT_WATCH_COMMAND_TIMEOUT_MS);
+
+    session.pendingCommandId = commandId;
+    session.updatedAt = Date.now();
+    pendingCmds.set(commandId, {
+        sseId: null,
+        command,
+        deviceId: session.deviceId,
+        timer,
+        order,
+        textWatchSessionId: session.id,
+        onResponse: (response, error) => {
+            if (session.pendingCommandId === commandId) session.pendingCommandId = null;
+            if (!isTextWatchActive(session)) return;
+            onResponse(response, error);
+        },
+        onTimeout: () => {
+            if (session.pendingCommandId === commandId) session.pendingCommandId = null;
+            if (isTextWatchActive(session)) onTimeout();
+        },
+        onCancelled: reason => {
+            if (session.pendingCommandId === commandId) session.pendingCommandId = null;
+            if (isTextWatchActive(session)) {
+                finishTextWatchSession(session, 'stopped', `Watcher stopped: ${reason || 'command cancelled'}.`);
+            }
+        },
+    });
+
+    try {
+        tcpSend(conn, 'command:execute', { commandId, command, params: params || null });
+    } catch (error) {
+        clearTimeout(timer);
+        pendingCmds.delete(commandId);
+        session.pendingCommandId = null;
+        finishTextWatchSession(session, 'failed', `Could not send ${command}: ${error.message}`);
+        return;
+    }
+
+    new Command({
+        id: commandId,
+        deviceId: session.deviceId,
+        command,
+        data: params || {},
+        status: 'executing',
+    }).save().catch(() => {});
+}
+
+function scheduleTaskTextWatchRead(session) {
+    if (!isTextWatchActive(session) || session.status !== 'searching') return;
+    clearTimeout(session.pollTimer);
+    session.pollTimer = setTimeout(() => {
+        session.pollTimer = null;
+        requestTaskTextWatchRead(session);
+    }, TASK_TEXT_WATCH_POLL_MS);
+}
+
+function requestTaskTextWatchRead(session) {
+    if (!isTextWatchActive(session) || session.status !== 'searching') return;
+    dispatchTaskTextWatchCommand(session, 'read_screen', null, (response, error) => {
+        if (error || response?.success === false) {
+            session.readErrors += 1;
+            if (session.readErrors >= TASK_TEXT_WATCH_MAX_READ_ERRORS) {
+                finishTextWatchSession(session, 'failed', 'Screen reads repeatedly failed; watcher stopped.');
+                return;
+            }
+            scheduleTaskTextWatchRead(session);
+            return;
+        }
+
+        const screen = response?.screen;
+        if (!screen || !Array.isArray(screen.elements)) {
+            session.readErrors += 1;
+            if (session.readErrors >= TASK_TEXT_WATCH_MAX_READ_ERRORS) {
+                finishTextWatchSession(session, 'failed', 'The device did not return a readable screen tree.');
+                return;
+            }
+            scheduleTaskTextWatchRead(session);
+            return;
+        }
+
+        session.readErrors = 0;
+        session.packageName = String(screen.packageName || '');
+        session.updatedAt = Date.now();
+
+        if (isBlockedTextWatchScreen(screen)) {
+            finishTextWatchSession(session, 'stopped', 'System installer and permission screens are not automated.');
+            return;
+        }
+
+        const deviceInfo = inMemoryDevices.get(session.deviceId)?.deviceInfo || {};
+        const matches = findTextWatchMatches(screen, session.targets, {
+            width: deviceInfo.screenWidth,
+            height: deviceInfo.screenHeight,
+        });
+
+        if (!matches.length) {
+            scheduleTaskTextWatchRead(session);
+            return;
+        }
+
+        if (matches.length > MAX_TEXT_WATCH_MATCHES) {
+            finishTextWatchSession(
+                session,
+                'failed',
+                `Found ${matches.length} matches; refusing to tap more than ${MAX_TEXT_WATCH_MATCHES} in one screen frame.`
+            );
+            return;
+        }
+
+        // Stop requesting frames before any touch is sent. Every match comes
+        // from this one response and each distinct bounds rectangle is queued once.
+        clearTimeout(session.pollTimer);
+        session.pollTimer = null;
+        session.matches = matches.map(match => ({ ...match, clicked: false }));
+        session.nextMatchIndex = 0;
+        session.status = 'clicking';
+        session.message = `Found ${matches.length} clickable match(es); screen polling stopped.`;
+        session.updatedAt = Date.now();
+        dispatchNextTaskTextWatchTouch(session);
+    }, () => {
+        session.readErrors += 1;
+        if (session.readErrors >= TASK_TEXT_WATCH_MAX_READ_ERRORS) {
+            finishTextWatchSession(session, 'failed', 'Screen reads timed out repeatedly; watcher stopped.');
+            return;
+        }
+        scheduleTaskTextWatchRead(session);
+    });
+}
+
+function dispatchNextTaskTextWatchTouch(session) {
+    if (!isTextWatchActive(session) || session.status !== 'clicking') return;
+    const index = session.nextMatchIndex;
+    if (index >= session.matches.length) {
+        finishTextWatchSession(
+            session,
+            'completed',
+            `Clicked all ${session.clickedCount} matching item(s) once.`
+        );
+        return;
+    }
+
+    const match = session.matches[index];
+    const x = Math.round((match.bounds.left + match.bounds.right) / 2);
+    const y = Math.round((match.bounds.top + match.bounds.bottom) / 2);
+    dispatchTaskTextWatchCommand(session, 'touch', { x, y, duration: 100 }, (response, error) => {
+        if (error || response?.success === false) {
+            finishTextWatchSession(session, 'failed', `Tap ${index + 1} failed; no further clicks were sent.`);
+            return;
+        }
+        match.clicked = true;
+        session.clickedCount += 1;
+        session.nextMatchIndex += 1;
+        session.updatedAt = Date.now();
+        dispatchNextTaskTextWatchTouch(session);
+    }, () => {
+        finishTextWatchSession(session, 'failed', `Tap ${index + 1} timed out; no further clicks were sent.`);
+    });
 }
 
 // ── Flush pending command queue — called on demand only ───────────────────────
@@ -4309,8 +4593,14 @@ app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (
     // tcpSend() returns; registering afterwards loses that response and leaves
     // a phantom waiter until timeout.
     const timer = setTimeout(() => {
-        if (pendingCmds.has(commandId)) {
+        const pending = pendingCmds.get(commandId);
+        if (pending) {
             pendingCmds.delete(commandId);
+            if (typeof pending.onTimeout === 'function') {
+                try { pending.onTimeout(); } catch (callbackError) {
+                    log('TASK', `Command timeout callback failed for ${commandId}: ${callbackError.message}`, 'error');
+                }
+            }
             // Broadcast timeout to all SSE clients — SSE may have reconnected with a new ID
             broadcastDeviceScoped('command:result', {
                 commandId, command, deviceId, success: false,
@@ -4364,8 +4654,14 @@ app.post('/api/device/:deviceId/reset-session', async (req, res) => {
     let cleared = 0;
     for (const [cid, pending] of pendingCmds.entries()) {
         if (pending.deviceId === deviceId) {
+            // A Task Studio watcher owns its read/tap command lifecycle. A
+            // Screen Reader tab refresh must not orphan that server session.
+            if (pending.textWatchSessionId) continue;
             clearTimeout(pending.timer);
             pendingCmds.delete(cid);
+            if (typeof pending.onCancelled === 'function') {
+                try { pending.onCancelled('device session reset'); } catch (_) {}
+            }
             cleared++;
         }
     }
@@ -4500,6 +4796,141 @@ async function syncSmsHuntsToDevice(deviceId, clearSchedules = false) {
         if (smsHuntSyncInFlight.get(deviceId) === syncPromise) smsHuntSyncInFlight.delete(deviceId);
     }
 }
+
+// ── Task Studio — server-side, one-shot screen text watcher ────────────────────
+async function canAccessTaskTextWatchDevice(req, deviceId) {
+    if (req.authRole !== 'user') return true;
+    let accessId = req.authAccessId || '';
+    if (!accessId) {
+        try {
+            const user = await User.findById(req.authUserId).select('accessId').lean();
+            accessId = user?.accessId || '';
+        } catch (_) {}
+    }
+    if (!accessId) return false;
+    req.authAccessId = accessId;
+
+    const liveDevice = inMemoryDevices.get(deviceId);
+    if (liveDevice?.accessId === accessId) return true;
+    try {
+        return !!(await Device.findOne({ deviceId, accessId }).select('_id').lean().exec());
+    } catch (_) {
+        return false;
+    }
+}
+
+function canAccessTaskTextWatchSession(req, session) {
+    if (req.authRole !== 'user') return true;
+    return String(session.ownerUserId || '') === String(req.authUserId || '');
+}
+
+function getTaskTextWatchSessionForDevice(deviceId) {
+    const sessionId = taskTextWatchByDevice.get(deviceId);
+    return sessionId ? taskTextWatchSessions.get(sessionId) || null : null;
+}
+
+app.get('/api/task-studio/text-watch', requireUserOrAdmin, requireActiveSubscription, async (req, res) => {
+    const deviceId = String(req.query.deviceId || '').trim();
+    if (!deviceId || deviceId.length > 160) {
+        return res.status(400).json({ success: false, error: 'A valid deviceId is required.' });
+    }
+    if (!(await canAccessTaskTextWatchDevice(req, deviceId))) {
+        return res.status(403).json({ success: false, error: 'Device is not available to this account.' });
+    }
+    const session = getTaskTextWatchSessionForDevice(deviceId);
+    if (session && !canAccessTaskTextWatchSession(req, session)) {
+        return res.status(403).json({ success: false, error: 'Watcher belongs to another account.' });
+    }
+    return res.json({ success: true, session: textWatchSessionSummary(session) });
+});
+
+app.post('/api/task-studio/text-watch/start', requireUserOrAdmin, requireActiveSubscription, async (req, res) => {
+    const deviceId = String(req.body?.deviceId || '').trim();
+    if (!deviceId || deviceId.length > 160) {
+        return res.status(400).json({ success: false, error: 'A valid deviceId is required.' });
+    }
+
+    const validation = validateTextWatchTargets(req.body?.targets);
+    if (!validation.success) {
+        return res.status(400).json({ success: false, error: validation.error });
+    }
+    if (!(await canAccessTaskTextWatchDevice(req, deviceId))) {
+        return res.status(403).json({ success: false, error: 'Device is not available to this account.' });
+    }
+
+    const tcpConnId = deviceToTcp.get(deviceId);
+    const tcpConn = tcpConnId ? tcpClients.get(tcpConnId) : null;
+    if (!tcpConn || !tcpConn.writable) {
+        return res.status(503).json({ success: false, error: 'Device is offline.' });
+    }
+
+    const existingSession = getTaskTextWatchSessionForDevice(deviceId);
+    if (isTextWatchActive(existingSession)) {
+        return res.status(409).json({
+            success: false,
+            error: 'A text watcher is already active for this device.',
+            session: textWatchSessionSummary(existingSession),
+        });
+    }
+
+    const activeSessionCount = [...taskTextWatchSessions.values()].filter(isTextWatchActive).length;
+    if (activeSessionCount >= TASK_TEXT_WATCH_MAX_ACTIVE_SESSIONS) {
+        return res.status(429).json({
+            success: false,
+            error: `The server already has ${TASK_TEXT_WATCH_MAX_ACTIVE_SESSIONS} active text watchers.`,
+        });
+    }
+
+    pruneTextWatchSessions();
+    const now = Date.now();
+    const session = {
+        id: crypto.randomBytes(16).toString('hex'),
+        deviceId,
+        ownerUserId: req.authRole === 'user' ? String(req.authUserId || '') : '',
+        accessId: req.authRole === 'user' ? String(req.authAccessId || '') : '',
+        targets: validation.targets,
+        status: 'searching',
+        message: 'Waiting for the requested clickable text. Screen polling stops as soon as a match is found.',
+        packageName: '',
+        matches: [],
+        clickedCount: 0,
+        readErrors: 0,
+        nextMatchIndex: 0,
+        pendingCommandId: null,
+        pollTimer: null,
+        expiryTimer: null,
+        startedAt: now,
+        updatedAt: now,
+        expiresAt: now + TASK_TEXT_WATCH_MAX_AGE_MS,
+    };
+    taskTextWatchSessions.set(session.id, session);
+    taskTextWatchByDevice.set(deviceId, session.id);
+    session.expiryTimer = setTimeout(() => {
+        finishTextWatchSession(session, 'expired', 'Watcher reached its 5-minute limit and stopped.');
+    }, TASK_TEXT_WATCH_MAX_AGE_MS);
+
+    log('TASK', `Started text watcher ${session.id} for ${deviceId} (${validation.targets.length} target(s))`);
+    requestTaskTextWatchRead(session);
+    return res.status(202).json({ success: true, session: textWatchSessionSummary(session) });
+});
+
+app.post('/api/task-studio/text-watch/:sessionId/stop', requireUserOrAdmin, requireActiveSubscription, async (req, res) => {
+    const session = taskTextWatchSessions.get(String(req.params.sessionId || ''));
+    if (!session) return res.status(404).json({ success: false, error: 'Watcher session not found.' });
+    if (!canAccessTaskTextWatchSession(req, session)) {
+        return res.status(403).json({ success: false, error: 'Watcher belongs to another account.' });
+    }
+
+    const touchInFlight = session.status === 'clicking' && !!session.pendingCommandId;
+    finishTextWatchSession(
+        session,
+        'stopped',
+        touchInFlight
+            ? 'Stopped by user. The touch already sent may finish, but no further clicks will be sent.'
+            : 'Stopped by user. No further screen reads or clicks will be sent.'
+    );
+    return res.json({ success: true, session: textWatchSessionSummary(session) });
+});
 
 // ── Task Studio — per-accessId workflow storage ───────────────────────────────
 // Users always see only their own accessId's tasks. Admins can request one
