@@ -1055,7 +1055,7 @@ export default function GestureTab({ device, sendCommand, results }) {
     if (!isOnline) return;
 
     // Use Screen Reader's existing swipe command with a path based on the
-    // current device dimensions; Long Swipe uses a wider, slower path.
+    // current device dimensions.
     const midX = Math.round(deviceW / 2);
     pendingSwipeLabelsRef.current.push(label);
     sendCmd('swipe', {
@@ -1073,7 +1073,7 @@ export default function GestureTab({ device, sendCommand, results }) {
   }
 
   function sendLongSwipe() {
-    sendVerticalSwipe('Long Swipe', 0.9, 0.1, 700);
+    sendVerticalSwipe('Long Swipe', 999 / 1600, 747 / 1600, 700);
   }
 
   function replay(filename) {
@@ -1369,7 +1369,7 @@ export default function GestureTab({ device, sendCommand, results }) {
                   ...btnStyle('#6d28d9', !isOnline),
                   padding: '9px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
                 }}
-                title="Swipe farther and more slowly from the lower to upper screen"
+                title="Swipe up from the center of the lock icon to the upper cue"
               >
                 ⬆️ Long Swipe
               </button>
