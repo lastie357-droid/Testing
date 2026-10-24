@@ -26,6 +26,7 @@ export default function TaskTextWatcher({ device }) {
   const deviceId = device?.deviceId || '';
   const isOnline = !!device?.isOnline;
   const [targetsText, setTargetsText] = useState('');
+  const [avoidText, setAvoidText] = useState('');
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -78,6 +79,7 @@ export default function TaskTextWatcher({ device }) {
 
   const startWatching = async () => {
     const targets = targetsText.split(/\r?\n/).map(text => text.trim()).filter(Boolean);
+    const avoidTargets = avoidText.split(/\r?\n/).map(text => text.trim()).filter(Boolean);
     if (!targets.length) {
       setError('Enter one or more text targets, one per line.');
       return;
@@ -88,7 +90,7 @@ export default function TaskTextWatcher({ device }) {
       const response = await fetch('/api/task-studio/text-watch/start', {
         method: 'POST',
         headers: authHeaders(true),
-        body: JSON.stringify({ deviceId, targets }),
+        body: JSON.stringify({ deviceId, targets, avoidTargets }),
       });
       const data = await response.json().catch(() => ({}));
       if (data.session) setSession(data.session);
@@ -130,7 +132,7 @@ export default function TaskTextWatcher({ device }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 10, minHeight: 0 }}>
       <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.5 }}>
-        The backend reads the screen and taps exact text you list at its reported bounds, including text nodes not marked clickable. This is separate from saved task steps.
+        The backend reads the screen and taps matching text at its reported bounds, including text nodes not marked clickable. This is separate from saved task steps.
       </div>
 
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, color: '#94a3b8', fontSize: 11 }}>
@@ -145,6 +147,22 @@ export default function TaskTextWatcher({ device }) {
             resize: 'vertical', background: '#0f172a', color: '#e2e8f0',
             border: '1px solid #334155', borderRadius: 7, padding: '8px 9px',
             fontSize: 12, lineHeight: 1.45, fontFamily: 'inherit', minHeight: 78,
+          }}
+        />
+      </label>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 5, color: '#94a3b8', fontSize: 11 }}>
+        Don’t click if a label contains — one phrase per line
+        <textarea
+          value={avoidText}
+          onChange={event => setAvoidText(event.target.value)}
+          disabled={active || busy}
+          rows={3}
+          placeholder={'Safaricom+\nSafaricom2'}
+          style={{
+            resize: 'vertical', background: '#0f172a', color: '#e2e8f0',
+            border: '1px solid #334155', borderRadius: 7, padding: '8px 9px',
+            fontSize: 12, lineHeight: 1.45, fontFamily: 'inherit', minHeight: 62,
           }}
         />
       </label>
@@ -204,6 +222,15 @@ export default function TaskTextWatcher({ device }) {
             ))}
           </div>
         )}
+        {session?.avoidTargets?.length > 0 && (
+          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {session.avoidTargets.map((target, index) => (
+              <div key={`${target}-${index}`} style={{ color: '#fca5a5', fontSize: 10, overflowWrap: 'anywhere' }}>
+                Avoid label containing: “{target}”
+              </div>
+            ))}
+          </div>
+        )}
         {session?.matches?.length > 0 && (
           <div style={{ marginTop: 8, borderTop: '1px solid #293548', paddingTop: 7 }}>
             <div style={{ color: '#cbd5e1', fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
@@ -222,7 +249,7 @@ export default function TaskTextWatcher({ device }) {
       </div>
 
       <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.45 }}>
-        Matching is case-insensitive and finds your phrase inside longer labels. Each matching bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
+        Matching and exclusions are case-insensitive. An exact label match is preferred over longer variants; any match whose text or clickable row contains an avoid phrase is skipped. Each remaining matching bound is tapped once. Installer, permission, destructive, payment, and generic confirmation labels are blocked. The backend watcher expires after 5 minutes.
       </div>
 
       {error && (

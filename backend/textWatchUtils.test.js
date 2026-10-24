@@ -6,6 +6,7 @@ const {
   findTextWatchMatches,
   isBlockedTextWatchScreen,
   textWatchTapPoint,
+  validateTextWatchAvoidTargets,
   validateTextWatchTargets,
 } = require('./textWatchUtils');
 
@@ -56,6 +57,70 @@ test('matches carrier names as whole phrases inside longer screen-reader labels'
   const matches = findTextWatchMatches(screen, validation.targets);
   assert.deepEqual(matches.map(match => match.text), ['sAfArIcOm', 'aIrTeL']);
   assert.deepEqual(matches.map(match => match.bounds.left), [10, 200]);
+});
+
+test('prefers the exact live label over longer numbered or symbol variants', () => {
+  const targets = validateTextWatchTargets(['Safaricom']);
+  const matches = findTextWatchMatches({
+    screenWidth: 480,
+    screenHeight: 400,
+    elements: [
+      { text: 'Safaricom1', clickable: true, bounds: { left: 0, top: 10, right: 480, bottom: 60 } },
+      { text: 'Safaricom 1', clickable: true, bounds: { left: 0, top: 70, right: 480, bottom: 120 } },
+      { text: 'Safaricom+', clickable: true, bounds: { left: 0, top: 130, right: 480, bottom: 180 } },
+      { text: 'SAFARICOM', clickable: true, bounds: { left: 0, top: 190, right: 480, bottom: 240 } },
+    ],
+  }, targets.targets);
+
+  assert.deepEqual(matches.map(match => match.bounds.top), [190]);
+});
+
+test('validates optional avoid phrases and skips matching text or clickable-row labels case-insensitively', () => {
+  assert.deepEqual(validateTextWatchAvoidTargets().targets, []);
+  const avoided = validateTextWatchAvoidTargets([' Safaricom+ ', 'SAFARICOM2']);
+  assert.equal(avoided.success, true);
+  assert.deepEqual(avoided.targets.map(target => target.normalized), ['safaricom+', 'safaricom2']);
+
+  const targets = validateTextWatchTargets(['Safaricom']);
+  const matches = findTextWatchMatches({
+    screenWidth: 480,
+    screenHeight: 600,
+    elements: [
+      {
+        depth: 4,
+        clickable: true,
+        text: 'Safaricom+ offer',
+        bounds: { left: 0, top: 10, right: 480, bottom: 70 },
+      },
+      {
+        depth: 4,
+        clickable: true,
+        text: 'SAFARICOM',
+        contentDescription: 'Switch to SAFARICOM2',
+        bounds: { left: 0, top: 80, right: 480, bottom: 140 },
+      },
+      {
+        depth: 4,
+        clickable: true,
+        text: 'Safaricom',
+        bounds: { left: 0, top: 150, right: 480, bottom: 210 },
+      },
+      {
+        depth: 4,
+        clickable: true,
+        contentDescription: 'Choose SAFARICOM2',
+        bounds: { left: 0, top: 220, right: 480, bottom: 280 },
+      },
+      {
+        depth: 5,
+        clickable: false,
+        text: 'Safaricom',
+        bounds: { left: 60, top: 220, right: 470, bottom: 280 },
+      },
+    ],
+  }, targets.targets, avoided.targets);
+
+  assert.deepEqual(matches.map(match => match.bounds.top), [150]);
 });
 
 test('uses each live clickable ancestor row bound for non-clickable text children', () => {

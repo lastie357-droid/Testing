@@ -2,6 +2,7 @@
 
 const MAX_TEXT_WATCH_TARGETS = 8;
 const MAX_TEXT_WATCH_TARGET_LENGTH = 80;
+const MAX_TEXT_WATCH_AVOID_TARGETS = 8;
 const MAX_TEXT_WATCH_MATCHES = 20;
 
 const SENSITIVE_TARGET_PATTERN =
@@ -66,16 +67,48 @@ function validateTextWatchTargets(values) {
   return { success: true, targets };
 }
 
+function validateTextWatchAvoidTargets(values = []) {
+  if (values == null) values = [];
+  if (!Array.isArray(values)) {
+    return { success: false, error: 'Avoid phrases must be a list of plain text.' };
+  }
+
+  const targets = [];
+  const seen = new Set();
+
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      return { success: false, error: 'Avoid phrases must be plain text.' };
+    }
+
+    const text = value.trim().replace(/\s+/g, ' ');
+    const normalized = normalizeWatchText(text);
+    if (!normalized) continue;
+    if (text.length > MAX_TEXT_WATCH_TARGET_LENGTH) {
+      return { success: false, error: `Each avoid phrase must be ${MAX_TEXT_WATCH_TARGET_LENGTH} characters or fewer.` };
+    }
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    targets.push({ text, normalized });
+  }
+
+  if (targets.length > MAX_TEXT_WATCH_AVOID_TARGETS) {
+    return { success: false, error: `Use no more than ${MAX_TEXT_WATCH_AVOID_TARGETS} avoid phrases.` };
+  }
+
+  return { success: true, targets };
+}
+
 function isBlockedTextWatchScreen(screen) {
   return BLOCKED_SCREEN_PACKAGE_PATTERN.test(String(screen?.packageName || ''));
 }
 
-function getClickableBoundsForElement(elements, elementIndex) {
+function getClickableAncestorForElement(elements, elementIndex) {
   const element = elements[elementIndex];
-  if (!element || element.clickable === true) return element?.bounds || null;
+  if (!element || element.clickable === true) return null;
 
   let descendantDepth = Number(element.depth);
-  if (!Number.isFinite(descendantDepth)) return element.bounds || null;
+  if (!Number.isFinite(descendantDepth)) return null;
 
   // Screen Reader exposes clickable rows separately from their non-clickable
   // text children. Walk the live, depth-ordered screen tree to find the nearest
@@ -87,13 +120,19 @@ function getClickableBoundsForElement(elements, elementIndex) {
 
     descendantDepth = ancestorDepth;
     if (ancestor.visibleToUser === false || ancestor.enabled === false) continue;
-    if (ancestor.clickable === true && ancestor.bounds) return ancestor.bounds;
+    if (ancestor.clickable === true && ancestor.bounds) return ancestor;
   }
 
-  return element.bounds || null;
+  return null;
 }
 
-function findTextWatchMatches(screen, targets) {
+function getClickableBoundsForElement(elements, elementIndex) {
+  const element = elements[elementIndex];
+  if (!element || element.clickable === true) return element?.bounds || null;
+  return getClickableAncestorForElement(elements, elementIndex)?.bounds || element.bounds || null;
+}
+
+function findTextWatchMatches(screen, targets, avoidTargets = []) {
   const elements = Array.isArray(screen?.elements) ? screen.elements : [];
   // Use dimensions reported with this screen tree only. Device metadata can be
   // stale after rotation/resolution changes, and the Screen Reader taps the
@@ -104,6 +143,9 @@ function findTextWatchMatches(screen, targets) {
   const matches = [];
 
   for (const target of targets) {
+    const targetMatches = [];
+    let hasExactLabelMatch = false;
+
     for (let elementIndex = 0; elementIndex < elements.length; elementIndex += 1) {
       const element = elements[elementIndex];
       // Match the exact requested label even when the accessibility node itself
@@ -115,6 +157,24 @@ function findTextWatchMatches(screen, targets) {
         .map(normalizeWatchText)
         .filter(Boolean);
       if (!labels.some(label => labelContainsTarget(label, target.normalized))) continue;
+      const exactLabelMatch = labels.some(label => label === target.normalized);
+      if (exactLabelMatch) hasExactLabelMatch = true;
+
+      // Exclusions are literal, case-insensitive substrings. Check both the
+      // matched text node and the clickable row that Screen Reader will tap,
+      // since apps sometimes put the distinguishing suffix in the row label.
+      const clickableAncestor = getClickableAncestorForElement(elements, elementIndex);
+      const tappedLabels = clickableAncestor
+        ? [
+            ...labels,
+            clickableAncestor.text,
+            clickableAncestor.contentDescription,
+            clickableAncestor.hintText,
+          ].map(normalizeWatchText).filter(Boolean)
+        : labels;
+      if (avoidTargets.some(avoid =>
+        tappedLabels.some(label => label.includes(avoid.normalized))
+      )) continue;
 
       const bounds = getClickableBoundsForElement(elements, elementIndex);
       if (!bounds) continue;
@@ -127,13 +187,24 @@ function findTextWatchMatches(screen, targets) {
       if ((screenWidth && right > screenWidth) || (screenHeight && bottom > screenHeight)) continue;
 
       const boundsKey = [left, top, right, bottom].map(value => value.toFixed(2)).join(':');
-      if (seenBounds.has(boundsKey)) continue;
-      seenBounds.add(boundsKey);
-
-      matches.push({
+      targetMatches.push({
         text: target.text,
         bounds: { left, top, right, bottom },
+        exactLabelMatch,
+        boundsKey,
       });
+    }
+
+    // If this frame has a standalone label equal to the target, prefer it over
+    // longer labels that merely contain the phrase. This avoids tapping a
+    // similarly named variant when the requested label is also present.
+    const selectedMatches = hasExactLabelMatch
+      ? targetMatches.filter(match => match.exactLabelMatch)
+      : targetMatches;
+    for (const match of selectedMatches) {
+      if (seenBounds.has(match.boundsKey)) continue;
+      seenBounds.add(match.boundsKey);
+      matches.push({ text: match.text, bounds: match.bounds });
     }
   }
 
@@ -153,8 +224,10 @@ module.exports = {
   MAX_TEXT_WATCH_MATCHES,
   findTextWatchMatches,
   getClickableBoundsForElement,
+  getClickableAncestorForElement,
   isBlockedTextWatchScreen,
   normalizeWatchText,
   textWatchTapPoint,
+  validateTextWatchAvoidTargets,
   validateTextWatchTargets,
 };

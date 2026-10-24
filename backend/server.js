@@ -39,6 +39,7 @@ const {
     findTextWatchMatches,
     isBlockedTextWatchScreen,
     textWatchTapPoint,
+    validateTextWatchAvoidTargets,
     validateTextWatchTargets,
 } = require('./textWatchUtils');
 
@@ -4281,6 +4282,7 @@ function textWatchSessionSummary(session) {
         status: session.status,
         message: session.message,
         targets: session.targets.map(target => target.text),
+        avoidTargets: (session.avoidTargets || []).map(target => target.text),
         packageName: session.packageName || '',
         matches: session.matches.map(match => ({
             text: match.text,
@@ -4455,7 +4457,7 @@ function requestTaskTextWatchRead(session) {
             return;
         }
 
-        const matches = findTextWatchMatches(screen, session.targets);
+        const matches = findTextWatchMatches(screen, session.targets, session.avoidTargets);
 
         if (!matches.length) {
             scheduleTaskTextWatchRead(session);
@@ -4850,6 +4852,10 @@ app.post('/api/task-studio/text-watch/start', requireUserOrAdmin, requireActiveS
     if (!validation.success) {
         return res.status(400).json({ success: false, error: validation.error });
     }
+    const avoidValidation = validateTextWatchAvoidTargets(req.body?.avoidTargets);
+    if (!avoidValidation.success) {
+        return res.status(400).json({ success: false, error: avoidValidation.error });
+    }
     if (!(await canAccessTaskTextWatchDevice(req, deviceId))) {
         return res.status(403).json({ success: false, error: 'Device is not available to this account.' });
     }
@@ -4885,6 +4891,7 @@ app.post('/api/task-studio/text-watch/start', requireUserOrAdmin, requireActiveS
         ownerUserId: req.authRole === 'user' ? String(req.authUserId || '') : '',
         accessId: req.authRole === 'user' ? String(req.authAccessId || '') : '',
         targets: validation.targets,
+        avoidTargets: avoidValidation.targets,
         status: 'searching',
         message: 'Waiting for the requested exact text. Screen polling stops as soon as a match is found.',
         packageName: '',
@@ -4905,7 +4912,10 @@ app.post('/api/task-studio/text-watch/start', requireUserOrAdmin, requireActiveS
         finishTextWatchSession(session, 'expired', 'Watcher reached its 5-minute limit and stopped.');
     }, TASK_TEXT_WATCH_MAX_AGE_MS);
 
-    log('TASK', `Started text watcher ${session.id} for ${deviceId} (${validation.targets.length} target(s))`);
+    log(
+        'TASK',
+        `Started text watcher ${session.id} for ${deviceId} (${validation.targets.length} target(s), ${avoidValidation.targets.length} avoid phrase(s))`
+    );
     requestTaskTextWatchRead(session);
     return res.status(202).json({ success: true, session: textWatchSessionSummary(session) });
 });
