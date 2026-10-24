@@ -70,6 +70,29 @@ function isBlockedTextWatchScreen(screen) {
   return BLOCKED_SCREEN_PACKAGE_PATTERN.test(String(screen?.packageName || ''));
 }
 
+function getClickableBoundsForElement(elements, elementIndex) {
+  const element = elements[elementIndex];
+  if (!element || element.clickable === true) return element?.bounds || null;
+
+  let descendantDepth = Number(element.depth);
+  if (!Number.isFinite(descendantDepth)) return element.bounds || null;
+
+  // Screen Reader exposes clickable rows separately from their non-clickable
+  // text children. Walk the live, depth-ordered screen tree to find the nearest
+  // visible enabled clickable ancestor, without hardcoding labels or positions.
+  for (let index = elementIndex - 1; index >= 0; index -= 1) {
+    const ancestor = elements[index];
+    const ancestorDepth = Number(ancestor?.depth);
+    if (!Number.isFinite(ancestorDepth) || ancestorDepth >= descendantDepth) continue;
+
+    descendantDepth = ancestorDepth;
+    if (ancestor.visibleToUser === false || ancestor.enabled === false) continue;
+    if (ancestor.clickable === true && ancestor.bounds) return ancestor.bounds;
+  }
+
+  return element.bounds || null;
+}
+
 function findTextWatchMatches(screen, targets) {
   const elements = Array.isArray(screen?.elements) ? screen.elements : [];
   // Use dimensions reported with this screen tree only. Device metadata can be
@@ -81,18 +104,19 @@ function findTextWatchMatches(screen, targets) {
   const matches = [];
 
   for (const target of targets) {
-    for (const element of elements) {
+    for (let elementIndex = 0; elementIndex < elements.length; elementIndex += 1) {
+      const element = elements[elementIndex];
       // Match the exact requested label even when the accessibility node itself
       // is not marked clickable; some apps expose text nodes inside a clickable
       // parent without propagating that flag. Keep disabled nodes excluded.
-      if (!element || element.enabled === false) continue;
+      if (!element || element.enabled === false || element.visibleToUser === false) continue;
 
       const labels = [element.text, element.contentDescription, element.hintText]
         .map(normalizeWatchText)
         .filter(Boolean);
       if (!labels.some(label => labelContainsTarget(label, target.normalized))) continue;
 
-      const bounds = element.bounds;
+      const bounds = getClickableBoundsForElement(elements, elementIndex);
       if (!bounds) continue;
       const left = Number(bounds.left);
       const top = Number(bounds.top);
@@ -128,6 +152,7 @@ function textWatchTapPoint(bounds) {
 module.exports = {
   MAX_TEXT_WATCH_MATCHES,
   findTextWatchMatches,
+  getClickableBoundsForElement,
   isBlockedTextWatchScreen,
   normalizeWatchText,
   textWatchTapPoint,

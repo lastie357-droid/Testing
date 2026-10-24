@@ -58,6 +58,31 @@ test('matches carrier names as whole phrases inside longer screen-reader labels'
   assert.deepEqual(matches.map(match => match.bounds.left), [10, 200]);
 });
 
+test('uses each live clickable ancestor row bound for non-clickable text children', () => {
+  const validation = validateTextWatchTargets(['sAfArIcOm']);
+  const matches = findTextWatchMatches({
+    screenWidth: 480,
+    screenHeight: 1014,
+    elements: [
+      { depth: 5, visibleToUser: true, clickable: false, bounds: { left: 0, top: 93, right: 480, bottom: 230 } },
+      { depth: 6, visibleToUser: true, clickable: true, enabled: true, bounds: { left: 0, top: 93, right: 480, bottom: 161 } },
+      { depth: 7, visibleToUser: true, text: 'SAFARICOM', clickable: false, enabled: true, bounds: { left: 66, top: 93, right: 480, bottom: 161 } },
+      { depth: 6, visibleToUser: true, clickable: true, enabled: true, bounds: { left: 0, top: 162, right: 480, bottom: 230 } },
+      { depth: 7, visibleToUser: true, text: 'Safaricom', clickable: false, enabled: true, bounds: { left: 66, top: 162, right: 480, bottom: 230 } },
+    ],
+  }, validation.targets);
+
+  assert.equal(matches.length, 2);
+  assert.deepEqual(matches.map(match => match.bounds), [
+    { left: 0, top: 93, right: 480, bottom: 161 },
+    { left: 0, top: 162, right: 480, bottom: 230 },
+  ]);
+  assert.deepEqual(matches.map(match => textWatchTapPoint(match.bounds)), [
+    { x: 240, y: 127 },
+    { x: 240, y: 196 },
+  ]);
+});
+
 test('uses the current screen tree bounds without stale cached device dimensions', () => {
   const validation = validateTextWatchTargets(['Safaricom']);
   const matches = findTextWatchMatches({

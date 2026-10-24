@@ -26,3 +26,11 @@ The dashboard build emits hashed bundles into `backend/public`, which is the dir
 **Why:** Restoring public assets after a successful source build makes the running preview serve stale dashboard code even though the source build passed.
 
 **How to apply:** Keep the feature-related `backend/public` bundle/index changes after a dashboard build, but restore unrelated APK metadata such as the obfuscation dictionary and payload package marker.
+
+## Stale backend process after a failed restart
+
+A failed Backend Server restart with `EADDRINUSE` can leave the prior `node server.js` process running and serving stale dashboard/backend code.
+
+**Why:** Restarting the workflow again repeats the port conflict until the orphaned server process is stopped.
+
+**How to apply:** Check `ps` for the exact `node server.js` process after a port conflict, stop only that stale backend process, then restart Backend Server once and verify startup logs and HTTP response.
