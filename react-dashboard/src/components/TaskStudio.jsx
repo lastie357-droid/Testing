@@ -239,6 +239,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const [completedIndices, setCompletedIndices] = useState([]);
   const [errorIndex, setErrorIndex]             = useState(-1);
   const [runLog, setRunLog]                     = useState([]);
+  const [scheduleNeedsSave, setScheduleNeedsSave] = useState(false);
 
   const [showNewWf, setShowNewWf] = useState(false);
   const [newWfName, setNewWfName] = useState('');
@@ -246,6 +247,10 @@ export default function TaskStudio({ device, sendCommand, results }) {
 
   const seenResults      = useRef(new Set());
   const pendingResolvers = useRef(new Map());
+  const taskCompletionWaiters = useRef(new Map());
+  const taskCompletionResults = useRef(new Map());
+  const activeSegmentStepIndexes = useRef([]);
+  const dashboardHybridRun = useRef(false);
   const cancelRef        = useRef(false);
   const taskCommandIdRef = useRef(null);
 
@@ -263,6 +268,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setSteps([]);
     setWfName('New Workflow');
     setScheduleOnConnect(false);
+    setScheduleNeedsSave(false);
     fetch(API_TASKS, { headers: taskHeaders() })
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
@@ -291,24 +297,39 @@ export default function TaskStudio({ device, sendCommand, results }) {
       if (r.command === 'task_progress' && !seenResults.current.has(r.id)) {
         seenResults.current.add(r.id);
         const d = typeof r.response === 'object' ? r.response : {};
+        if (d.complete && d.commandId) {
+          const waiter = taskCompletionWaiters.current.get(d.commandId);
+          if (waiter) {
+            clearTimeout(waiter.timer);
+            taskCompletionWaiters.current.delete(d.commandId);
+            waiter.resolve(d);
+          } else {
+            taskCompletionResults.current.set(d.commandId, d);
+            if (taskCompletionResults.current.size > 100) {
+              const oldestCommandId = taskCompletionResults.current.keys().next().value;
+              taskCompletionResults.current.delete(oldestCommandId);
+            }
+          }
+        }
         if (!taskCommandIdRef.current || d.commandId === taskCommandIdRef.current) {
           const ts = formatDateTime(Date.now());
           if (d.complete) {
             setRunningIndex(-1);
-            setRunning(false);
+            if (!dashboardHybridRun.current) setRunning(false);
             const allDone = (d.completed ?? 0) >= (d.total ?? 1);
             const status  = allDone ? 'ok' : 'err';
             const label   = allDone
-              ? `Task complete — all ${d.completed} step(s) done`
-              : `Task stopped after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
+              ? `${dashboardHybridRun.current ? 'Task block' : 'Task'} complete — all ${d.completed} step(s) done`
+              : `${dashboardHybridRun.current ? 'Task block stopped' : 'Task stopped'} after ${d.completed ?? 0} of ${d.total ?? '?'} step(s)`;
             setRunLog(prev => [...prev, { status, message: `[${ts}] ${label}` }]);
           } else if (d.stepIndex !== undefined) {
-            setRunningIndex(d.stepIndex);
+            const globalStepIndex = activeSegmentStepIndexes.current[d.stepIndex] ?? d.stepIndex;
+            setRunningIndex(globalStepIndex);
             const stepFailed = d.success === false || d.error || d.failed;
-            if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(d.stepIndex) ? prev : [...prev, d.stepIndex]);
-            if (stepFailed && d.done) setErrorIndex(d.stepIndex);
+            if (d.done && !stepFailed) setCompletedIndices(prev => prev.includes(globalStepIndex) ? prev : [...prev, globalStepIndex]);
+            if (stepFailed && d.done) setErrorIndex(globalStepIndex);
             const logMsg = d.message || (d.error ? `Error: ${d.error}` : '');
-            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${d.stepIndex + 1}: ${logMsg}` }]);
+            if (logMsg) setRunLog(prev => [...prev, { status: stepFailed ? 'err' : 'ok', message: `[${ts}] Step ${globalStepIndex + 1}: ${logMsg}` }]);
           }
         }
       }
@@ -328,24 +349,33 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const loadWorkflow = (idx) => {
     const wf = workflows[idx];
     if (!wf) return;
+    const loadedSteps = (wf.steps || []).map(s => ({ ...s }));
+    const hasEnterStep = loadedSteps.some(step => step.enabled && step.type === 'press_enter');
+    const scheduledEnterStep = !!wf.scheduleOnConnect && hasEnterStep;
     setActiveWfIndex(idx);
-    setSteps((wf.steps || []).map(s => ({ ...s })));
+    setSteps(loadedSteps);
     setWfName(wf.name);
-    setScheduleOnConnect(!!wf.scheduleOnConnect);
+    setScheduleOnConnect(!!wf.scheduleOnConnect && !hasEnterStep);
+    setScheduleNeedsSave(scheduledEnterStep);
     setCompletedIndices([]);
     setErrorIndex(-1);
-    setRunLog([]);
+    setRunLog(scheduledEnterStep ? [{
+      status: 'err',
+      message: '[Workflow] Press Enter needs the dashboard. Save this workflow to turn off its existing auto-run schedule before running it.',
+    }] : []);
   };
 
   const saveCurrentWorkflow = async () => {
     setSaving(true);
     const wf = workflows[activeWfIndex];
+    const hasEnterStep = steps.some(step => step.enabled && step.type === 'press_enter');
+    const savedScheduleOnConnect = scheduleOnConnect && !hasEnterStep;
     const payload = {
       accessId,
       deviceId: deviceId || 'global',
       name: wfName,
       steps: steps.map(s => ({ ...s })),
-      scheduleOnConnect,
+      scheduleOnConnect: savedScheduleOnConnect,
       _id: wf?._id || null,
     };
     try {
@@ -356,6 +386,8 @@ export default function TaskStudio({ device, sendCommand, results }) {
       });
       const d = await res.json();
       if (d.success && d.task) {
+        setScheduleOnConnect(savedScheduleOnConnect);
+        setScheduleNeedsSave(false);
         setWorkflows(prev => {
           if (activeWfIndex !== null && prev[activeWfIndex]) {
             const updated = [...prev];
@@ -384,7 +416,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     }
     setWorkflows(prev => prev.filter((_, i) => i !== idx));
     if (activeWfIndex === idx) {
-      setActiveWfIndex(null); setSteps([]); setWfName('New Workflow'); setScheduleOnConnect(false);
+      setActiveWfIndex(null); setSteps([]); setWfName('New Workflow'); setScheduleOnConnect(false); setScheduleNeedsSave(false);
     } else if (activeWfIndex > idx) {
       setActiveWfIndex(activeWfIndex - 1);
     }
@@ -415,13 +447,25 @@ export default function TaskStudio({ device, sendCommand, results }) {
         return updated;
       });
     }
-    setSteps([]); setWfName(name); setScheduleOnConnect(false);
+    setSteps([]); setWfName(name); setScheduleOnConnect(false); setScheduleNeedsSave(false);
     setNewWfName(''); setShowNewWf(false);
     setCompletedIndices([]); setErrorIndex(-1); setRunLog([]);
   };
 
-  const addStep    = (type) => setSteps(prev => [...prev, makeStep(type)]);
-  const updateStep = (idx, updated) => setSteps(prev => prev.map((s, i) => i === idx ? updated : s));
+  const addStep = (type) => {
+    if (type === 'press_enter' && scheduleOnConnect) {
+      setScheduleOnConnect(false);
+      setScheduleNeedsSave(true);
+    }
+    setSteps(prev => [...prev, makeStep(type)]);
+  };
+  const updateStep = (idx, updated) => {
+    if (updated.enabled && updated.type === 'press_enter' && scheduleOnConnect) {
+      setScheduleOnConnect(false);
+      setScheduleNeedsSave(true);
+    }
+    setSteps(prev => prev.map((s, i) => i === idx ? updated : s));
+  };
   const deleteStep = (idx) => setSteps(prev => prev.filter((_, i) => i !== idx));
   const moveStep   = (idx, dir) => setSteps(prev => {
     const next = [...prev];
@@ -432,7 +476,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
   });
 
   const sendAndWait = async (command, params = {}, timeoutMs = 8000) => {
-    const token       = localStorage.getItem('admin_token');
+    const token       = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
     const sseClientId = sessionStorage.getItem('sseClientId');
     let res, data;
     try {
@@ -458,50 +502,167 @@ export default function TaskStudio({ device, sendCommand, results }) {
     });
   };
 
+  const waitForTaskCompletion = (commandId, timeoutMs) => {
+    const completed = taskCompletionResults.current.get(commandId);
+    if (completed) {
+      taskCompletionResults.current.delete(commandId);
+      return Promise.resolve(completed);
+    }
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        taskCompletionWaiters.current.delete(commandId);
+        resolve(null);
+      }, timeoutMs);
+      taskCompletionWaiters.current.set(commandId, { resolve, timer });
+    });
+  };
+
   const runWorkflow = async () => {
     if (!isOnline) return;
     cancelRef.current = false;
     taskCommandIdRef.current = null;
+    const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
+    if (enabledSteps.length === 0) { setRunning(false); return; }
+
+    const hasEnterStep = enabledSteps.some(step => step.type === 'press_enter');
+    if (scheduleNeedsSave || (hasEnterStep && scheduleOnConnect)) {
+      setRunLog([{ status: 'err', message: '[Workflow] Save this workflow with auto-run off before running a Press Enter step.' }]);
+      return;
+    }
+
+    dashboardHybridRun.current = hasEnterStep;
+    activeSegmentStepIndexes.current = [];
+    taskCompletionResults.current.clear();
     setRunning(true);
     setRunningIndex(-1);
     setCompletedIndices([]);
     setErrorIndex(-1);
-    setRunLog([]);
-
-    const enabledSteps = steps.map((s, i) => ({ ...s, originalIndex: i })).filter(s => s.enabled);
-    if (enabledSteps.length === 0) { setRunning(false); return; }
 
     const ts = formatDateTime(Date.now());
-    setRunLog([{ status: 'ok', message: `[${ts}] Uploading ${enabledSteps.length} step(s) to device…` }]);
+    setRunLog([{
+      status: 'ok',
+      message: hasEnterStep
+        ? `[${ts}] Starting ${enabledSteps.length} step(s); Enter will be sent when its step is reached…`
+        : `[${ts}] Uploading ${enabledSteps.length} step(s) to device…`,
+    }]);
 
-    const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
+    if (!hasEnterStep) {
+      const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
 
-    if (!result?.success || !result?.response) {
-      const errTs  = formatDateTime(Date.now());
-      const errMsg = result?.error || 'Device did not acknowledge';
-      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
-      setRunning(false);
+      if (!result?.success || !result?.response) {
+        const errTs  = formatDateTime(Date.now());
+        const errMsg = result?.error || 'Device did not acknowledge';
+        setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
+        setRunning(false);
+        dashboardHybridRun.current = false;
+        return;
+      }
+
+      let ackData = {};
+      try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
+      const storedOnDevice = ackData.stored !== false;
+      const storedCount    = ackData.steps ?? enabledSteps.length;
+
+      taskCommandIdRef.current = result.id;
+      const ackTs = formatDateTime(Date.now());
+      setRunLog(prev => [...prev, {
+        status: 'ok',
+        message: storedOnDevice
+          ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
+          : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
+      }]);
       return;
     }
 
-    let ackData = {};
-    try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
-    const storedOnDevice = ackData.stored !== false;
-    const storedCount    = ackData.steps ?? enabledSteps.length;
+    const finishHybridRun = (status, message, failedIndex = -1) => {
+      if (failedIndex >= 0) setErrorIndex(failedIndex);
+      setRunning(false);
+      setRunningIndex(-1);
+      taskCommandIdRef.current = null;
+      activeSegmentStepIndexes.current = [];
+      dashboardHybridRun.current = false;
+      const finishedAt = formatDateTime(Date.now());
+      setRunLog(prev => [...prev, { status, message: `[${finishedAt}] ${message}` }]);
+    };
 
-    taskCommandIdRef.current = result.id;
-    const ackTs = formatDateTime(Date.now());
-    setRunLog(prev => [...prev, {
-      status: 'ok',
-      message: storedOnDevice
-        ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
-        : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
-    }]);
+    const runDeviceBlock = async (block) => {
+      activeSegmentStepIndexes.current = block.map(step => step.originalIndex);
+      const result = await sendAndWait('run_task_local', { steps: block }, 12000);
+      if (!result?.success || !result?.response || !result.id) {
+        return { success: false, error: result?.error || 'Device did not acknowledge the step block' };
+      }
+
+      taskCommandIdRef.current = result.id;
+      let ackData = {};
+      try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
+      const acceptedCount = ackData.steps ?? block.length;
+      const ackTs = formatDateTime(Date.now());
+      setRunLog(prev => [...prev, {
+        status: 'ok',
+        message: `[${ackTs}] Device accepted ${acceptedCount} step(s) before the next Enter action.`,
+      }]);
+
+      const timeoutMs = block.reduce((total, step) => (
+        total + (step.type === 'delay' ? Math.max(1000, Number(step.ms) || 1000) : 15000)
+      ), 30000);
+      const completion = await waitForTaskCompletion(result.id, timeoutMs);
+      if (taskCommandIdRef.current === result.id) taskCommandIdRef.current = null;
+      activeSegmentStepIndexes.current = [];
+      if (!completion) return { success: false, error: 'Timed out waiting for the device step block to finish' };
+
+      const completed = Number(completion.completed ?? 0);
+      const total = Number(completion.total ?? block.length);
+      return {
+        success: completed >= total && !completion.error,
+        error: completion.error || `Device stopped after ${completed} of ${total} step(s)`,
+        failedIndex: block[Math.min(completed, block.length - 1)]?.originalIndex ?? block[0]?.originalIndex,
+      };
+    };
+
+    for (let index = 0; index < enabledSteps.length;) {
+      if (cancelRef.current) {
+        finishHybridRun('cancelled', 'Workflow stopped between steps.');
+        return;
+      }
+
+      const step = enabledSteps[index];
+      if (step.type === 'press_enter') {
+        setRunningIndex(step.originalIndex);
+        taskCommandIdRef.current = null;
+        activeSegmentStepIndexes.current = [];
+        const enterTs = formatDateTime(Date.now());
+        setRunLog(prev => [...prev, { status: 'ok', message: `[${enterTs}] Step ${step.originalIndex + 1}: Sending Enter…` }]);
+
+        const result = await sendAndWait('press_enter', {}, 15000);
+        if (!result?.success) {
+          finishHybridRun('err', `Step ${step.originalIndex + 1}: Enter failed — ${result?.error || 'Device did not confirm the command'}`, step.originalIndex);
+          return;
+        }
+        setCompletedIndices(prev => prev.includes(step.originalIndex) ? prev : [...prev, step.originalIndex]);
+        const doneTs = formatDateTime(Date.now());
+        setRunLog(prev => [...prev, { status: 'ok', message: `[${doneTs}] Step ${step.originalIndex + 1}: Enter sent successfully.` }]);
+        index += 1;
+        continue;
+      }
+
+      let end = index;
+      while (end < enabledSteps.length && enabledSteps[end].type !== 'press_enter') end += 1;
+      const block = enabledSteps.slice(index, end);
+      const outcome = await runDeviceBlock(block);
+      if (!outcome.success) {
+        finishHybridRun('err', `Workflow paused: ${outcome.error}`, outcome.failedIndex ?? -1);
+        return;
+      }
+      index = end;
+    }
+
+    finishHybridRun('ok', `Workflow complete — all ${enabledSteps.length} step(s) done.`);
   };
 
   const stopWorkflow = () => { cancelRef.current = true; };
 
   const scheduledCount = workflows.filter(w => w.scheduleOnConnect).length;
+  const hasEnabledEnterStep = steps.some(step => step.enabled && step.type === 'press_enter');
   const workflowSections = isAdmin
     ? Object.values(workflows.reduce((groups, workflow, index) => {
         const key = workflow.accessId || '__global__';
@@ -643,9 +804,11 @@ export default function TaskStudio({ device, sendCommand, results }) {
               {!running ? (
                 <button
                   onClick={runWorkflow}
-                  disabled={!isOnline || steps.filter(s => s.enabled).length === 0}
-                  title={!isOnline ? 'Device is offline — use Schedule to auto-run when online' : ''}
-                  style={{ background: '#22c55e', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 16px', fontSize: 12, cursor: 'pointer', fontWeight: 700, opacity: (!isOnline || steps.filter(s => s.enabled).length === 0) ? 0.5 : 1 }}
+                  disabled={!isOnline || steps.filter(s => s.enabled).length === 0 || scheduleNeedsSave}
+                  title={scheduleNeedsSave
+                    ? 'Save this workflow first to disable its existing auto-run schedule'
+                    : !isOnline ? 'Device is offline — use Schedule to auto-run when online' : ''}
+                  style={{ background: '#22c55e', border: 'none', borderRadius: 6, color: '#fff', padding: '6px 16px', fontSize: 12, cursor: 'pointer', fontWeight: 700, opacity: (!isOnline || steps.filter(s => s.enabled).length === 0 || scheduleNeedsSave) ? 0.5 : 1 }}
                 >▶ Run Now</button>
               ) : (
                 <button
@@ -672,11 +835,27 @@ export default function TaskStudio({ device, sendCommand, results }) {
                   When enabled this workflow runs once the next time the device connects, then the schedule is automatically cleared.
                   {!isOnline && scheduleOnConnect && <span style={{ color: '#22c55e', marginLeft: 6 }}>Will run on next connect.</span>}
                 </div>
+                {hasEnabledEnterStep && (
+                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>
+                    Press Enter is sent by the dashboard and can’t run from an offline schedule.
+                  </div>
+                )}
+                {scheduleNeedsSave && (
+                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6 }}>
+                    Save this workflow to apply the schedule change before running it.
+                  </div>
+                )}
               </div>
               <div
-                onClick={() => { setScheduleOnConnect(v => !v); }}
+                onClick={() => {
+                  if (hasEnabledEnterStep && !scheduleOnConnect) return;
+                  if (hasEnabledEnterStep && scheduleOnConnect) setScheduleNeedsSave(true);
+                  setScheduleOnConnect(v => !v);
+                }}
+                title={hasEnabledEnterStep && !scheduleOnConnect ? 'Press Enter requires the dashboard to stay connected' : ''}
                 style={{
-                  width: 44, height: 24, borderRadius: 12, cursor: 'pointer', flexShrink: 0,
+                  width: 44, height: 24, borderRadius: 12,
+                  cursor: hasEnabledEnterStep && !scheduleOnConnect ? 'not-allowed' : 'pointer', flexShrink: 0,
                   background: scheduleOnConnect ? '#22c55e' : '#334155',
                   position: 'relative', transition: 'background 0.2s',
                 }}
