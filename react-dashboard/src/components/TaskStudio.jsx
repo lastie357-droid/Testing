@@ -11,6 +11,7 @@ const STEP_TYPES = [
   { type: 'press_home',      label: 'Press Home',         icon: '🏠',  color: '#06b6d4' },
   { type: 'press_back',      label: 'Press Back',         icon: '◀️',  color: '#06b6d4' },
   { type: 'press_recents',   label: 'Press Recents',      icon: '⬜',  color: '#06b6d4' },
+  { type: 'press_enter',     label: 'Press Enter',        icon: '↵',   color: '#06b6d4' },
   { type: 'block_screen',    label: 'Block Screen',       icon: '⬛',  color: '#475569' },
   { type: 'unblock_screen',  label: 'Unblock Screen',     icon: '🔲',  color: '#475569' },
   { type: 'mute_device',     label: 'Mute',               icon: '🔇',  color: '#dc2626' },
@@ -154,7 +155,7 @@ function StepEditor({ step, apps, onChange }) {
           )}
         </div>
       );
-    case 'press_home': case 'press_back': case 'press_recents':
+    case 'press_home': case 'press_back': case 'press_recents': case 'press_enter':
     case 'block_screen': case 'unblock_screen':
     case 'mute_device': case 'unmute_device':
     case 'swipe_up': case 'swipe_down': case 'swipe_left': case 'swipe_right':
