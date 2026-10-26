@@ -36,7 +36,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected, isActive = true, screenBlocked = false, setScreenBlocked = () => {} }) {
+export default function ControlCenter({ device, sendCommand, sendActionAndRefreshScreen, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected, isActive = true, screenBlocked = false, setScreenBlocked = () => {} }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -272,7 +272,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   const doPaste = () => {
     if (!pasteText.trim()) return;
     sendCommand(deviceId, 'set_clipboard', { text: pasteText });
-    setTimeout(() => sendCommand(deviceId, 'input_text', { text: pasteText }), 200);
+    setTimeout(() => sendActionAndRefreshScreen(deviceId, 'input_text', { text: pasteText }), 200);
     setShowPasteInput(false);
     setPasteText('');
   };
@@ -501,6 +501,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
             <ScreenReaderView
               device={device}
               sendCommand={sendCommand}
+              sendActionAndRefreshScreen={sendActionAndRefreshScreen}
               results={results}
               screenPushData={screenReaderPushData}
               connected={connected}
@@ -595,7 +596,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               />
               <CtrlBtn
                 icon="↵" label="Enter"
-                onClick={() => cmd('press_enter')}
+                onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
                 disabled={!isOnline}
                 color="#7c3aed"
               />

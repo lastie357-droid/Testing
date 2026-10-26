@@ -6,6 +6,7 @@ import ScreenToggleAutomation from './ScreenToggleAutomation.jsx';
 export default function ScreenControl({
   device,
   sendCommand,
+  sendActionAndRefreshScreen,
   results,
   streamFrame,
   send,
@@ -287,7 +288,7 @@ export default function ScreenControl({
   // ── Paste text ──
   const handlePaste = useCallback(() => {
     if (!isOnline || !pasteText.trim()) return;
-    sendCommand(deviceId, 'input_text', { text: pasteText });
+    sendActionAndRefreshScreen(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
   }, [pasteText, deviceId, isOnline, sendCommand]);
 
@@ -415,7 +416,7 @@ export default function ScreenControl({
       className="sc-nav-btn"
       onClick={() => {
         if (!isStreamingRef.current) return;
-        sendCommand(deviceId, command);
+        sendActionAndRefreshScreen(deviceId, command);
       }}
       disabled={!isOnline || !isStreaming}
       title={command}
@@ -615,7 +616,7 @@ export default function ScreenControl({
                 ↵ Send
               </button>
               <button
-                onClick={() => { sendCommand(deviceId, 'press_enter'); }}
+                onClick={() => { sendActionAndRefreshScreen(deviceId, 'press_enter'); }}
                 disabled={!isOnline || !isStreaming}
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: !isOnline || !isStreaming ? 'not-allowed' : 'pointer', opacity: !isOnline || !isStreaming ? 0.55 : 1 }}
                 title="Press Enter / IME key on device"

@@ -114,6 +114,7 @@ function parseScreenResponse(result) {
 export default function ScreenReaderView({
   device,
   sendCommand,
+  sendActionAndRefreshScreen,
   results,
   screenPushData,
   connected,
@@ -529,7 +530,7 @@ export default function ScreenReaderView({
 
   const handlePaste = () => {
     if (!pasteText.trim() || settingsNavigation.running) return;
-    sendCommand(deviceId, 'input_text', { text: pasteText });
+    sendActionAndRefreshScreen(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
   };
@@ -554,7 +555,7 @@ export default function ScreenReaderView({
   }, [isOnline, settingsNavigation.running, devW, devH, deviceId, sendCommand, queueSettingsScreenRead]);
 
   const navBtn = (label, cmd, icon) => (
-    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline || settingsNavigation.running}>
+    <button className="sc-nav-btn" onClick={() => sendActionAndRefreshScreen(deviceId, cmd)} disabled={!isOnline || settingsNavigation.running}>
       {icon} {label}
     </button>
   );
@@ -936,7 +937,7 @@ export default function ScreenReaderView({
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => sendCommand(deviceId, 'press_enter')}
+                onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
                 disabled={!isOnline || settingsNavigation.running}
                 title="Press Enter / IME action key on device"
               >

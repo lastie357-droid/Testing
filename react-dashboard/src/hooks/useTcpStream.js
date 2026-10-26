@@ -123,7 +123,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
     // ── command:send → POST /api/commands ────────────────────────────
     if (event === 'command:send') {
       const { deviceId, command, params } = data || {};
-      fetch('/api/commands', {
+      return fetch('/api/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json',
                    'Authorization': `Bearer ${token}` },
@@ -142,7 +142,7 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
           return d;
         })
         .then(d => {
-          if (!d) return;
+          if (!d) return null;
           if (d.commandId) {
             // Synthesise a command:sent event so App.jsx pending-map stays in sync
             onMessageRef.current('command:sent', {
@@ -153,11 +153,12 @@ export function useTcpStream(onMessage, tokenStorageKey = null) {
           } else if (d.error) {
             onMessageRef.current('command:error', { message: d.error, deviceId, command });
           }
+          return d;
         })
         .catch(err => {
           onMessageRef.current('command:error', { message: err.message });
+          return null;
         });
-      return;
     }
 
     // Subscribe the backend to only the selected device's high-bandwidth

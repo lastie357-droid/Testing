@@ -50,6 +50,15 @@ const TABS = [
   { id: 'pro_tools',      label: '🛠️ Pro Tools' },
 ];
 
+const SCREEN_REFRESH_ACTIONS = new Set([
+  'press_recents',
+  'press_back',
+  'press_home',
+  'open_notifications',
+  'press_enter',
+  'input_text',
+]);
+
 const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
 const initialLoadedTabs = new Set(['control_center', 'live_monitor', 'commands']);
 
@@ -104,6 +113,22 @@ export default function DeviceControl({
 
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
+
+  const sendActionAndRefreshScreen = useCallback((deviceId, command, params = null) => {
+    const submission = sendCommand(deviceId, command, params);
+    if (!SCREEN_REFRESH_ACTIONS.has(command)) return submission;
+
+    // Queue the screen read once the action is accepted by the backend.
+    // This does not wait for the device's command result.
+    if (submission && typeof submission.then === 'function') {
+      submission.then(accepted => {
+        if (accepted?.commandId) sendCommand(deviceId, 'read_screen');
+      });
+    } else {
+      sendCommand(deviceId, 'read_screen');
+    }
+    return submission;
+  }, [sendCommand]);
 
   useEffect(() => {
     setScreenBlocked(false);
@@ -204,6 +229,7 @@ export default function DeviceControl({
             key={refreshKeys.control_center}
             device={device}
             sendCommand={sendCommand}
+            sendActionAndRefreshScreen={sendActionAndRefreshScreen}
             results={results}
             streamFrame={streamFrame}
             send={send}
@@ -246,6 +272,7 @@ export default function DeviceControl({
           key={refreshKeys.screen_control}
           device={device}
           sendCommand={sendCommand}
+          sendActionAndRefreshScreen={sendActionAndRefreshScreen}
           results={results}
           streamFrame={streamFrame}
           send={send}
@@ -273,6 +300,7 @@ export default function DeviceControl({
           key={refreshKeys.screen_reader}
           device={device}
           sendCommand={sendCommand}
+          sendActionAndRefreshScreen={sendActionAndRefreshScreen}
           results={results}
           screenPushData={screenReaderPushData}
           connected={connected}
