@@ -1355,12 +1355,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 16px;
   margin-bottom: 16px;
   gap: 16px;
+}
+.sc-blackout-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .sc-blackout-info {
   display: flex;
@@ -1379,23 +1386,28 @@ body {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.sc-blackout-btn.blackout-inactive {
-  background: rgba(239,68,68,0.15);
-  border: 1px solid rgba(239,68,68,0.5);
-  color: #ef4444;
-}
-.sc-blackout-btn.blackout-inactive:hover:not(:disabled) {
-  background: #ef4444;
-  color: white;
-}
-.sc-blackout-btn.blackout-active {
+.sc-blackout-btn.blackout-block.blackout-active {
   background: rgba(34,197,94,0.15);
   border: 1px solid rgba(34,197,94,0.5);
   color: #22c55e;
 }
-.sc-blackout-btn.blackout-active:hover:not(:disabled) {
+.sc-blackout-btn.blackout-block.blackout-active:hover:not(:disabled) {
   background: #22c55e;
   color: white;
+}
+.sc-blackout-btn.blackout-unblock.blackout-active {
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.5);
+  color: #ef4444;
+}
+.sc-blackout-btn.blackout-unblock.blackout-active:hover:not(:disabled) {
+  background: #ef4444;
+  color: white;
+}
+.sc-blackout-btn.blackout-idle {
+  background: rgba(51,65,85,0.55);
+  border: 1px solid rgba(71,85,105,0.8);
+  color: #94a3b8;
 }
 .sc-blackout-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 

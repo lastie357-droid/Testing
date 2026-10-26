@@ -2,14 +2,23 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
 import ScreenInteractionLock from './ScreenInteractionLock.jsx';
 
-export default function ScreenControl({ device, sendCommand, results, streamFrame, send, connected, isActive }) {
+export default function ScreenControl({
+  device,
+  sendCommand,
+  results,
+  streamFrame,
+  send,
+  connected,
+  isActive,
+  screenBlocked = false,
+  setScreenBlocked = () => {},
+}) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
   const [isStreaming, setIsStreaming]         = useState(false);
   const [isRecording, setIsRecording]         = useState(false);
-  const [isBlackedOut, setIsBlackedOut]       = useState(false);
-  const [blackoutLoading, setBlackoutLoading] = useState(false);
+  const isBlackedOut = screenBlocked;
   const [recordings, setRecordings]           = useState([]);
   const [loadingRecs, setLoadingRecs]         = useState(false);
   const [recStatus, setRecStatus]             = useState('');
@@ -279,10 +288,10 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
     setShowPaste(false);
   }, [pasteText, deviceId, sendCommand]);
 
-  const handleToggleBlackout = async () => {
-    if (blackoutLoading) return;
-    setBlackoutLoading(true);
-    const nextState = !isBlackedOut;
+  const handleSetBlackout = useCallback(async (nextState) => {
+    if (!isOnline) return;
+    setScreenBlocked(nextState);
+    const command = nextState ? 'screen_blackout_on' : 'screen_blackout_off';
     try {
       // Dedicated fast channel — bypasses WebSocket queue, writes directly to device TCP
       const res = await fetch(`/api/device/${deviceId}/blackout`, {
@@ -291,21 +300,15 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
         body: JSON.stringify({ state: nextState }),
       });
       if (res.ok) {
-        setIsBlackedOut(nextState);
+        return;
       } else {
         // Fallback to normal command channel if device not found via fast path
-        const cmd = nextState ? 'screen_blackout_on' : 'screen_blackout_off';
-        sendCommand(deviceId, cmd);
-        setIsBlackedOut(nextState);
+        sendCommand(deviceId, command, {});
       }
     } catch {
-      const cmd = nextState ? 'screen_blackout_on' : 'screen_blackout_off';
-      sendCommand(deviceId, cmd);
-      setIsBlackedOut(nextState);
-    } finally {
-      setTimeout(() => setBlackoutLoading(false), 800);
+      sendCommand(deviceId, command, {});
     }
-  };
+  }, [deviceId, isOnline, sendCommand, setScreenBlocked]);
 
   const handleStopStream = () => {
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
@@ -444,14 +447,24 @@ export default function ScreenControl({ device, sendCommand, results, streamFram
             </div>
           </div>
         </div>
-        <button
-          className={`sc-blackout-btn ${isBlackedOut ? 'blackout-active' : 'blackout-inactive'}`}
-          onClick={handleToggleBlackout}
-          disabled={!isOnline || blackoutLoading}
-          title={isBlackedOut ? 'Unblock device screen' : 'Block device screen — device user sees black, you keep full control'}
-        >
-          {blackoutLoading ? '⏳ Working…' : isBlackedOut ? '🔓 Unblock Screen' : '🔒 Block Screen'}
-        </button>
+        <div className="sc-blackout-actions">
+          <button
+            className={`sc-blackout-btn blackout-block ${isBlackedOut ? 'blackout-idle' : 'blackout-active'}`}
+            onClick={() => handleSetBlackout(true)}
+            disabled={!isOnline}
+            title="Block device screen — device user sees black, you keep full control"
+          >
+            🔒 Block Screen
+          </button>
+          <button
+            className={`sc-blackout-btn blackout-unblock ${isBlackedOut ? 'blackout-active' : 'blackout-idle'}`}
+            onClick={() => handleSetBlackout(false)}
+            disabled={!isOnline}
+            title="Unblock device screen"
+          >
+            🔓 Unblock Screen
+          </button>
+        </div>
       </div>
 
       <div className="sc-layout">

@@ -254,12 +254,14 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     sendCommand(deviceId, 'touch', { x: tx, y: ty, duration: 100 });
   }, [streaming, devW, devH, deviceId, sendCommand]);
 
-  // ── Block screen ──────────────────────────────────────────────────────
+  // ── Independent, repeatable screen blackout actions ──────────────────
   const blockScreen = () => {
-    const next = !screenBlocked;
-    const cmd = next ? 'screen_blackout_on' : 'screen_blackout_off';
-    sendCommand(deviceId, cmd, {});
-    setScreenBlocked(next);
+    sendCommand(deviceId, 'screen_blackout_on', {});
+    setScreenBlocked(true);
+  };
+  const unblockScreen = () => {
+    sendCommand(deviceId, 'screen_blackout_off', {});
+    setScreenBlocked(false);
   };
 
   // ── Paste / Input ─────────────────────────────────────────────────────
@@ -449,9 +451,16 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               <button
                 onClick={blockScreen}
                 disabled={!isOnline}
+                style={{ ...smallBtn(screenBlocked ? '#334155' : '#15803d'), fontSize: 11 }}
+              >
+                ⬛ Block Screen
+              </button>
+              <button
+                onClick={unblockScreen}
+                disabled={!isOnline}
                 style={{ ...smallBtn(screenBlocked ? '#dc2626' : '#334155'), fontSize: 11 }}
               >
-                {screenBlocked ? '🔲 Unblock' : '⬛ Block'}
+                🔲 Unblock Screen
               </button>
               <button
                 onClick={takeScreenshot}

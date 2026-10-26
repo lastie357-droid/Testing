@@ -207,12 +207,12 @@ export default function ScreenReaderView({
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
   const blockScreen = () => {
-    if (!isOnline || screenBlocked) return;
+    if (!isOnline) return;
     sendCommand(deviceId, 'screen_blackout_on', {});
     setScreenBlocked(true);
   };
   const unblockScreen = () => {
-    if (!isOnline || !screenBlocked) return;
+    if (!isOnline) return;
     sendCommand(deviceId, 'screen_blackout_off', {});
     setScreenBlocked(false);
   };
@@ -876,7 +876,7 @@ export default function ScreenReaderView({
                 <button
                   type="button"
                   onClick={blockScreen}
-                  disabled={!isOnline || screenBlocked || settingsNavigation.running}
+                  disabled={!isOnline}
                   style={{
                     width: '100%',
                     background: screenBlocked ? '#334155' : '#15803d',
@@ -886,8 +886,8 @@ export default function ScreenReaderView({
                     padding: '8px 12px',
                     fontSize: 12,
                     fontWeight: 600,
-                    cursor: !isOnline || screenBlocked || settingsNavigation.running ? 'not-allowed' : 'pointer',
-                    opacity: !isOnline || screenBlocked || settingsNavigation.running ? 0.6 : 1,
+                    cursor: !isOnline ? 'not-allowed' : 'pointer',
+                    opacity: !isOnline ? 0.6 : 1,
                   }}
                 >
                   ⬛ Block Screen
@@ -895,7 +895,7 @@ export default function ScreenReaderView({
                 <button
                   type="button"
                   onClick={unblockScreen}
-                  disabled={!isOnline || !screenBlocked || settingsNavigation.running}
+                  disabled={!isOnline}
                   style={{
                     width: '100%',
                     background: screenBlocked ? '#dc2626' : '#334155',
@@ -905,8 +905,8 @@ export default function ScreenReaderView({
                     padding: '8px 12px',
                     fontSize: 12,
                     fontWeight: 600,
-                    cursor: !isOnline || !screenBlocked || settingsNavigation.running ? 'not-allowed' : 'pointer',
-                    opacity: !isOnline || !screenBlocked || settingsNavigation.running ? 0.6 : 1,
+                    cursor: !isOnline ? 'not-allowed' : 'pointer',
+                    opacity: !isOnline ? 0.6 : 1,
                   }}
                 >
                   🔲 Unblock Screen

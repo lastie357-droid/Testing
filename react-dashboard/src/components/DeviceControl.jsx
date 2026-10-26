@@ -250,6 +250,8 @@ export default function DeviceControl({
           send={send}
           connected={connected}
           isActive={activeTab === 'screen_control'}
+          screenBlocked={screenBlocked}
+          setScreenBlocked={setScreenBlocked}
         />
       </div>}
 
