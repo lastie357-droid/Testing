@@ -59,6 +59,11 @@ export default function ScreenControl({
 
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
+  const sendPhoneInput = useCallback((command, params) => {
+    const send = isStreamingRef.current ? sendCommand : sendActionAndRefreshScreen;
+    return send(deviceId, command, params);
+  }, [deviceId, sendActionAndRefreshScreen, sendCommand]);
+
   // ── Session reset on mount / device change ──
   // Clears stale pending commands, streaming state, frame throttle, and all
   // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
@@ -224,18 +229,17 @@ export default function ScreenControl({
 
   // ── Pointer events for touch + swipe ──
   const handlePointerDown = useCallback((e) => {
-    // Allow interaction when streaming OR when block screen is active (auto-sends frames)
-    if (!isOnline || !e.isPrimary || e.button !== 0 || (!isStreamingRef.current && !isBlackedOut)) return;
+    if (!isOnline || !e.isPrimary || e.button !== 0 || e.target.closest?.('button')) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     touchStartRef.current = { x: e.clientX, y: e.clientY, time: performance.now(), pointerId: e.pointerId };
-  }, [isOnline, isBlackedOut]);
+  }, [isOnline]);
 
   const handlePointerUp = useCallback((e) => {
     const start = touchStartRef.current;
     if (!start || start.pointerId !== e.pointerId) return;
     touchStartRef.current = null;
-    if (!isOnline || (!isStreamingRef.current && !isBlackedOut)) return;
+    if (!isOnline) return;
     e.preventDefault();
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
@@ -252,14 +256,14 @@ export default function ScreenControl({
         return; // duplicate, ignore
       }
       lastTouchRef.current = { key: touchKey, time: now };
-      sendCommand(deviceId, 'touch', { x, y });
+      sendPhoneInput('touch', { x, y });
     } else {
       // Swipe
       const from = toDeviceCoords(start.x, start.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
-      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
+      sendPhoneInput('swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
     }
-  }, [isOnline, isBlackedOut, toDeviceCoords, deviceId, sendCommand]);
+  }, [isOnline, toDeviceCoords, sendPhoneInput]);
 
   const handlePointerCancel = useCallback((e) => {
     if (touchStartRef.current?.pointerId === e.pointerId) touchStartRef.current = null;
@@ -267,7 +271,7 @@ export default function ScreenControl({
 
   // ── Directional swipe buttons ──
   const sendSwipe = useCallback((direction) => {
-    if (!isOnline || !isStreamingRef.current) return;
+    if (!isOnline) return;
     const midX = devW ? Math.round(devW / 2) : 540;
     const midY = devH ? Math.round(devH / 2) : 960;
     const step = devH ? Math.round(devH * 0.3) : 300;
@@ -278,8 +282,8 @@ export default function ScreenControl({
       case 'left':  x1 = midX + step; x2 = midX - step; break;
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
-    sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-  }, [isOnline, devW, devH, deviceId, sendCommand]);
+    sendPhoneInput('swipe', { x1, y1, x2, y2, duration: 400 });
+  }, [isOnline, devW, devH, sendPhoneInput]);
 
   // ── Paste text ──
   const handlePaste = useCallback(() => {
@@ -411,10 +415,9 @@ export default function ScreenControl({
     <button
       className="sc-nav-btn"
       onClick={() => {
-        if (!isStreamingRef.current) return;
         sendActionAndRefreshScreen(deviceId, command);
       }}
-      disabled={!isOnline || !isStreaming}
+      disabled={!isOnline}
       title={command}
     >
       {icon} {label}
@@ -482,7 +485,7 @@ export default function ScreenControl({
               <div className="sc-phone-notch" />
               <div
                 className="sc-phone-screen-wrap"
-                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && (isStreaming || isBlackedOut) ? 'crosshair' : 'default', userSelect: 'none', touchAction: 'none' }}
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none', touchAction: 'none' }}
                 ref={screenRef}
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}
@@ -507,7 +510,7 @@ export default function ScreenControl({
                       {!isOnline
                         ? 'Device offline'
                         : !isStreaming
-                          ? 'Click Start Stream to begin'
+                          ? 'Tap or swipe to control, or start live view'
                           : <>
                               <span style={{ color: '#a78bfa' }}>Connecting…</span>
                               <br />
@@ -560,11 +563,11 @@ export default function ScreenControl({
               </div>
               {/* ── Swipe direction buttons below screen ── */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
-                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline || !isStreaming} title="Swipe Up">▲</button>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline} title="Swipe Up">▲</button>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline || !isStreaming} title="Swipe Left">◀</button>
-                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline || !isStreaming} title="Swipe Down">▼</button>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline || !isStreaming} title="Swipe Right">▶</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
                 </div>
               </div>
               <button
@@ -613,8 +616,8 @@ export default function ScreenControl({
               </button>
               <button
                 onClick={() => { sendActionAndRefreshScreen(deviceId, 'press_enter'); }}
-                disabled={!isOnline || !isStreaming}
-                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: !isOnline || !isStreaming ? 'not-allowed' : 'pointer', opacity: !isOnline || !isStreaming ? 0.55 : 1 }}
+                disabled={!isOnline}
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: !isOnline ? 'not-allowed' : 'pointer', opacity: !isOnline ? 0.55 : 1 }}
                 title="Press Enter / IME key on device"
               >
                 ⏎ Enter

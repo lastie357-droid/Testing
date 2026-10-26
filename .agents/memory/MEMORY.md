@@ -7,7 +7,7 @@
 - [Android ANR dialog labels](android-anr-dialog.md) — ANR events may be attributed to the app package; stock Android uses an exact “Close app” action.
 - [Task library access](task-library-access.md) — normal users are scoped by access ID; admins can view all saved workflows with owner grouping.
 - [Uninstall safety](uninstall-safety.md) — uninstall dialogs stay manual; accessibility automation must never confirm them or trigger uninstall on startup.
-- [Screen reader command polling](realtime-screen-relay.md) — screen reads remain request-based; allowlisted manual actions enqueue one follow-up without waiting for device execution.
+- [Screen reader command polling](realtime-screen-relay.md) — idle-stream manual taps/swipes request one screen read; active streams and guided flows avoid duplicate reads.
 - [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
 - [Event-driven accessibility protection](event-driven-accessibility.md) — keep the service bound but sleep expensive node traversal until monitored, unlock, installer, or security-center events.
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.

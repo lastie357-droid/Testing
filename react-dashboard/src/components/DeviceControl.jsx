@@ -57,6 +57,8 @@ const SCREEN_REFRESH_ACTIONS = new Set([
   'open_notifications',
   'press_enter',
   'input_text',
+  'touch',
+  'swipe',
 ]);
 
 const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));

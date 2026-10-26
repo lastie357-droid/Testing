@@ -180,14 +180,23 @@ export default function ScreenReaderView({
 
   const startStreaming = useCallback(() => {
     requestScreen();
+    streamingRef.current = true;
     setStreaming(true);
   }, [requestScreen]);
 
   // ── Stop: stop the dashboard-side request timer ──────────────────────
   const stopStreaming = useCallback(() => {
     sendCommand(deviceId, 'screen_reader_stream_stop', {});
+    streamingRef.current = false;
     setStreaming(false);
   }, [deviceId, sendCommand]);
+
+  const sendPhoneInput = useCallback((targetDeviceId, command, params, { automated = false } = {}) => {
+    if (automated || streamingRef.current) {
+      return sendCommand(targetDeviceId, command, params);
+    }
+    return sendActionAndRefreshScreen(targetDeviceId, command, params);
+  }, [sendActionAndRefreshScreen, sendCommand]);
 
   // Keep ref in sync so the unmount cleanup can read the latest value without
   // being listed as a dep (which would cause a spurious extra stop on every toggle).
@@ -502,14 +511,14 @@ export default function ScreenReaderView({
     if (dist < 8) {
       const { x, y } = toDeviceCoords(e.clientX, e.clientY);
       setTouchHint({ x: x * scaleX, y: y * scaleY });
-      sendCommand(deviceId, 'touch', { x, y, duration: 100 });
+      sendPhoneInput(deviceId, 'touch', { x, y, duration: 100 });
       setTimeout(() => setTouchHint(null), 600);
     } else {
       const from = toDeviceCoords(start.x, start.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
-      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
+      sendPhoneInput(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
     }
-  }, [isOnline, settingsNavigation.running, toDeviceCoords, deviceId, sendCommand, scaleX, scaleY]);
+  }, [isOnline, settingsNavigation.running, toDeviceCoords, deviceId, sendPhoneInput, scaleX, scaleY]);
 
   const handlePointerCancel = useCallback((e) => {
     if (touchStartRef.current?.pointerId === e.pointerId) touchStartRef.current = null;
@@ -517,7 +526,12 @@ export default function ScreenReaderView({
 
   const handleElementClick = (el, { automated = false, message = '' } = {}) => {
     if (!hasScreenBounds(el) || !isOnline || (settingsNavigation.running && !automated)) return;
-    const touch = sendPhoneLayoutTouch(deviceId, sendCommand, el, { duration: 100 });
+    const touch = sendPhoneLayoutTouch(
+      deviceId,
+      (targetDeviceId, command, params) => sendPhoneInput(targetDeviceId, command, params, { automated }),
+      el,
+      { duration: 100 }
+    );
     if (!touch) return;
     setTouchHint({ x: touch.x * scaleX, y: touch.y * scaleY });
     setTimeout(() => setTouchHint(null), 600);
@@ -545,12 +559,12 @@ export default function ScreenReaderView({
       case 'left':  x1 = midX + step; x2 = midX - step; break;
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
-    sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
+    sendPhoneInput(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 }, { automated });
     if (automated) {
       setSettingsNavigation({ running: true, message, tone: 'info' });
       queueSettingsScreenRead(950);
     }
-  }, [isOnline, settingsNavigation.running, devW, devH, deviceId, sendCommand, queueSettingsScreenRead]);
+  }, [isOnline, settingsNavigation.running, devW, devH, deviceId, sendPhoneInput, queueSettingsScreenRead]);
 
   const navBtn = (label, cmd, icon) => (
     <button className="sc-nav-btn" onClick={() => sendActionAndRefreshScreen(deviceId, cmd)} disabled={!isOnline || settingsNavigation.running}>
