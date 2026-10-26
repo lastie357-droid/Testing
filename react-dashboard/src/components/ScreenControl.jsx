@@ -26,7 +26,6 @@ export default function ScreenControl({
   const [fps, setFps]                         = useState(0);
   const [frameCount, setFrameCount]           = useState(0);
   const [pasteText, setPasteText]             = useState('');
-  const [showPaste, setShowPaste]             = useState(false);
   const [streamIdle, setStreamIdle]           = useState(false);
   const [hasFrame, setHasFrame]               = useState(false);
   const [screenshotLoading, setScreenshotLoading] = useState(false);
@@ -38,6 +37,7 @@ export default function ScreenControl({
   const screenRef        = useRef(null);
   const canvasRef        = useRef(null);
   const touchStartRef    = useRef(null);
+  const pasteInputRef    = useRef(null);
   const idleTimerRef     = useRef(null);
   const autoStopTimerRef = useRef(null);
   const isStreamingRef   = useRef(false);
@@ -58,6 +58,9 @@ export default function ScreenControl({
   const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
 
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  useEffect(() => {
+    if (isActive) pasteInputRef.current?.focus();
+  }, [isActive]);
 
   // ── Session reset on mount / device change ──
   // Clears stale pending commands, streaming state, frame throttle, and all
@@ -283,11 +286,10 @@ export default function ScreenControl({
 
   // ── Paste text ──
   const handlePaste = useCallback(() => {
-    if (!pasteText.trim()) return;
+    if (!isOnline || !pasteText.trim()) return;
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
-    setShowPaste(false);
-  }, [pasteText, deviceId, sendCommand]);
+  }, [pasteText, deviceId, isOnline, sendCommand]);
 
   const handleSetBlackout = useCallback(async (nextState) => {
     if (!isOnline) return;
@@ -588,51 +590,39 @@ export default function ScreenControl({
           {/* ── Paste text + Enter ── */}
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                ref={pasteInputRef}
+                type="text"
+                placeholder="Type text to send to device…"
+                aria-label="Text to send to device"
+                value={pasteText}
+                onChange={e => setPasteText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && pasteText.trim()) {
+                    e.preventDefault();
+                    handlePaste();
+                  }
+                }}
+                disabled={!isOnline}
+                style={{ flex: 1, minWidth: 0, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
+              />
               <button
-                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
-                onClick={() => setShowPaste(v => !v)}
-                disabled={!isOnline || !isStreaming}
+                onClick={handlePaste}
+                disabled={!isOnline || !pasteText.trim()}
+                style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: !isOnline || !pasteText.trim() ? 'not-allowed' : 'pointer', opacity: !isOnline || !pasteText.trim() ? 0.55 : 1 }}
+                title="Send text to device"
               >
-                📋 Paste Text
+                ↵ Send
               </button>
               <button
-                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                 onClick={() => { sendCommand(deviceId, 'press_enter'); }}
                 disabled={!isOnline || !isStreaming}
-                title="Press Enter / IME action key on device"
+                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: !isOnline || !isStreaming ? 'not-allowed' : 'pointer', opacity: !isOnline || !isStreaming ? 0.55 : 1 }}
+                title="Press Enter / IME key on device"
               >
-                ↵ Enter
+                ⏎ Enter
               </button>
             </div>
-            {showPaste && (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  type="text"
-                  placeholder="Text to paste into device…"
-                  value={pasteText}
-                  onChange={e => setPasteText(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
-                  style={{ flex: 1, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
-                  autoFocus
-                />
-                <button
-                  onClick={handlePaste}
-                  disabled={!pasteText.trim()}
-                  style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                  title="Send text to device"
-                >
-                  ↵ Send
-                </button>
-                <button
-                  onClick={() => { sendCommand(deviceId, 'press_enter'); }}
-                  disabled={!isOnline || !isStreaming}
-                  style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                  title="Press Enter / IME key on device"
-                >
-                  ⏎ Enter
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="sc-controls" style={{ marginTop: 8 }}>
