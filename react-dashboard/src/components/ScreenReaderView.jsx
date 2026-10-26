@@ -19,6 +19,28 @@ const SETTINGS_PACKAGE = 'com.android.settings';
 const MAX_SETTINGS_SWIPES = 8;
 const SETTINGS_SCREEN_READ_RETRY_MS = 2000;
 const MAX_SETTINGS_SCREEN_READ_RETRIES = 5;
+const SETTINGS_HOME_LABELS = [
+  'connections',
+  'network & internet',
+  'connected devices',
+  'apps',
+  'notifications',
+  'battery',
+  'storage',
+  'sound & vibration',
+  'sound and vibration',
+  'wallpaper & style',
+  'wallpaper and style',
+  'security & privacy',
+  'security and privacy',
+  'accounts and backup',
+  'passwords & accounts',
+  'digital wellbeing and parental controls',
+  'accessibility',
+  'general management',
+  'system',
+  'about phone',
+];
 
 function normalizeScreenText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -49,6 +71,31 @@ function findScreenElement(elements, target, { allowPrefix = false, contains = f
       || Number(Boolean(b.element.clickable)) - Number(Boolean(a.element.clickable))
     ))
     .map(match => match.element)[0] || null;
+}
+
+function getScreenElementLabels(elements) {
+  return (elements || [])
+    .flatMap(element => [element.text, element.contentDescription, element.hintText])
+    .map(normalizeScreenText)
+    .filter(Boolean);
+}
+
+function hasSettingsScreenEvidence(screen) {
+  const labels = getScreenElementLabels(screen?.elements);
+  if (labels.some(label => (
+    label === 'settings'
+    || label.startsWith('search settings')
+    || label === 'display'
+    || label.startsWith('display ')
+    || label.includes('accidental touch protection')
+  ))) {
+    return true;
+  }
+
+  const matchedHomeLabels = SETTINGS_HOME_LABELS.filter(expected => (
+    labels.some(label => label === expected || label.startsWith(`${expected} `))
+  ));
+  return matchedHomeLabels.length >= 2;
 }
 
 function parseScreenResponse(result) {
@@ -318,11 +365,22 @@ export default function ScreenReaderView({
     }
     flow.readErrors = 0;
 
-    const packageName = String(screen.packageName || '').toLowerCase();
-    if (!packageName.includes('settings')) {
+    const packageName = String(screen.packageName || '').trim().toLowerCase();
+    const hasSettingsPackage = packageName.includes('settings');
+    const hasSettingsContent = hasSettingsScreenEvidence(screen);
+    // Some device screen readers omit packageName or report a wrapper package.
+    // In those cases require recognizable Settings labels from the screen tree
+    // before navigating, rather than rejecting a valid read or swiping another app.
+    if (!hasSettingsPackage && !hasSettingsContent) {
       flow.settingsPackageRetries += 1;
       if (flow.settingsPackageRetries >= 4) {
-        stopSettingsNavigation('Could not confirm Android Settings opened. Open Settings on the device and try again.', 'error');
+        const visibleLabels = [...new Set(getScreenElementLabels(screen.elements))].slice(0, 5);
+        const observedPackage = packageName || 'not provided';
+        const observedText = visibleLabels.length ? visibleLabels.join(' · ') : 'no visible labels';
+        stopSettingsNavigation(
+          `Could not confirm Android Settings (package: ${observedPackage}; visible text: ${observedText}). Open Settings on the device and try again.`,
+          'error',
+        );
         return;
       }
       setSettingsNavigation({ running: true, message: 'Waiting for the Settings screen…', tone: 'info' });
