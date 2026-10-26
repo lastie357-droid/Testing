@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useState, useRef, useEffect, useCallback } from 'react';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
+import ScreenToggleAutomation from './ScreenToggleAutomation.jsx';
 
 const ScreenReaderView = lazy(() => import('./ScreenReaderView.jsx'));
 
@@ -35,7 +36,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected, screenBlocked = false, setScreenBlocked = () => {} }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected, isActive = true, screenBlocked = false, setScreenBlocked = () => {} }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -505,6 +506,12 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               connected={connected}
             />
           </Suspense>
+          <ScreenToggleAutomation
+            device={device}
+            sendCommand={sendCommand}
+            results={results}
+            isActive={isActive}
+          />
         </div>
 
       </div>

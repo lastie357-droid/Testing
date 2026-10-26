@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { formatDateTime, formatTime } from '../utils/dateTime.js';
+import { sendPhoneLayoutTouch } from '../utils/screenReaderPhoneLayout.js';
 import ScreenInteractionLock from './ScreenInteractionLock.jsx';
+import ScreenToggleAutomation from './ScreenToggleAutomation.jsx';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -515,10 +517,9 @@ export default function ScreenReaderView({
 
   const handleElementClick = (el, { automated = false, message = '' } = {}) => {
     if (!hasScreenBounds(el) || !isOnline || (settingsNavigation.running && !automated)) return;
-    const cx = (el.bounds.left + el.bounds.right) / 2;
-    const cy = (el.bounds.top  + el.bounds.bottom) / 2;
-    setTouchHint({ x: cx * scaleX, y: cy * scaleY });
-    sendCommand(deviceId, 'touch', { x: Math.round(cx), y: Math.round(cy), duration: 100 });
+    const touch = sendPhoneLayoutTouch(deviceId, sendCommand, el, { duration: 100 });
+    if (!touch) return;
+    setTouchHint({ x: touch.x * scaleX, y: touch.y * scaleY });
     setTimeout(() => setTouchHint(null), 600);
     if (automated) {
       setSettingsNavigation({ running: true, message, tone: 'info' });
@@ -912,6 +913,14 @@ export default function ScreenReaderView({
                   🔲 Unblock Screen
                 </button>
               </div>
+            )}
+            {isActive && (
+              <ScreenToggleAutomation
+                device={device}
+                sendCommand={sendCommand}
+                results={results}
+                isActive={isActive}
+              />
             )}
           </div>
 

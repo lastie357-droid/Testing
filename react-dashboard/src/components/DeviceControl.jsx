@@ -213,6 +213,7 @@ export default function DeviceControl({
             screenReaderPushData={screenReaderPushData}
             offlineRecordingVersion={offlineRecordingVersion}
             connected={connected}
+            isActive={activeTab === 'control_center'}
             screenBlocked={screenBlocked}
             setScreenBlocked={setScreenBlocked}
           />

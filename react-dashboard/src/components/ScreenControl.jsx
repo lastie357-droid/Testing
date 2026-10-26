@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../utils/dateTime.js';
 import ScreenInteractionLock from './ScreenInteractionLock.jsx';
+import ScreenToggleAutomation from './ScreenToggleAutomation.jsx';
 
 export default function ScreenControl({
   device,
@@ -466,6 +467,12 @@ export default function ScreenControl({
           </button>
         </div>
       </div>
+      <ScreenToggleAutomation
+        device={device}
+        sendCommand={sendCommand}
+        results={results}
+        isActive={isActive}
+      />
 
       <div className="sc-layout">
         <div className="sc-viewer-col">
