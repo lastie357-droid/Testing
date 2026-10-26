@@ -17,6 +17,8 @@ const SCREEN_READER_INTERVAL_OPTIONS = [
 
 const SETTINGS_PACKAGE = 'com.android.settings';
 const MAX_SETTINGS_SWIPES = 8;
+const SETTINGS_SCREEN_READ_RETRY_MS = 2000;
+const MAX_SETTINGS_SCREEN_READ_RETRIES = 5;
 
 function normalizeScreenText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -88,6 +90,7 @@ export default function ScreenReaderView({
   const streamingRef   = useRef(false);
   const settingsFlowRef = useRef(null);
   const settingsTimerRef = useRef(null);
+  const settingsReadRetryTimerRef = useRef(null);
   const handledSettingsReadIdsRef = useRef(new Set());
   const phoneLayoutActionsRef = useRef({ clickElement: null, swipe: null });
 
@@ -172,6 +175,10 @@ export default function ScreenReaderView({
       clearTimeout(settingsTimerRef.current);
       settingsTimerRef.current = null;
     }
+    if (settingsReadRetryTimerRef.current) {
+      clearInterval(settingsReadRetryTimerRef.current);
+      settingsReadRetryTimerRef.current = null;
+    }
     settingsFlowRef.current = null;
     setSettingsNavigation({ running: false, message, tone });
   }, []);
@@ -179,10 +186,38 @@ export default function ScreenReaderView({
   const requestSettingsScreen = useCallback(() => {
     const flow = settingsFlowRef.current;
     if (!flow?.active) return;
+    if (settingsReadRetryTimerRef.current) {
+      clearInterval(settingsReadRetryTimerRef.current);
+      settingsReadRetryTimerRef.current = null;
+    }
     flow.waitingForRead = true;
     flow.readRequestedAt = Date.now();
     sendCommand(deviceId, 'read_screen');
-  }, [deviceId, sendCommand]);
+    settingsReadRetryTimerRef.current = window.setInterval(() => {
+      const currentFlow = settingsFlowRef.current;
+      if (currentFlow !== flow || !currentFlow?.active || !currentFlow.waitingForRead) {
+        clearInterval(settingsReadRetryTimerRef.current);
+        settingsReadRetryTimerRef.current = null;
+        return;
+      }
+
+      if (currentFlow.readTimeoutRetries >= MAX_SETTINGS_SCREEN_READ_RETRIES) {
+        clearInterval(settingsReadRetryTimerRef.current);
+        settingsReadRetryTimerRef.current = null;
+        stopSettingsNavigation('No read_screen response arrived after several retries. The search stopped; try again when the device responds.', 'error');
+        return;
+      }
+
+      currentFlow.readTimeoutRetries += 1;
+      currentFlow.readRequestedAt = Date.now();
+      setSettingsNavigation({
+        running: true,
+        message: `No screen response after 2 seconds. Retrying read_screen (${currentFlow.readTimeoutRetries}/${MAX_SETTINGS_SCREEN_READ_RETRIES})…`,
+        tone: 'info',
+      });
+      sendCommand(deviceId, 'read_screen');
+    }, SETTINGS_SCREEN_READ_RETRY_MS);
+  }, [deviceId, sendCommand, stopSettingsNavigation]);
 
   const queueSettingsScreenRead = useCallback((delay = 900) => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
@@ -205,6 +240,7 @@ export default function ScreenReaderView({
       phase: 'display',
       waitingForRead: false,
       readErrors: 0,
+      readTimeoutRetries: 0,
       settingsPackageRetries: 0,
       displaySwipes: 0,
       protectionSwipes: 0,
@@ -214,6 +250,10 @@ export default function ScreenReaderView({
       message: 'Opening Android Settings…',
       tone: 'info',
     });
+    if (settingsReadRetryTimerRef.current) {
+      clearInterval(settingsReadRetryTimerRef.current);
+      settingsReadRetryTimerRef.current = null;
+    }
     setActiveView('visual');
 
     if (streamingRef.current) {
@@ -250,6 +290,11 @@ export default function ScreenReaderView({
       }
     });
     flow.waitingForRead = false;
+    flow.readTimeoutRetries = 0;
+    if (settingsReadRetryTimerRef.current) {
+      clearInterval(settingsReadRetryTimerRef.current);
+      settingsReadRetryTimerRef.current = null;
+    }
 
     const retryRead = message => {
       flow.readErrors += 1;
@@ -343,6 +388,7 @@ export default function ScreenReaderView({
 
   useEffect(() => () => {
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    if (settingsReadRetryTimerRef.current) clearInterval(settingsReadRetryTimerRef.current);
     settingsFlowRef.current = null;
   }, [deviceId]);
 
