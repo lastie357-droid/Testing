@@ -35,7 +35,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion, connected, screenBlocked = false, setScreenBlocked = () => {} }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -255,11 +255,11 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   }, [streaming, devW, devH, deviceId, sendCommand]);
 
   // ── Block screen ──────────────────────────────────────────────────────
-  const [blockActive, setBlockActive] = useState(false);
   const blockScreen = () => {
-    const cmd = blockActive ? 'screen_blackout_off' : 'screen_blackout_on';
+    const next = !screenBlocked;
+    const cmd = next ? 'screen_blackout_on' : 'screen_blackout_off';
     sendCommand(deviceId, cmd, {});
-    setBlockActive(v => !v);
+    setScreenBlocked(next);
   };
 
   // ── Paste / Input ─────────────────────────────────────────────────────
@@ -425,7 +425,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
                   {streamIdle ? '⏸ IDLE' : '● LIVE'}
                 </div>
               )}
-              {blockActive && (
+              {screenBlocked && (
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 700 }}>🔲 SCREEN BLOCKED</span>
                 </div>
@@ -449,9 +449,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
               <button
                 onClick={blockScreen}
                 disabled={!isOnline}
-                style={{ ...smallBtn(blockActive ? '#dc2626' : '#334155'), fontSize: 11 }}
+                style={{ ...smallBtn(screenBlocked ? '#dc2626' : '#334155'), fontSize: 11 }}
               >
-                {blockActive ? '🔲 Unblock' : '⬛ Block'}
+                {screenBlocked ? '🔲 Unblock' : '⬛ Block'}
               </button>
               <button
                 onClick={takeScreenshot}

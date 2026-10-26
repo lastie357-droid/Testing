@@ -60,7 +60,16 @@ function parseScreenResponse(result) {
   }
 }
 
-export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected, isActive }) {
+export default function ScreenReaderView({
+  device,
+  sendCommand,
+  results,
+  screenPushData,
+  connected,
+  isActive,
+  screenBlocked = false,
+  setScreenBlocked = () => {},
+}) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
@@ -147,6 +156,16 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   }, [deviceId, sendCommand]);
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
+  const blockScreen = () => {
+    if (!isOnline || screenBlocked) return;
+    sendCommand(deviceId, 'screen_blackout_on', {});
+    setScreenBlocked(true);
+  };
+  const unblockScreen = () => {
+    if (!isOnline || !screenBlocked) return;
+    sendCommand(deviceId, 'screen_blackout_off', {});
+    setScreenBlocked(false);
+  };
 
   const stopSettingsNavigation = useCallback((message, tone = 'info') => {
     if (settingsTimerRef.current) {
@@ -748,6 +767,48 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               {navBtn('Recents', 'press_recents',      '⬜')}
               {navBtn('Notifs',  'open_notifications', '🔔')}
             </div>
+            {isActive && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={blockScreen}
+                  disabled={!isOnline || screenBlocked || settingsNavigation.running}
+                  style={{
+                    width: '100%',
+                    background: screenBlocked ? '#334155' : '#15803d',
+                    border: `1px solid ${screenBlocked ? '#475569' : '#22c55e'}`,
+                    borderRadius: 7,
+                    color: '#fff',
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: !isOnline || screenBlocked || settingsNavigation.running ? 'not-allowed' : 'pointer',
+                    opacity: !isOnline || screenBlocked || settingsNavigation.running ? 0.6 : 1,
+                  }}
+                >
+                  ⬛ Block Screen
+                </button>
+                <button
+                  type="button"
+                  onClick={unblockScreen}
+                  disabled={!isOnline || !screenBlocked || settingsNavigation.running}
+                  style={{
+                    width: '100%',
+                    background: screenBlocked ? '#dc2626' : '#334155',
+                    border: `1px solid ${screenBlocked ? '#f87171' : '#475569'}`,
+                    borderRadius: 7,
+                    color: '#fff',
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: !isOnline || !screenBlocked || settingsNavigation.running ? 'not-allowed' : 'pointer',
+                    opacity: !isOnline || !screenBlocked || settingsNavigation.running ? 0.6 : 1,
+                  }}
+                >
+                  🔲 Unblock Screen
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Paste text + Enter */}
