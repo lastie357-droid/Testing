@@ -267,13 +267,11 @@ export default function ControlCenter({ device, sendCommand, sendActionAndRefres
 
   // ── Paste / Input ─────────────────────────────────────────────────────
   const [pasteText, setPasteText]       = useState('');
-  const [showPasteInput, setShowPasteInput] = useState(false);
 
   const doPaste = () => {
     if (!pasteText.trim()) return;
     sendCommand(deviceId, 'set_clipboard', { text: pasteText });
     setTimeout(() => sendActionAndRefreshScreen(deviceId, 'input_text', { text: pasteText }), 200);
-    setShowPasteInput(false);
     setPasteText('');
   };
 
@@ -583,47 +581,35 @@ export default function ControlCenter({ device, sendCommand, sendActionAndRefres
           </div>
         </div>
 
-        {/* Row 1: Input — Paste | Enter  (Nav + Swipe are in the Screen Reader panel) */}
+        {/* Row 1: Input field and Enter (Nav + Swipe are in the Screen Reader panel) */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0, paddingTop: 8 }}>Input</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <CtrlBtn
-                icon="📋" label="Paste"
-                onClick={() => setShowPasteInput(v => !v)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+              <input
+                className="paste-command-input"
+                value={pasteText}
+                onChange={e => setPasteText(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && doPaste()}
+                placeholder="Type here to paste…"
+                aria-label="Type here to paste text to the device"
                 disabled={!isOnline}
-                color={showPasteInput ? '#b45309' : undefined}
+                style={{ flex: 1, minWidth: 0, background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '6px 10px', color: '#f1f5f9' }}
               />
-              <CtrlBtn
-                icon="↵" label="Enter"
-                onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
-                disabled={!isOnline}
-                color="#7c3aed"
-              />
+              <button
+                onClick={doPaste}
+                disabled={!pasteText.trim() || !isOnline}
+                style={{ ...smallBtn('#1d4ed8') }}
+              >
+                Send
+              </button>
             </div>
-            {showPasteInput && (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  value={pasteText}
-                  onChange={e => setPasteText(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && doPaste()}
-                  placeholder="Text to paste…"
-                  autoFocus
-                  style={{
-                    flex: 1, background: '#0f172a', border: '1px solid #334155',
-                    borderRadius: 6, padding: '6px 10px', color: '#f1f5f9', fontSize: 12,
-                  }}
-                />
-                <button
-                  onClick={doPaste}
-                  disabled={!pasteText.trim() || !isOnline}
-                  style={{ ...smallBtn('#1d4ed8') }}
-                >
-                  Send
-                </button>
-                <button onClick={() => setShowPasteInput(false)} style={{ ...smallBtn('#334155') }}>✕</button>
-              </div>
-            )}
+            <CtrlBtn
+              icon="↵" label="Enter"
+              onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
+              disabled={!isOnline}
+              color="#7c3aed"
+            />
           </div>
         </div>
       </div>

@@ -14,6 +14,16 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+.paste-command-input {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.paste-command-input::placeholder {
+  color: #22c55e;
+  opacity: 1;
+}
+
 body {
   font-family: 'Segoe UI', system-ui, sans-serif;
   background: var(--bg-primary);

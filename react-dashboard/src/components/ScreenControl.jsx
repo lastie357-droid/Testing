@@ -38,7 +38,6 @@ export default function ScreenControl({
   const screenRef        = useRef(null);
   const canvasRef        = useRef(null);
   const touchStartRef    = useRef(null);
-  const pasteInputRef    = useRef(null);
   const idleTimerRef     = useRef(null);
   const autoStopTimerRef = useRef(null);
   const isStreamingRef   = useRef(false);
@@ -59,9 +58,6 @@ export default function ScreenControl({
   const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
 
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
-  useEffect(() => {
-    if (isActive) pasteInputRef.current?.focus();
-  }, [isActive]);
 
   // ── Session reset on mount / device change ──
   // Clears stale pending commands, streaming state, frame throttle, and all
@@ -592,10 +588,10 @@ export default function ScreenControl({
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
-                ref={pasteInputRef}
+                className="paste-command-input"
                 type="text"
-                placeholder="Type text to send to device…"
-                aria-label="Text to send to device"
+                placeholder="Type here to paste…"
+                aria-label="Type here to paste text to the device"
                 value={pasteText}
                 onChange={e => setPasteText(e.target.value)}
                 onKeyDown={e => {
@@ -605,7 +601,7 @@ export default function ScreenControl({
                   }
                 }}
                 disabled={!isOnline}
-                style={{ flex: 1, minWidth: 0, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
+                style={{ flex: 1, minWidth: 0, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '6px 8px', color: '#f0f0ff' }}
               />
               <button
                 onClick={handlePaste}

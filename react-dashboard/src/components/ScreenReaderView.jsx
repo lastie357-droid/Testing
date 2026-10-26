@@ -133,7 +133,6 @@ export default function ScreenReaderView({
   const [activeView, setActiveView]         = useState('visual');
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
-  const [showPaste, setShowPaste]           = useState(false);
   const [settingsNavigation, setSettingsNavigation] = useState({ running: false, message: '', tone: 'info' });
   const screenRef      = useRef(null);
   const touchStartRef  = useRef(null);
@@ -532,7 +531,6 @@ export default function ScreenReaderView({
     if (!pasteText.trim() || settingsNavigation.running) return;
     sendActionAndRefreshScreen(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
-    setShowPaste(false);
   };
 
   const sendSwipe = useCallback((direction, { automated = false, message = '' } = {}) => {
@@ -925,46 +923,34 @@ export default function ScreenReaderView({
             )}
           </div>
 
-          {/* Paste text + Enter */}
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
-                onClick={() => setShowPaste(v => !v)}
-                disabled={!isOnline || settingsNavigation.running}
-              >
-                📋 Paste Text
-              </button>
-              <button
-                style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
-                disabled={!isOnline || settingsNavigation.running}
-                title="Press Enter / IME action key on device"
-              >
-                ↵ Enter
-              </button>
-            </div>
-            {showPaste && (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  type="text"
-                  placeholder="Text to paste into device…"
-                  value={pasteText}
-                  onChange={e => setPasteText(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
-                  style={{ flex: 1, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
-                  disabled={settingsNavigation.running}
-                  autoFocus
-                />
-                <button
-                  onClick={handlePaste}
-                  disabled={!pasteText.trim() || settingsNavigation.running}
-                  style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                >
-                  ↵ Send
-                </button>
-              </div>
-            )}
+          {/* Persistent text input; send text to the device without a reveal step. */}
+          <div style={{ marginTop: 8, display: 'flex', gap: 6, minWidth: 0 }}>
+            <input
+              className="paste-command-input"
+              type="text"
+              placeholder="Type here to paste…"
+              aria-label="Type here to paste text to the device"
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
+              style={{ flex: 1, minWidth: 0, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '6px 8px', color: '#f0f0ff' }}
+              disabled={!isOnline || settingsNavigation.running}
+            />
+            <button
+              onClick={handlePaste}
+              disabled={!pasteText.trim() || !isOnline || settingsNavigation.running}
+              style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+            >
+              ↵ Send
+            </button>
+            <button
+              style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+              onClick={() => sendActionAndRefreshScreen(deviceId, 'press_enter')}
+              disabled={!isOnline || settingsNavigation.running}
+              title="Press Enter / IME action key on device"
+            >
+              ↵ Enter
+            </button>
           </div>
 
           {/* Save bar */}
