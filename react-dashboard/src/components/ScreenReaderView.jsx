@@ -15,6 +15,51 @@ const SCREEN_READER_INTERVAL_OPTIONS = [
   { value: 10000, label: '10 sec' },
 ];
 
+const SETTINGS_PACKAGE = 'com.android.settings';
+const MAX_SETTINGS_SWIPES = 8;
+
+function normalizeScreenText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function hasScreenBounds(element) {
+  const bounds = element?.bounds;
+  return bounds && ['left', 'top', 'right', 'bottom'].every(key => Number.isFinite(Number(bounds[key])));
+}
+
+function findScreenElement(elements, target, { allowPrefix = false, contains = false, requireBounds = true } = {}) {
+  const expected = normalizeScreenText(target);
+  return (elements || [])
+    .filter(element => !requireBounds || hasScreenBounds(element))
+    .map(element => {
+      const labels = [element.text, element.contentDescription, element.hintText].map(normalizeScreenText);
+      const exact = labels.some(label => label === expected);
+      const matches = labels.some(label => (
+        contains
+          ? label.includes(expected)
+          : exact || (allowPrefix && label.startsWith(`${expected} `))
+      ));
+      return { element, exact, matches };
+    })
+    .filter(match => match.matches)
+    .sort((a, b) => (
+      Number(b.exact) - Number(a.exact)
+      || Number(Boolean(b.element.clickable)) - Number(Boolean(a.element.clickable))
+    ))
+    .map(match => match.element)[0] || null;
+}
+
+function parseScreenResponse(result) {
+  try {
+    const response = typeof result?.response === 'string'
+      ? JSON.parse(result.response)
+      : result?.response;
+    return response?.screen || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export default function ScreenReaderView({ device, sendCommand, results, screenPushData, connected, isActive }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
@@ -28,9 +73,14 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
+  const [settingsNavigation, setSettingsNavigation] = useState({ running: false, message: '', tone: 'info' });
   const screenRef      = useRef(null);
   const touchStartRef  = useRef(null);
   const streamingRef   = useRef(false);
+  const settingsFlowRef = useRef(null);
+  const settingsTimerRef = useRef(null);
+  const handledSettingsReadIdsRef = useRef(new Set());
+  const phoneLayoutActionsRef = useRef({ clickElement: null, swipe: null });
 
   const devW   = info.screenWidth  || 1080;
   const devH   = info.screenHeight || 2340;
@@ -98,6 +148,185 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
 
+  const stopSettingsNavigation = useCallback((message, tone = 'info') => {
+    if (settingsTimerRef.current) {
+      clearTimeout(settingsTimerRef.current);
+      settingsTimerRef.current = null;
+    }
+    settingsFlowRef.current = null;
+    setSettingsNavigation({ running: false, message, tone });
+  }, []);
+
+  const requestSettingsScreen = useCallback(() => {
+    const flow = settingsFlowRef.current;
+    if (!flow?.active) return;
+    flow.waitingForRead = true;
+    flow.readRequestedAt = Date.now();
+    sendCommand(deviceId, 'read_screen');
+  }, [deviceId, sendCommand]);
+
+  const queueSettingsScreenRead = useCallback((delay = 900) => {
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsTimerRef.current = setTimeout(() => {
+      settingsTimerRef.current = null;
+      requestSettingsScreen();
+    }, delay);
+  }, [requestSettingsScreen]);
+
+  const startSettingsNavigation = useCallback(() => {
+    if (!isOnline || settingsFlowRef.current?.active) return;
+
+    // Ignore earlier screen captures; each decision below must use a fresh
+    // read_screen response gathered after the preceding navigation action.
+    handledSettingsReadIdsRef.current = new Set(
+      results.filter(result => result.command === 'read_screen').map(result => String(result.id))
+    );
+    settingsFlowRef.current = {
+      active: true,
+      phase: 'display',
+      waitingForRead: false,
+      readErrors: 0,
+      settingsPackageRetries: 0,
+      displaySwipes: 0,
+      protectionSwipes: 0,
+    };
+    setSettingsNavigation({
+      running: true,
+      message: 'Opening Android Settings…',
+      tone: 'info',
+    });
+    setActiveView('visual');
+
+    if (streamingRef.current) {
+      streamingRef.current = false;
+      sendCommand(deviceId, 'screen_reader_stream_stop', {});
+      setStreaming(false);
+    }
+
+    sendCommand(deviceId, 'open_app', { packageName: SETTINGS_PACKAGE });
+    queueSettingsScreenRead(1400);
+  }, [deviceId, isOnline, queueSettingsScreenRead, results, sendCommand]);
+
+  const stopSettingsNavigationOnRequest = () => {
+    if (settingsFlowRef.current?.active) {
+      stopSettingsNavigation('Navigation stopped. The device remains on its current screen.');
+    }
+  };
+
+  useEffect(() => {
+    const flow = settingsFlowRef.current;
+    if (!flow?.active || !flow.waitingForRead) return;
+
+    const result = results.find(item => (
+      item.command === 'read_screen'
+      && !handledSettingsReadIdsRef.current.has(String(item.id))
+    ));
+    if (!result) return;
+
+    // Consume any other read responses already in the result list too, so an
+    // older overlapping capture cannot drive a later navigation step.
+    results.forEach(item => {
+      if (item.command === 'read_screen') {
+        handledSettingsReadIdsRef.current.add(String(item.id));
+      }
+    });
+    flow.waitingForRead = false;
+
+    const retryRead = message => {
+      flow.readErrors += 1;
+      if (flow.readErrors >= 3) {
+        stopSettingsNavigation(message, 'error');
+        return;
+      }
+      setSettingsNavigation({ running: true, message, tone: 'info' });
+      queueSettingsScreenRead(900);
+    };
+
+    if (!result.success) {
+      retryRead('Screen read failed; retrying…');
+      return;
+    }
+
+    const screen = parseScreenResponse(result);
+    if (!screen || !Array.isArray(screen.elements)) {
+      retryRead('No readable screen tree yet; retrying…');
+      return;
+    }
+    flow.readErrors = 0;
+
+    const packageName = String(screen.packageName || '').toLowerCase();
+    if (!packageName.includes('settings')) {
+      flow.settingsPackageRetries += 1;
+      if (flow.settingsPackageRetries >= 4) {
+        stopSettingsNavigation('Could not confirm Android Settings opened. Open Settings on the device and try again.', 'error');
+        return;
+      }
+      setSettingsNavigation({ running: true, message: 'Waiting for the Settings screen…', tone: 'info' });
+      queueSettingsScreenRead(900);
+      return;
+    }
+    flow.settingsPackageRetries = 0;
+
+    if (flow.phase === 'display') {
+      const display = findScreenElement(screen.elements, 'Display', { allowPrefix: true });
+      if (display) {
+        flow.phase = 'protection';
+        flow.protectionSwipes = 0;
+        phoneLayoutActionsRef.current.clickElement?.(display, {
+          automated: true,
+          message: 'Display found. Opening it, then reading the screen…',
+        });
+        return;
+      }
+
+      if (flow.displaySwipes >= MAX_SETTINGS_SWIPES) {
+        stopSettingsNavigation('Display was not found after scrolling. Settings is open; continue on the device.', 'error');
+        return;
+      }
+      flow.displaySwipes += 1;
+      phoneLayoutActionsRef.current.swipe?.('up', {
+        automated: true,
+        message: `Display not visible. Swiping up (${flow.displaySwipes}/${MAX_SETTINGS_SWIPES}) and reading again…`,
+      });
+      return;
+    }
+
+    if (flow.phase === 'protection') {
+      const protection = findScreenElement(screen.elements, 'Accidental touch protection', { contains: true, requireBounds: false });
+      if (protection) {
+        stopSettingsNavigation('Accidental touch protection is visible. The switch was not changed; turn it on from the device.', 'success');
+        return;
+      }
+
+      if (flow.protectionSwipes >= MAX_SETTINGS_SWIPES) {
+        stopSettingsNavigation('Accidental touch protection was not found after scrolling. Display is open; continue on the device.', 'error');
+        return;
+      }
+      flow.protectionSwipes += 1;
+      phoneLayoutActionsRef.current.swipe?.('up', {
+        automated: true,
+        message: `Accidental touch protection not visible. Swiping up (${flow.protectionSwipes}/${MAX_SETTINGS_SWIPES}) and reading again…`,
+      });
+    }
+  }, [queueSettingsScreenRead, results, stopSettingsNavigation]);
+
+  useEffect(() => {
+    if (!isActive && settingsFlowRef.current?.active) {
+      stopSettingsNavigation('Navigation stopped because the Screen Reader tab was left.');
+    }
+  }, [isActive, stopSettingsNavigation]);
+
+  useEffect(() => {
+    if (!isOnline && settingsFlowRef.current?.active) {
+      stopSettingsNavigation('Navigation stopped because the device went offline.', 'error');
+    }
+  }, [isOnline, stopSettingsNavigation]);
+
+  useEffect(() => () => {
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsFlowRef.current = null;
+  }, [deviceId]);
+
   const saveCapture = () => {
     if (!screenData) return;
     const text = buildTextDump(screenData);
@@ -128,17 +357,17 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   }, [devW, devH]);
 
   const handlePointerDown = useCallback((e) => {
-    if (!isOnline || !e.isPrimary || e.button !== 0) return;
+    if (!isOnline || settingsNavigation.running || !e.isPrimary || e.button !== 0) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     touchStartRef.current = { x: e.clientX, y: e.clientY, time: performance.now(), pointerId: e.pointerId };
-  }, [isOnline]);
+  }, [isOnline, settingsNavigation.running]);
 
   const handlePointerUp = useCallback((e) => {
     const start = touchStartRef.current;
     if (!start || start.pointerId !== e.pointerId) return;
     touchStartRef.current = null;
-    if (!isOnline) return;
+    if (!isOnline || settingsNavigation.running) return;
     e.preventDefault();
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
@@ -155,30 +384,34 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
       const to   = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(100, Math.min(Math.round(duration), 1200)) });
     }
-  }, [isOnline, toDeviceCoords, deviceId, sendCommand, scaleX, scaleY]);
+  }, [isOnline, settingsNavigation.running, toDeviceCoords, deviceId, sendCommand, scaleX, scaleY]);
 
   const handlePointerCancel = useCallback((e) => {
     if (touchStartRef.current?.pointerId === e.pointerId) touchStartRef.current = null;
   }, []);
 
-  const handleElementClick = (el) => {
-    if (!el.bounds || !isOnline) return;
+  const handleElementClick = (el, { automated = false, message = '' } = {}) => {
+    if (!hasScreenBounds(el) || !isOnline || (settingsNavigation.running && !automated)) return;
     const cx = (el.bounds.left + el.bounds.right) / 2;
     const cy = (el.bounds.top  + el.bounds.bottom) / 2;
     setTouchHint({ x: cx * scaleX, y: cy * scaleY });
     sendCommand(deviceId, 'touch', { x: Math.round(cx), y: Math.round(cy), duration: 100 });
     setTimeout(() => setTouchHint(null), 600);
+    if (automated) {
+      setSettingsNavigation({ running: true, message, tone: 'info' });
+      queueSettingsScreenRead(950);
+    }
   };
 
   const handlePaste = () => {
-    if (!pasteText.trim()) return;
+    if (!pasteText.trim() || settingsNavigation.running) return;
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
   };
 
-  const sendSwipe = useCallback((direction) => {
-    if (!isOnline) return;
+  const sendSwipe = useCallback((direction, { automated = false, message = '' } = {}) => {
+    if (!isOnline || (settingsNavigation.running && !automated)) return;
     const midX = Math.round(devW / 2);
     const midY = Math.round(devH / 2);
     const step = Math.round(devH * 0.3);
@@ -190,13 +423,21 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
     sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-  }, [isOnline, devW, devH, deviceId, sendCommand]);
+    if (automated) {
+      setSettingsNavigation({ running: true, message, tone: 'info' });
+      queueSettingsScreenRead(950);
+    }
+  }, [isOnline, settingsNavigation.running, devW, devH, deviceId, sendCommand, queueSettingsScreenRead]);
 
   const navBtn = (label, cmd, icon) => (
-    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline}>
+    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline || settingsNavigation.running}>
       {icon} {label}
     </button>
   );
+
+  // The guided flow deliberately reuses the Screen Reader phone's own tap and
+  // swipe handlers so automation and manual phone-layout gestures stay aligned.
+  phoneLayoutActionsRef.current = { clickElement: handleElementClick, swipe: sendSwipe };
 
   // Memoize so sort+filter only re-run when screenData actually changes,
   // not on every parent render or state update (touch hints, paste state, etc.)
@@ -401,11 +642,11 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               </div>
               {/* Swipe direction buttons */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
-                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')}    disabled={!isOnline} title="Swipe Up">▲</button>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')}    disabled={!isOnline || settingsNavigation.running} title="Swipe Up">▲</button>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')}  disabled={!isOnline} title="Swipe Left">◀</button>
-                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')}  disabled={!isOnline || settingsNavigation.running} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline || settingsNavigation.running} title="Swipe Down">▼</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline || settingsNavigation.running} title="Swipe Right">▶</button>
                 </div>
               </div>
               <div className="sc-phone-home-bar-sc" />
@@ -423,7 +664,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
           {/* Stream Controls */}
           <div className="sc-controls" style={{ marginTop: 8 }}>
             {!streaming ? (
-              <button className="sc-btn sc-btn-start" onClick={startStreaming} disabled={!isOnline}>
+              <button className="sc-btn sc-btn-start" onClick={startStreaming} disabled={!isOnline || settingsNavigation.running}>
                 ▶ Start
               </button>
             ) : (
@@ -435,7 +676,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               value={streamInterval}
               onChange={e => setStreamInterval(Number(e.target.value))}
               style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
-              disabled={!isOnline}
+              disabled={!isOnline || settingsNavigation.running}
             >
               {SCREEN_READER_INTERVAL_OPTIONS.map(option => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -445,10 +686,57 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               className="sc-btn"
               style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa' }}
               onClick={captureOnce}
-              disabled={!isOnline}
+              disabled={!isOnline || settingsNavigation.running}
             >
               📷 Read Once
             </button>
+          </div>
+
+          <div style={{
+            marginTop: 10,
+            padding: '12px 14px',
+            borderRadius: 9,
+            background: 'rgba(30, 41, 59, 0.72)',
+            border: '1px solid rgba(148, 163, 184, 0.24)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <strong style={{ color: '#e2e8f0', fontSize: 13 }}>Accidental touch protection</strong>
+              <button
+                type="button"
+                onClick={settingsNavigation.running ? stopSettingsNavigationOnRequest : startSettingsNavigation}
+                disabled={!isOnline}
+                style={{
+                  background: settingsNavigation.running ? '#7f1d1d' : '#312e81',
+                  border: `1px solid ${settingsNavigation.running ? '#b91c1c' : '#6366f1'}`,
+                  borderRadius: 7,
+                  color: '#fff',
+                  padding: '7px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: isOnline ? 'pointer' : 'not-allowed',
+                  opacity: isOnline ? 1 : 0.55,
+                }}
+              >
+                {settingsNavigation.running ? 'Stop navigation' : 'Find Accidental Touch Protection'}
+              </button>
+            </div>
+            <div style={{ marginTop: 7, color: '#94a3b8', fontSize: 11, lineHeight: 1.5 }}>
+              Opens Settings → Display. It uses read_screen after each step, then leaves the switch for the device user; it will not change the setting.
+            </div>
+            {settingsNavigation.message && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  marginTop: 8,
+                  color: settingsNavigation.tone === 'success' ? '#86efac' : settingsNavigation.tone === 'error' ? '#fca5a5' : '#cbd5e1',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}
+              >
+                {settingsNavigation.message}
+              </div>
+            )}
           </div>
 
           {/* Navigation */}
@@ -468,14 +756,14 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', flex: 1 }}
                 onClick={() => setShowPaste(v => !v)}
-                disabled={!isOnline}
+                disabled={!isOnline || settingsNavigation.running}
               >
                 📋 Paste Text
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                 onClick={() => sendCommand(deviceId, 'press_enter')}
-                disabled={!isOnline}
+                disabled={!isOnline || settingsNavigation.running}
                 title="Press Enter / IME action key on device"
               >
                 ↵ Enter
@@ -490,11 +778,12 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
                   onChange={e => setPasteText(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handlePaste(); }}
                   style={{ flex: 1, background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6, padding: '5px 8px', color: '#f0f0ff', fontSize: 12 }}
+                  disabled={settingsNavigation.running}
                   autoFocus
                 />
                 <button
                   onClick={handlePaste}
-                  disabled={!pasteText.trim()}
+                  disabled={!pasteText.trim() || settingsNavigation.running}
                   style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                 >
                   ↵ Send
