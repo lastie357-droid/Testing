@@ -186,7 +186,10 @@ function Splash({ text }) {
   );
 }
 
-// ─── Admin dashboard (unchanged logic) ───────────────────────────────────────
+// ─── Admin dashboard ─────────────────────────────────────────────────────────
+const DEVICE_LIVENESS_TIMEOUT_MS = 70_000;
+const DEVICE_LIVENESS_CHECK_MS = 5_000;
+
 function AdminDashboard({ logout }) {
   const [devices, setDevices]                         = useState([]);
   const [deviceListLoaded, setDeviceListLoaded]       = useState(false);
@@ -214,6 +217,8 @@ function AdminDashboard({ logout }) {
   const chunkStreamsRef = useRef({});
   const selectedDeviceRef = useRef(null);
   const streamSenderRef = useRef(null);
+  const deviceLastContactRef = useRef(new Map());
+  const awaitingDeviceSnapshotRef = useRef(true);
   const enqueueDeviceEvent = useBatchedDeviceEvents(setDevices, setActivityLog);
 
   const updateSelectedDevice = useCallback((nextDevice) => {
@@ -379,19 +384,48 @@ function AdminDashboard({ logout }) {
     switch (event) {
       case 'sse:connected':
       case 'sse:disconnected':
+        awaitingDeviceSnapshotRef.current = true;
         setDeviceListLoaded(false);
         break;
-      case 'device:list':
-        setDevices(Array.isArray(data) ? data : []);
+      case 'device:list': {
+        let nextDevices = Array.isArray(data) ? data : [];
+        if (awaitingDeviceSnapshotRef.current) {
+          const observedAt = Date.now();
+          deviceLastContactRef.current.clear();
+          for (const device of nextDevices) {
+            if (device?.deviceId && device.isOnline) {
+              deviceLastContactRef.current.set(device.deviceId, observedAt);
+            }
+          }
+          awaitingDeviceSnapshotRef.current = false;
+        } else {
+          nextDevices = nextDevices.map(device => {
+            if (!device?.deviceId) return device;
+            if (!device.isOnline) {
+              deviceLastContactRef.current.delete(device.deviceId);
+              return device;
+            }
+            // A list refresh must not revive a device already judged stale;
+            // only a fresh connect, heartbeat, or pong can do that.
+            return deviceLastContactRef.current.has(device.deviceId)
+              ? device
+              : { ...device, isOnline: false };
+          });
+        }
+        setDevices(nextDevices);
         setDeviceListLoaded(true);
         break;
+      }
       case 'device:connected':
+        if (data?.deviceId) deviceLastContactRef.current.set(data.deviceId, Date.now());
         enqueueDeviceEvent(event, data);
         break;
       case 'device:disconnected':
+        if (data?.deviceId) deviceLastContactRef.current.delete(data.deviceId);
         enqueueDeviceEvent(event, data);
         break;
       case 'device:heartbeat':
+        if (data?.deviceId) deviceLastContactRef.current.set(data.deviceId, Date.now());
         enqueueDeviceEvent(event, data);
         break;
       case 'command:sent':
@@ -408,7 +442,14 @@ function AdminDashboard({ logout }) {
         if (data?.sentAt) setServerLatency(Date.now() - data.sentAt);
         break;
       case 'device:latency':
-        if (data?.deviceId && data.rtt != null) setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+        if (data?.deviceId && data.rtt != null) {
+          setDeviceLatencies(prev => ({ ...prev, [data.deviceId]: data.rtt }));
+          deviceLastContactRef.current.set(data.deviceId, Date.now());
+          enqueueDeviceEvent('device:latency', {
+            ...data,
+            timestamp: new Date().toISOString(),
+          });
+        }
         break;
       case 'command:result': {
         setPendingCommands(prev => { const next = { ...prev }; delete next[data.commandId]; return next; });
@@ -587,6 +628,29 @@ function AdminDashboard({ logout }) {
   const { connected, reconnecting, send } = useTcpStream(handleMessage);
   streamSenderRef.current = send;
   const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
+
+  useEffect(() => {
+    if (!connected || !deviceListLoaded) return undefined;
+
+    const reconcileStaleDevices = () => {
+      const now = Date.now();
+      setDevices(current => {
+        let changed = false;
+        const next = current.map(device => {
+          if (!device.isOnline) return device;
+          const lastContact = deviceLastContactRef.current.get(device.deviceId);
+          if (lastContact !== undefined && now - lastContact <= DEVICE_LIVENESS_TIMEOUT_MS) return device;
+          deviceLastContactRef.current.delete(device.deviceId);
+          changed = true;
+          return { ...device, isOnline: false };
+        });
+        return changed ? next : current;
+      });
+    };
+
+    const timer = setInterval(reconcileStaleDevices, DEVICE_LIVENESS_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [connected, deviceListLoaded]);
 
   useEffect(() => {
     if (!connected) return;

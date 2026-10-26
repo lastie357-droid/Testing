@@ -74,7 +74,7 @@ export function useBatchedDeviceEvents(setDevices, setActivityLog) {
         text: `Device disconnected: ${deviceId}`,
         time: new Date(),
       });
-    } else if (event === 'device:heartbeat') {
+    } else if (event === 'device:heartbeat' || event === 'device:latency') {
       update = { isOnline: true, lastSeen: timestamp };
     } else {
       return;
