@@ -580,7 +580,7 @@ export default function BuildApkTab({ user }) {
   const [logs,       setLogs]       = useState([]);
   const [lastResult, setLastResult] = useState(null);
   const [accessId,   setAccessId]   = useState(user?.accessId || '');
-  const [downloads,  setDownloads]  = useState({ module: false, installer: false });
+  const [installerAvailable, setInstallerAvailable] = useState(false);
   const [workerOnline, setWorkerOnline] = useState(false);
   const [disclaimer,   setDisclaimer]  = useState(null);
   const [apkExpiresAt, setApkExpiresAt] = useState(null);
@@ -662,7 +662,7 @@ export default function BuildApkTab({ user }) {
       const ms = apkExpiresAt - Date.now();
       if (ms <= 0) {
         setExpiryCountdown(null);
-        setDownloads({ module: false, installer: false });
+        setInstallerAvailable(false);
         clearInterval(expiryTickRef.current);
       } else {
         const m = Math.floor(ms / 60000);
@@ -695,14 +695,15 @@ export default function BuildApkTab({ user }) {
   }, [running, fetchStatus, accessId]);
 
   const checkDownloadAvailability = useCallback(async () => {
-    const probe = async (type) => {
-      try {
-        const r = await fetch(`/api/build/download/${type}`, { method: 'HEAD', headers: authHeaders(!!user) });
-        return r.ok;
-      } catch (_) { return false; }
-    };
-    const [m, i] = await Promise.all([probe('module'), probe('installer')]);
-    setDownloads({ module: m, installer: i });
+    try {
+      const r = await fetch('/api/build/download/installer', {
+        method: 'HEAD',
+        headers: authHeaders(!!user),
+      });
+      setInstallerAvailable(r.ok);
+    } catch (_) {
+      setInstallerAvailable(false);
+    }
   }, []);
 
   useEffect(() => { checkDownloadAvailability(); }, [checkDownloadAvailability]);
@@ -743,7 +744,7 @@ export default function BuildApkTab({ user }) {
     setRunning(true);
     setLogs([]);
     setLastResult(null);
-    setDownloads({ module: false, installer: false });
+    setInstallerAvailable(false);
 
     try {
       const payload = {
@@ -1294,7 +1295,7 @@ export default function BuildApkTab({ user }) {
 
           <span style={{ flex: 1 }} />
 
-          {(downloads.module || downloads.installer) && expiryCountdown && (
+          {installerAvailable && expiryCountdown && (
             <span style={{
               fontSize: 11, fontWeight: 600, color: '#fbbf24',
               background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)',
@@ -1303,8 +1304,7 @@ export default function BuildApkTab({ user }) {
               ⏳ Files expire in {expiryCountdown}
             </span>
           )}
-          {downloads.module    && <button style={styles.dlBtn} onClick={() => downloadApk('module')}>⬇ Module.apk</button>}
-          {downloads.installer && <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>}
+          {installerAvailable && <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>}
         </div>
 
         {lastResult?.error && !running && (
