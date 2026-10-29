@@ -3874,13 +3874,13 @@ async function _resolveAccessIdForReq(req) {
 // POST /api/build/download/:type/ticket — issue a short-lived ticket
 app.post('/api/build/download/:type/ticket', requireUserOrAdmin, async (req, res) => {
     const { type } = req.params;
-    if (type !== 'module' && type !== 'installer' && type !== 'installer-large') {
-        return res.status(400).json({ success: false, error: 'type must be module, installer, or installer-large' });
+    if (type !== 'module' && type !== 'installer') {
+        return res.status(400).json({ success: false, error: 'type must be module or installer' });
     }
     const accessId = await _resolveAccessIdForReq(req);
     if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
 
-    const filename = type === 'module' ? 'Module.apk' : (type === 'installer-large' ? 'Installer-large.apk' : 'Installer.apk');
+    const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
     const apkPath  = path.join(BUILD_OUTPUT_ROOT, accessId, filename);
     if (!fs.existsSync(apkPath)) {
         return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
@@ -3890,10 +3890,11 @@ app.post('/api/build/download/:type/ticket', requireUserOrAdmin, async (req, res
 });
 
 // GET /api/build/download/:type  (type = module|installer)
+// Auth: either a normal Bearer/?token= (HEAD probes, admin), OR a one-time ?ticket=
 app.get('/api/build/download/:type', async (req, res, next) => {
     const { type } = req.params;
-    if (type !== 'module' && type !== 'installer' && type !== 'installer-large') {
-        return res.status(400).json({ success: false, error: 'type must be module, installer, or installer-large' });
+    if (type !== 'module' && type !== 'installer') {
+        return res.status(400).json({ success: false, error: 'type must be module or installer' });
     }
 
     // Ticket path (used by direct browser downloads from the dashboard)
@@ -3906,7 +3907,7 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         entry.used = true;
         _downloadTickets.delete(ticket);
 
-        const filename = type === 'module' ? 'Module.apk' : (type === 'installer-large' ? 'Installer-large.apk' : 'Installer.apk');
+        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
         const apkPath  = path.join(BUILD_OUTPUT_ROOT, entry.accessId, filename);
         if (!fs.existsSync(apkPath)) {
             return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
@@ -3914,7 +3915,7 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         // Named with accessId so each user's file is distinct
         const dlName = type === 'module'
             ? `Module-${entry.accessId}.apk`
-            : (type === 'installer-large' ? `Installer-large-${entry.accessId}.apk` : `Installer-${entry.accessId}.apk`);
+            : `Installer-${entry.accessId}.apk`;
         return _streamApk(res, apkPath, dlName);
     }
 
@@ -3923,14 +3924,14 @@ app.get('/api/build/download/:type', async (req, res, next) => {
         const accessId = await _resolveAccessIdForReq(req);
         if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
 
-        const filename = type === 'module' ? 'Module.apk' : (type === 'installer-large' ? 'Installer-large.apk' : 'Installer.apk');
+        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
         const apkPath  = path.join(BUILD_OUTPUT_ROOT, accessId, filename);
         if (!fs.existsSync(apkPath)) {
             return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
         }
         const dlName = type === 'module'
             ? `Module-${accessId}.apk`
-            : (type === 'installer-large' ? `Installer-large-${accessId}.apk` : `Installer-${accessId}.apk`);
+            : `Installer-${accessId}.apk`;
         _streamApk(res, apkPath, dlName);
     });
 });

@@ -803,16 +803,12 @@ export default function BuildApkTab({ user }) {
       const a = document.createElement('a');
       a.href = d.url;
       const uid = accessId || 'build';
-      a.download = type === 'module' ? `Module-${uid}.apk` : (type === 'installer-large' ? `Installer-large-${uid}.apk` : `Installer-${uid}.apk`);
+      a.download = type === 'module' ? `Module-${uid}.apk` : `Installer-${uid}.apk`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     } catch (err) { alert(`Download failed: ${err.message}`); }
   };
-
-  const downloadApk = (type) => setDisclaimer({ type });
-
-  const fmtField = (key, value, setter, placeholder, hint) => (
 
   const downloadApk = (type) => setDisclaimer({ type });
 
@@ -836,7 +832,7 @@ export default function BuildApkTab({ user }) {
     <div style={styles.page}>
       {disclaimer && (
         <DisclaimerModal
-          filename={disclaimer.type === 'module' ? 'Module.apk' : (disclaimer.type === 'installer-large' ? 'Installer-large.apk' : 'Installer.apk')}
+          filename={disclaimer.type === 'module' ? 'Module.apk' : 'Installer.apk'}
           onConfirm={() => { setDisclaimer(null); _doDownload(disclaimer.type); }}
           onCancel={() => setDisclaimer(null)}
         />
@@ -1309,7 +1305,6 @@ export default function BuildApkTab({ user }) {
             </span>
           )}
           {installerAvailable && <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>}
-          {installerAvailable && <button style={styles.dlBtn} onClick={() => downloadApk('installer-large')}>⬇ Download new installer (larger)</button>}
         </div>
 
         {lastResult?.error && !running && (
