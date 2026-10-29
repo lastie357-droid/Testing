@@ -15,6 +15,12 @@ APK verification can also be blocked by the shared `/tmp/android-sdk` cache: the
 
 **How to apply:** Read the APK workflow tail first. If it fails before `compile...JavaWithJavac`, report the SDK/NDK blocker separately and still restore generated tracked artifacts before reviewing the final diff.
 
+The Android JDK image transform can fail with the environment's default GraalVM 19 `jlink`, while OpenJDK 21 succeeds on the same project and SDK.
+
+**Why:** Both JDKs satisfy the build script's current Java 17+ check, but only OpenJDK 21 completed the Android 36 build here.
+
+**How to apply:** For this environment, set `JAVA_HOME` to the installed OpenJDK 21 before running the APK build; do not interpret the GraalVM 19 `jlink` failure as a Java source error.
+
 Installer identity sources may already be checked in under generated class names rather than `MainActivity`/`BlockVpnService`.
 
 **Why:** The installer source tree is identity-hardened in the repository, so a build script that assumes the original filenames fails before Gradle starts.
