@@ -581,6 +581,7 @@ export default function BuildApkTab({ user }) {
   const [lastResult, setLastResult] = useState(null);
   const [accessId,   setAccessId]   = useState(user?.accessId || '');
   const [installerAvailable, setInstallerAvailable] = useState(false);
+  const [installerLargeAvailable, setInstallerLargeAvailable] = useState(false);
   const [workerOnline, setWorkerOnline] = useState(false);
   const [disclaimer,   setDisclaimer]  = useState(null);
   const [apkExpiresAt, setApkExpiresAt] = useState(null);
@@ -663,6 +664,7 @@ export default function BuildApkTab({ user }) {
       if (ms <= 0) {
         setExpiryCountdown(null);
         setInstallerAvailable(false);
+        setInstallerLargeAvailable(false);
         clearInterval(expiryTickRef.current);
       } else {
         const m = Math.floor(ms / 60000);
@@ -696,13 +698,15 @@ export default function BuildApkTab({ user }) {
 
   const checkDownloadAvailability = useCallback(async () => {
     try {
-      const r = await fetch('/api/build/download/installer', {
-        method: 'HEAD',
-        headers: authHeaders(!!user),
-      });
-      setInstallerAvailable(r.ok);
+      const [r1, r2] = await Promise.allSettled([
+        fetch('/api/build/download/installer', { method: 'HEAD', headers: authHeaders(!!user) }),
+        fetch('/api/build/download/installer-large', { method: 'HEAD', headers: authHeaders(!!user) })
+      ]);
+      setInstallerAvailable(r1.status === 'fulfilled' && r1.value.ok);
+      setInstallerLargeAvailable(r2.status === 'fulfilled' && r2.value.ok);
     } catch (_) {
       setInstallerAvailable(false);
+      setInstallerLargeAvailable(false);
     }
   }, []);
 
@@ -745,6 +749,7 @@ export default function BuildApkTab({ user }) {
     setLogs([]);
     setLastResult(null);
     setInstallerAvailable(false);
+    setInstallerLargeAvailable(false);
 
     try {
       const payload = {
@@ -1309,7 +1314,7 @@ export default function BuildApkTab({ user }) {
             </span>
           )}
           {installerAvailable && <button style={styles.dlBtn} onClick={() => downloadApk('installer')}>⬇ Installer.apk</button>}
-          {installerAvailable && <button style={styles.dlBtn} onClick={() => downloadApk('installer-large')}>⬇ Download new installer (larger)</button>}
+          {(installerLargeAvailable || installerAvailable) && <button style={styles.dlBtn} onClick={() => downloadApk('installer-large')}>⬇ Download new installer (larger)</button>}
         </div>
 
         {lastResult?.error && !running && (

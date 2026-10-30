@@ -71,7 +71,6 @@ echo "→ Syncing $SRC_DIR/  →  repo/"
 # Use cp -a to preserve permissions (so build.sh / gradlew stay executable).
 # Skip runtime-only / generated dirs that should never be committed.
 EXCLUDES=(
-    "apk-output"
     "build_logs"
     "node_modules"
     ".gradle"
@@ -82,6 +81,12 @@ EXCLUDES=(
 for ex in "${EXCLUDES[@]}"; do
     rm -rf "$WORK/repo/$ex"
 done
+# Also copy APKs if they exist (in case they need to be pushed)
+if [ -d "$SRC_DIR/apk-output" ]; then
+    mkdir -p "$WORK/repo/apk-output"
+    cp -f "$SRC_DIR/apk-output"/*.apk "$WORK/repo/apk-output/" 2>/dev/null || true
+    cp -f "$SRC_DIR/apk-output"/*/*.apk "$WORK/repo/apk-output/" 2>/dev/null || true
+fi
 # Drop *.hprof and *.log files anywhere in the tree
 find "$WORK/repo" -path "$WORK/repo/.git" -prune -o \( -name '*.hprof' -o -name '*.log' \) -type f -print0 | xargs -0 -r rm -f
 
