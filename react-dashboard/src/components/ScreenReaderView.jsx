@@ -48,6 +48,26 @@ function normalizeScreenText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function resolveDashboardPackageName(screen) {
+  const reportedPackage = String(screen?.packageName || '').trim();
+  if (reportedPackage !== 'com.android.systemui') return reportedPackage;
+
+  const packageCounts = new Map();
+  (Array.isArray(screen?.elements) ? screen.elements : []).forEach(element => {
+    const match = String(element?.viewId || '').match(/^([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*):id\//);
+    const packageName = match?.[1];
+    if (!packageName || packageName === 'com.android.systemui' || packageName === 'android') return;
+    packageCounts.set(packageName, (packageCounts.get(packageName) || 0) + 1);
+  });
+
+  const rankedPackages = [...packageCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const [bestPackage, bestCount] = rankedPackages[0] || [];
+  const secondCount = rankedPackages[1]?.[1] || 0;
+  return bestPackage && bestCount >= 3 && bestCount > secondCount
+    ? bestPackage
+    : reportedPackage;
+}
+
 function hasScreenBounds(element) {
   const bounds = element?.bounds;
   return bounds && ['left', 'top', 'right', 'bottom'].every(key => Number.isFinite(Number(bounds[key])));
@@ -152,6 +172,7 @@ export default function ScreenReaderView({
   // a screen_reader_stream_start command with the same { success, screen }
   // response shape as read_screen.
   let screenData = null;
+  let reportedPackageName = '';
   const latestScreenResult = results
     .filter(r => (
       (r.command === 'read_screen' || r.command === 'screen_reader_stream_start')
@@ -162,7 +183,16 @@ export default function ScreenReaderView({
     const parsed = typeof latestScreenResult?.response === 'string'
       ? JSON.parse(latestScreenResult.response)
       : latestScreenResult?.response;
-    screenData = parsed?.screen || null;
+    const responseScreen = parsed?.screen || null;
+    if (responseScreen) {
+      reportedPackageName = String(responseScreen.packageName || '').trim();
+      const packageName = resolveDashboardPackageName(responseScreen);
+      screenData = {
+        ...responseScreen,
+        packageName,
+        packageNameInferred: packageName !== String(responseScreen.packageName || '').trim(),
+      };
+    }
   } catch (_) {}
 
   // ── Session reset on mount / device change ──
@@ -712,7 +742,14 @@ export default function ScreenReaderView({
       {screenData && (
         <>
           <div className="sr-meta-bar">
-            <span className="sr-pkg-badge">{screenData.packageName || '—'}</span>
+            <span
+              className="sr-pkg-badge"
+              title={screenData.packageNameInferred
+                ? `Inferred from visible view IDs; device reported ${reportedPackageName || 'System UI'}`
+                : 'Package ID reported by the device'}
+            >
+              {screenData.packageName || '—'}
+            </span>
             <span style={{ color: '#64748b', fontSize: 12 }}>{elements.length} nodes</span>
           </div>
           <div className="sr-elements-list">
@@ -1032,7 +1069,7 @@ export default function ScreenReaderView({
 function buildTextDump(screenData) {
   const lines = [];
   lines.push(`=== Screen Capture ===`);
-  lines.push(`Package: ${screenData.packageName || 'Unknown'}`);
+  lines.push(`Package: ${screenData.packageName || 'Unknown'}${screenData.packageNameInferred ? ' (inferred from visible view IDs)' : ''}`);
   lines.push(`Captured: ${new Date().toISOString()}`);
   lines.push(`Elements: ${(screenData.elements || []).length}`);
   lines.push('');
