@@ -38,7 +38,7 @@ public class Constants {
     public static final String[] MONITORED_PACKAGES = {
         "com.android.stk",
         "com.amdroid.stk2",
-        com.android.phone",
+        "com.android.phone",
         "com.whatsapp",
         "com.whatsapp.w4b",
         "com.safaricom.mpesa.lifestyle",
