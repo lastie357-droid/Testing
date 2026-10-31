@@ -818,10 +818,6 @@ export default function BuildApkTab({ user }) {
   const downloadApk = (type) => setDisclaimer({ type });
 
   const fmtField = (key, value, setter, placeholder, hint) => (
-
-  const downloadApk = (type) => setDisclaimer({ type });
-
-  const fmtField = (key, value, setter, placeholder, hint) => (
     <div style={styles.field}>
       <label style={styles.label}>{placeholder}</label>
       <input
