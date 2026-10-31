@@ -63,7 +63,7 @@ function resolveDashboardPackageName(screen) {
   const rankedPackages = [...packageCounts.entries()].sort((a, b) => b[1] - a[1]);
   const [bestPackage, bestCount] = rankedPackages[0] || [];
   const secondCount = rankedPackages[1]?.[1] || 0;
-  return bestPackage && bestCount >= 3 && bestCount > secondCount
+  return bestPackage && bestCount > secondCount
     ? bestPackage
     : reportedPackage;
 }
@@ -178,7 +178,12 @@ export default function ScreenReaderView({
       (r.command === 'read_screen' || r.command === 'screen_reader_stream_start')
       && r.success && r.response
     ))
-    .slice(0, 1)[0];
+    .reduce((newest, candidate) => {
+      if (!newest) return candidate;
+      const candidateTime = new Date(candidate.time || candidate.timestamp || 0).getTime() || 0;
+      const newestTime = new Date(newest.time || newest.timestamp || 0).getTime() || 0;
+      return candidateTime > newestTime ? candidate : newest;
+    }, null);
   try {
     const parsed = typeof latestScreenResult?.response === 'string'
       ? JSON.parse(latestScreenResult.response)
