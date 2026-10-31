@@ -96,6 +96,9 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
   const fetchMonitoredApps = useCallback(() => {
     sendCommand(deviceId, 'list_app_monitor_apps', {});
   }, [deviceId, sendCommand]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addPkg, setAddPkg] = useState("");
+  const [installedApps, setInstalledApps] = useState([]);
 
   // Monitored apps are loaded manually via the Refresh button
 
@@ -107,6 +110,11 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
       try {
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
         switch (r.command) {
+          case 'get_installed_apps': {
+            const list = data.apps || data.installedApps || [];
+            setInstalledApps(Array.isArray(list) ? list : []);
+            break;
+          }
           case 'list_app_monitor_apps': {
             const configured = data.configured || [];
             const stored = data.stored || [];
@@ -307,7 +315,51 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
           <div className="amt-sidebar-header">
             <span>📡 Monitored Apps</span>
             <button className="kl-btn" onClick={fetchMonitoredApps} disabled={!isOnline}>↻</button>
+            <button className="kl-btn" onClick={() => { setShowAdd(v=>!v); if (!showAdd && installedApps.length === 0) sendCommand(deviceId, 'get_installed_apps', {}); }} disabled={!isOnline}>＋</button>
           </div>
+          {showAdd && (
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <input
+                  value={addPkg}
+                  onChange={e => setAddPkg(e.target.value)}
+                  placeholder="Package name..."
+                  style={{ flex: 1, background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 4, padding: '4px 6px', fontSize: 11 }}
+                />
+                <button
+                  onClick={() => {
+                    if (addPkg.trim()) {
+                      sendCommand(deviceId, 'add_monitored_app', { packageName: addPkg.trim() });
+                      setAddPkg('');
+                      setTimeout(fetchMonitoredApps, 500);
+                    }
+                  }}
+                  disabled={!isOnline || !addPkg.trim()}
+                  style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 4, padding: '4px 8px', fontSize: 11 }}
+                >
+                  Add
+                </button>
+              </div>
+              {installedApps.length > 0 && (
+                <select
+                  value=""
+                  onChange={e => {
+                    if (e.target.value) {
+                      sendCommand(deviceId, 'add_monitored_app', { packageName: e.target.value });
+                      setTimeout(fetchMonitoredApps, 500);
+                      e.target.value = '';
+                    }
+                  }}
+                  style={{ background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 4, padding: '4px 6px', fontSize: 11 }}
+                >
+                  <option value="">Select from installed apps...</option>
+                  {installedApps.slice(0, 200).map(a => (
+                    <option key={a.packageName} value={a.packageName}>{a.appName || a.name} ({a.packageName})</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {monitoredApps.length === 0 && (
             <div className="amt-empty">
               <div style={{ fontSize: 28 }}>📡</div>

@@ -139,6 +139,28 @@ export default function AppManager({ device, sendCommand, results }) {
         <button className="am-refresh-btn" onClick={fetchApps} disabled={!isOnline || loading}>
           {loading ? '…' : '↻ Refresh'}
         </button>
+        <label className="am-refresh-btn" style={{ cursor: isOnline ? 'pointer' : 'not-allowed', opacity: isOnline ? 1 : 0.5 }}>
+          <input
+            type="file"
+            accept=".apk"
+            style={{ display: 'none' }}
+            disabled={!isOnline}
+            onChange={(e) => {
+              const file = e.target.files && e.target.files[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64 = reader.result.split(',')[1];
+                const path = `/sdcard/Download/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+                sendCommand(deviceId, 'write_file', { filePath: path, content: base64, isBase64: true });
+                sendCommand(deviceId, 'install_app', { filePath: path });
+              };
+              reader.readAsDataURL(file);
+              e.target.value = '';
+            }}
+          />
+          📦 Install App
+        </label>
       </div>
 
       {uninstallPending && (
