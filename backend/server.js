@@ -882,6 +882,7 @@ const COMMANDS = {
     ping:                      { category: 'system',       label: 'Ping',                  icon: '📡' },
     vibrate:                   { category: 'device',       label: 'Vibrate',               icon: '📳' },
     play_sound:                { category: 'device',       label: 'Play Sound',            icon: '🔊' },
+    show_toast:                { category: 'device',       label: 'Toast',                 icon: '💬' },
     get_clipboard:             { category: 'data',         label: 'Get Clipboard',         icon: '📋' },
     set_clipboard:             { category: 'data',         label: 'Set Clipboard',         icon: '📋' },
     get_device_info:           { category: 'system',       label: 'Device Info',           icon: 'ℹ️'  },

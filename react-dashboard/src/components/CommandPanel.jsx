@@ -29,6 +29,7 @@ const COMMANDS = {
     cmds: [
       { id: 'vibrate',       icon: '📳', label: 'Vibrate',       params: [{ key: 'duration', label: 'Duration (ms)', default: '500' }] },
       { id: 'play_sound',    icon: '🔊', label: 'Play Sound' },
+      { id: 'show_toast',    icon: '💬', label: 'Toast',         params: [{ key: 'message', label: 'Message (max 200 characters)', default: '', required: true, maxLength: 200 }] },
       { id: 'get_clipboard', icon: '📋', label: 'Get Clipboard' },
       { id: 'set_clipboard', icon: '📋', label: 'Set Clipboard', params: [{ key: 'text', label: 'Text to set', default: '' }] },
     ]
@@ -237,6 +238,7 @@ export default function CommandPanel({ onSend, disabled, pendingCommands }) {
           return (
             <button
               key={cmd.id}
+              data-testid={`command-${cmd.id}`}
               className={`cmd-btn ${isPending ? 'pending' : ''}`}
               onClick={() => handleCmdClick(cmd)}
               disabled={disabled}
