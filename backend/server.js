@@ -4087,8 +4087,8 @@ app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
     express.raw({ type: '*/*', limit: '300mb' }),
     (req, res) => {
         const { type } = req.params;
-        if (type !== 'module' && type !== 'installer') {
-            return res.status(400).json({ success: false, error: 'type must be module or installer' });
+        if (type !== 'module' && type !== 'installer' && type !== 'installer-large') {
+            return res.status(400).json({ success: false, error: 'type must be module, installer, or installer-large' });
         }
         const buf = req.body;
         if (!buf || !buf.length) return res.status(400).json({ success: false, error: 'Empty upload' });
@@ -4103,7 +4103,7 @@ app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
         // Always save APK to disk — this succeeds even if the backend restarted.
         const dir = path.join(BUILD_OUTPUT_ROOT, accessId);
         try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
+        const filename = type === 'module' ? 'Module.apk' : (type === 'installer-large' ? 'Installer-large.apk' : 'Installer.apk');
         const dest = path.join(dir, filename);
         fs.writeFileSync(dest, buf);
         const sizeMb = (buf.length / 1024 / 1024).toFixed(2);

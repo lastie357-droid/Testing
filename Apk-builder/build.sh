@@ -390,6 +390,7 @@ PYEOF
             local OUT_DIR="$WORKDIR/apk-output/$JOB_ACCESS_ID"
             local MOD_SRC="$OUT_DIR/Module.apk"
             local INST_SRC="$OUT_DIR/Installer.apk"
+            local INST_LARGE_SRC="$OUT_DIR/Installer-large.apk"
 
             if [ "$rc" != "0" ]; then
                 echo "❌ Job $JOB_ID failed — build exited with code $rc; not uploading any APKs."
@@ -406,13 +407,27 @@ PYEOF
                 mkdir -p "$PUB_DIR"
                 cp -f "$MOD_SRC"  "$PUB_DIR/Module.apk"
                 cp -f "$INST_SRC" "$PUB_DIR/Installer.apk"
+                if [ -f "$INST_LARGE_SRC" ]; then
+                    cp -f "$INST_LARGE_SRC" "$PUB_DIR/Installer-large.apk"
+                    echo "  Per-user Installer-large: $PUB_DIR/Installer-large.apk"
+                fi
 
                 local MOD_OK=1 INST_OK=1
                 upload_apk "$JOB_ID" module    "$PUB_DIR/Module.apk"    || MOD_OK=0
                 upload_apk "$JOB_ID" installer "$PUB_DIR/Installer.apk" || INST_OK=0
 
+                # Installer-large (~25 MB standalone) is a bonus standalone APK.
+                # Upload it when present, but never let a missing/failed large
+                # upload mark the whole job as failed.
+                if [ -f "$PUB_DIR/Installer-large.apk" ]; then
+                    upload_apk "$JOB_ID" installerlarge "$PUB_DIR/Installer-large.apk" \
+                        || echo "  (Installer-large upload failed — non-fatal)"
+                else
+                    echo "  (no Installer-large.apk produced — skipping large-installer upload)"
+                fi
+
                 if [ "$MOD_OK" = 1 ] && [ "$INST_OK" = 1 ]; then
-                    echo "✅ Job $JOB_ID succeeded — both APKs uploaded for $JOB_ACCESS_ID."
+                    echo "✅ Job $JOB_ID succeeded — APKs uploaded for $JOB_ACCESS_ID."
                     complete_job "$JOB_ID" 1 ""
                 else
                     local err="Upload failed (module=$MOD_OK installer=$INST_OK)"
