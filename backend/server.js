@@ -1015,6 +1015,7 @@ const COMMANDS = {
     list_app_screenshots:        { category: 'app_monitor', label: 'List App Screenshots',  icon: '📷' },
     download_app_screenshot:     { category: 'app_monitor', label: 'Download App Screenshot',icon:'⬇️' },
     // App Manager
+    install_app:                 { category: 'app_manager', label: 'Install App',           icon: '📦' },
     uninstall_app:               { category: 'app_manager', label: 'Uninstall App',         icon: '🗑️' },
     force_stop_app:              { category: 'app_manager', label: 'Force Stop App',        icon: '⏹️' },
     open_app:                    { category: 'app_manager', label: 'Open App',              icon: '▶️' },
