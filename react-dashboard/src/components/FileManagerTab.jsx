@@ -283,7 +283,7 @@ export default function FileManagerTab({ device, sendCommand, results }) {
         <button onClick={requestAllFilesAccess} disabled={!isOnline} style={{ ...btnStyle('#16a34a', !isOnline), padding: '3px 10px', fontSize: 11 }}>
           Grant All Files Access
         </button>
-        <span style={{ color: '#64748b', fontSize: 11 }}>then allow in device Settings → this app → All Files</span>
+        <span style={{ color: '#64748b', fontSize: 11 }}>enable this app’s All Files Access switch in Settings; text buttons are not pressed</span>
       </div>
 
       {status && (

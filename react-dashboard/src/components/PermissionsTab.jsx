@@ -106,7 +106,7 @@ export default function PermissionsTab({ device = {}, sendCommand, results = [] 
     sendCommand(deviceId, 'request_storage_permission', {});
     setTimeout(() => {
       setStorageAutoGranting(false);
-      setStorageStatus('Storage permission request sent. App will auto-click grant buttons.');
+      setStorageStatus('Storage settings opened. Only this app’s All Files Access switch is targeted; text buttons are not pressed.');
     }, 5000);
   }, [deviceId, sendCommand]);
 
