@@ -422,7 +422,7 @@ export default function UserDashboard({ user, onLogout }) {
   streamSenderRef.current = send;
 
   const sendCommand = useCallback((deviceId, command, params = null) => {
-    send('command:send', { deviceId, command, params });
+    return send('command:send', { deviceId, command, params });
   }, [send]);
 
   useEffect(() => {

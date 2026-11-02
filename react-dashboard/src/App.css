@@ -1193,6 +1193,23 @@ body {
 .am-system-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .am-refresh-btn { background: rgba(124,58,237,0.15); border: 1px solid rgba(124,58,237,0.3); color: var(--accent-light); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
 .am-refresh-btn:hover:not(:disabled) { background: rgba(124,58,237,0.3); }
+.am-install-trigger-busy { pointer-events: none; }
+.am-install-status { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.am-install-status-heading { display: flex; align-items: center; gap: 10px; }
+.am-install-status-icon { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: rgba(124,58,237,0.16); color: #c4b5fd; font-size: 15px; font-weight: 700; }
+.am-install-status-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.am-install-status-copy strong { color: var(--text-primary); font-size: 13px; }
+.am-install-status-copy span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.am-install-percent { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.am-install-progress { position: relative; height: 5px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
+.am-install-progress > span { display: block; height: 100%; border-radius: inherit; background: #8b5cf6; transition: width 180ms ease; }
+.am-install-progress > .am-progress-indeterminate { width: 35%; animation: am-install-progress-slide 1.15s ease-in-out infinite alternate; }
+.am-install-message { margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.am-install-done { border-color: rgba(34,197,94,0.4); }
+.am-install-done .am-install-status-icon, .am-install-done .am-install-progress > span { background: #22c55e; color: #052e16; }
+.am-install-error { border-color: rgba(239,68,68,0.45); }
+.am-install-error .am-install-status-icon, .am-install-error .am-install-progress > span { background: #ef4444; color: #fff; }
+@keyframes am-install-progress-slide { from { transform: translateX(-15%); } to { transform: translateX(200%); } }
 .am-stats { font-size: 12px; color: var(--text-secondary); padding: 0 4px; }
 .am-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .am-empty { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; gap: 10px; color: var(--text-secondary); }

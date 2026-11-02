@@ -13,6 +13,7 @@
 - [TCP endpoint discovery](tcp-endpoint-discovery.md) — Android clients cache the Zeabur host/port and refresh discovery only after connect or TLS setup fails.
 - [Device-list snapshots](device-list-snapshot.md) — send cached/live records immediately; refresh Mongo snapshots in the background without hiding offline devices.
 - [Generated installer identity](generated-installer-identity.md) — package allocation must update installer sources, manifest components, Gradle namespace, action strings, and R8 rules together.
+- [Android client update boundary](android-client-update-boundary.md) — device-side command fixes require a rebuilt controller APK installed with the matching package ID.
 - [MongoDB free-tier resilience](mongodb-free-tier-resilience.md) — keep pooled connections bounded per server and fail fast to preserve in-memory/Redis fallbacks during outages.
 - [Redis connection resilience](redis-connection-resilience.md) — keep hosted Redis warm with periodic PINGs, indefinite bounded reconnects, and no startup-wide flush.
 - [Chunked command acknowledgements](chunked-command-results.md) — streamed device commands emit a transport ack and a separate completed aggregate; UI consumers must distinguish both.
