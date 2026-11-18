@@ -278,6 +278,7 @@ public class SocketManager {
         volatile boolean cancelled;
         volatile Thread taskThread;
         volatile int completedSteps;
+        final java.util.Map<Integer, Integer> clickTextTimeoutRetries = new java.util.HashMap<>();
 
         TaskRunControl(Context context, String commandId) {
             this.commandId = commandId;
@@ -317,6 +318,20 @@ public class SocketManager {
                     lock.wait(250L);
                 }
                 return false;
+            }
+        }
+
+        int recordClickTextTimeout(int stepIndex) {
+            synchronized (lock) {
+                int retries = clickTextTimeoutRetries.getOrDefault(stepIndex, 0) + 1;
+                clickTextTimeoutRetries.put(stepIndex, retries);
+                return retries;
+            }
+        }
+
+        void resetClickTextTimeoutRetries() {
+            synchronized (lock) {
+                clickTextTimeoutRetries.clear();
             }
         }
 
@@ -2648,6 +2663,12 @@ public class SocketManager {
                     try {
                         try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
                         catch (InterruptedException ignored) {}
+                        if (params.optBoolean("allMatches", false)) {
+                            return sc.clickAllByTextBottomUp(
+                                    params.getString("text"),
+                                    params.optString("packageName", "")
+                            );
+                        }
                         return sc.clickByText(params.getString("text"));
                     } finally { if (acq) accessSemaphore.release(); }
                 }
@@ -3717,6 +3738,7 @@ public class SocketManager {
             }
         }
         if (taskRun.cancelled) return false;
+        taskRun.resetClickTextTimeoutRetries();
         sendTaskRestartProgress(
                 taskRun.commandId, total, false,
                 "Keyguard released — restarting the task from step 1."
@@ -3724,10 +3746,30 @@ public class SocketManager {
         return true;
     }
 
+    private String getPreviousOpenAppPackage(JSONArray steps, int stepIndex) {
+        for (int index = stepIndex - 1; index >= 0; index--) {
+            JSONObject previousStep = steps.optJSONObject(index);
+            if (previousStep == null || !"open_app".equals(previousStep.optString("type", ""))) continue;
+            return previousStep.optString("packageName", "").trim();
+        }
+        return "";
+    }
+
+    private int countMatchesInPackage(JSONArray matches, String expectedPackage) {
+        if (matches == null) return 0;
+        int count = 0;
+        for (int index = 0; index < matches.length(); index++) {
+            JSONObject match = matches.optJSONObject(index);
+            if (match != null && expectedPackage.equals(match.optString("packageName", ""))) count++;
+        }
+        return count;
+    }
+
     private boolean executeTaskLocalPass(JSONArray steps, String commandId, TaskRunControl taskRun) {
         final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
         final long CLICK_TEXT_POLL_MS    = 100L;
         final long INTER_STEP_DELAY_MS   = 500L;
+        final int CLICK_TEXT_MAX_RETRIES = 3;
 
         int total     = steps.length();
         int completed = 0;
@@ -3777,11 +3819,18 @@ public class SocketManager {
                             result = new JSONObject().put("success", false).put("error", "click_text: no text specified");
                             break;
                         }
+                        String expectedPackage = getPreviousOpenAppPackage(steps, i);
+                        if (expectedPackage.isEmpty()) {
+                            result = new JSONObject().put("success", false)
+                                    .put("error", "Add an Open App step with a package before Click Text");
+                            break;
+                        }
 
                         long pollDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
+                        boolean textFound = false;
                         result = new JSONObject()
                                 .put("success", false)
-                                .put("error", "Text not found within 8 s: \"" + textToFind + "\"");
+                                .put("error", "Text not found in " + expectedPackage + " within 8 s: \"" + textToFind + "\"");
 
                         while (System.currentTimeMillis() < pollDeadline) {
                             if (taskRun.cancelled) return false;
@@ -3790,26 +3839,49 @@ public class SocketManager {
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
+                            JSONArray matches = findResult.optJSONArray("matches");
+                            int scopedMatchCount = countMatchesInPackage(matches, expectedPackage);
 
-                            if (findResult.optBoolean("success", false)) {
-                                int cnt = findResult.optInt("count", 0);
-                                JSONArray matches = findResult.optJSONArray("matches");
-                                boolean onScreen = cnt > 0 || (matches != null && matches.length() > 0);
-                                if (onScreen) {
+                            if (findResult.optBoolean("success", false) && scopedMatchCount > 0) {
+                                    textFound = true;
                                     // Text is visible — click it immediately
                                     long elapsed = CLICK_TEXT_TIMEOUT_MS - (pollDeadline - System.currentTimeMillis());
                                     sendTaskProgress(commandId, i, total, false, true,
-                                            "Text found after " + elapsed + " ms — clicking…", false, null);
+                                            "Found " + scopedMatchCount + " match(es) in "
+                                                    + expectedPackage + " after " + elapsed + " ms — clicking bottom-to-top…",
+                                            false, null);
                                     JSONObject clickParams = new JSONObject();
                                     clickParams.put("text", textToFind);
+                                    clickParams.put("packageName", expectedPackage);
+                                    clickParams.put("allMatches", true);
                                     result = dispatchCommand("click_by_text", clickParams);
                                     break;
-                                }
                             }
 
                             long remaining = pollDeadline - System.currentTimeMillis();
                             if (remaining <= 0) break;
                             Thread.sleep(Math.min(CLICK_TEXT_POLL_MS, remaining));
+                        }
+
+                        if (!textFound) {
+                            if (taskRun.cancelled) return false;
+                            if (taskRun.shouldRestart()) return waitForUnlockAndRestart(taskRun, total);
+                            int retriesTaken = taskRun.recordClickTextTimeout(step.optInt("originalIndex", i));
+                            if (retriesTaken <= CLICK_TEXT_MAX_RETRIES) {
+                                sendTaskRestartProgress(
+                                        commandId, total, false,
+                                        "Click Text did not appear in " + expectedPackage
+                                                + " within 8 seconds. Restarting from step 1 (retry "
+                                                + retriesTaken + " of " + CLICK_TEXT_MAX_RETRIES + ")."
+                                );
+                                return true;
+                            }
+                            String timeoutError = "Click Text was not found after "
+                                    + (CLICK_TEXT_MAX_RETRIES + 1) + " attempts in " + expectedPackage;
+                            sendTaskProgress(commandId, i, total, true, false,
+                                    timeoutError, false, timeoutError);
+                            sendTaskCompleteEvent(commandId, completed, total);
+                            return false;
                         }
                         break;
                     }
@@ -3891,7 +3963,7 @@ public class SocketManager {
 
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
-                String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
+                String  msg    = ok ? result.optString("message", "Done: " + type) : ("Failed: " + errMsg);
 
                 // Report step result
                 sendTaskProgress(commandId, i, total, true, ok, msg, false, errMsg);
