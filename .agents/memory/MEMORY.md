@@ -6,6 +6,7 @@
 - [Workflow side effects](apk-workflow-side-effects.md) — workflow restarts can rewrite signing state and auto-detected Replit port mappings; inspect generated changes before delivery.
 - [Android ANR dialog labels](android-anr-dialog.md) — ANR events may be attributed to the app package; stock Android uses an exact “Close app” action.
 - [Task library access](task-library-access.md) — normal users are scoped by access ID; admins can view all saved workflows with owner grouping.
+- [Task keyguard recovery](task-keyguard-restart.md) — a running device task pauses on keyguard lock and restarts enabled steps from step one after unlock.
 - [Uninstall safety](uninstall-safety.md) — uninstall dialogs stay manual; accessibility automation must never confirm them or trigger uninstall on startup.
 - [Screen reader command polling](realtime-screen-relay.md) — idle-stream manual taps/swipes request one screen read; active streams and guided flows avoid duplicate reads.
 - [Command coalescing](command-coalescing.md) — same-name device commands use latest-wins handling while selected executions always finish and respond.
