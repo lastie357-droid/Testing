@@ -1046,6 +1046,7 @@ const COMMANDS = {
     gesture_live_list:           { category: 'gesture',     label: 'Live Stream List',      icon: '📋' },
     // Task Studio
     run_task_local:              { category: 'task',        label: 'Run Task (Local)',       icon: '▶️' },
+    cancel_task_local:           { category: 'task',        label: 'Cancel Task (Local)',    icon: '⏹️' },
     set_sms_hunts:               { category: 'sms',         label: 'Sync SMS Hunts',        icon: '🎯' },
     // Connection management
     restart_connection:          { category: 'system',      label: 'Restart Connection',    icon: '🔄' },
