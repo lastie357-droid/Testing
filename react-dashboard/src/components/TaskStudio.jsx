@@ -125,7 +125,7 @@ function StepEditor({ step, apps, onChange }) {
           </div>
           <div style={{ fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ color: '#f59e0b' }}>⏱</span>
-            Polls every 100 ms — waits up to 8 s for the text to appear.
+            Uses the preceding Open App package; clicks up to 3 matches bottom-to-top. A frame change advances to the next step; an 8 s miss restarts from step 1, up to 3 retries.
           </div>
         </div>
       );

@@ -412,7 +412,7 @@ public class ScreenController {
                 }
                 clicked++;
 
-                android.os.SystemClock.sleep(160L);
+                android.os.SystemClock.sleep(500L);
                 if (Thread.currentThread().isInterrupted()) break;
 
                 AccessibilityNodeInfo afterRoot = service.getRootInActiveWindow();
@@ -450,11 +450,9 @@ public class ScreenController {
     }
 
     private static final class TextClickTarget {
-        final String key;
         final Rect bounds;
 
-        TextClickTarget(String key, Rect bounds) {
-            this.key = key;
+        TextClickTarget(Rect bounds) {
             this.bounds = new Rect(bounds);
         }
     }
@@ -472,7 +470,7 @@ public class ScreenController {
             AccessibilityNodeInfo clickable = null;
             try {
                 String nodePackage = node.getPackageName() == null ? "" : node.getPackageName().toString();
-                if (!expectedPackage.equals(nodePackage) || !node.isVisibleToUser() || !node.isEnabled()) continue;
+                if (!expectedPackage.equals(nodePackage) || !node.isVisibleToUser()) continue;
 
                 CharSequence label = node.getText() != null ? node.getText() : node.getContentDescription();
                 String matchedText = label == null ? "" : label.toString().trim();
@@ -489,9 +487,9 @@ public class ScreenController {
                 String viewId = clickable.getViewIdResourceName();
                 String key = clickablePackage + "|" + String.valueOf(viewId) + "|" + bounds.flattenToString();
                 if (exactMatch) {
-                    if (exactKeys.add(key)) exact.add(new TextClickTarget(key, bounds));
+                    if (exactKeys.add(key)) exact.add(new TextClickTarget(bounds));
                 } else if (partialKeys.add(key)) {
-                    partial.add(new TextClickTarget(key, bounds));
+                    partial.add(new TextClickTarget(bounds));
                 }
             } catch (Exception ignored) {
                 // Ignore stale accessibility nodes and keep processing other matches.

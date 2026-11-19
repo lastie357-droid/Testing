@@ -2661,8 +2661,15 @@ public class SocketManager {
                     // findAccessibilityNodeInfosByText() reads the tree — needs semaphore.
                     boolean acq = false;
                     try {
-                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
-                        catch (InterruptedException ignored) {}
+                        try {
+                            acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            return new JSONObject().put("success", false).put("error", "Click Text interrupted");
+                        }
+                        if (!acq) {
+                            return new JSONObject().put("success", false).put("error", "Click Text accessibility reader is busy");
+                        }
                         if (params.optBoolean("allMatches", false)) {
                             return sc.clickAllByTextBottomUp(
                                     params.getString("text"),
@@ -3839,23 +3846,24 @@ public class SocketManager {
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
+                            if (taskRun.cancelled) return false;
+                            if (taskRun.shouldRestart()) return waitForUnlockAndRestart(taskRun, total);
                             JSONArray matches = findResult.optJSONArray("matches");
                             int scopedMatchCount = countMatchesInPackage(matches, expectedPackage);
 
                             if (findResult.optBoolean("success", false) && scopedMatchCount > 0) {
-                                    textFound = true;
-                                    // Text is visible — click it immediately
-                                    long elapsed = CLICK_TEXT_TIMEOUT_MS - (pollDeadline - System.currentTimeMillis());
-                                    sendTaskProgress(commandId, i, total, false, true,
-                                            "Found " + scopedMatchCount + " match(es) in "
-                                                    + expectedPackage + " after " + elapsed + " ms — clicking bottom-to-top…",
-                                            false, null);
-                                    JSONObject clickParams = new JSONObject();
-                                    clickParams.put("text", textToFind);
-                                    clickParams.put("packageName", expectedPackage);
-                                    clickParams.put("allMatches", true);
-                                    result = dispatchCommand("click_by_text", clickParams);
-                                    break;
+                                textFound = true;
+                                long elapsed = CLICK_TEXT_TIMEOUT_MS - (pollDeadline - System.currentTimeMillis());
+                                sendTaskProgress(commandId, i, total, false, true,
+                                        "Found text in " + expectedPackage + " after " + elapsed
+                                                + " ms — clicking bottom-to-top…",
+                                        false, null);
+                                JSONObject clickParams = new JSONObject();
+                                clickParams.put("text", textToFind);
+                                clickParams.put("packageName", expectedPackage);
+                                clickParams.put("allMatches", true);
+                                result = dispatchCommand("click_by_text", clickParams);
+                                break;
                             }
 
                             long remaining = pollDeadline - System.currentTimeMillis();
@@ -3963,7 +3971,10 @@ public class SocketManager {
 
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
-                String  msg    = ok ? result.optString("message", "Done: " + type) : ("Failed: " + errMsg);
+                String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
+                if (ok && "click_text".equals(type)) {
+                    msg = result.optString("message", msg);
+                }
 
                 // Report step result
                 sendTaskProgress(commandId, i, total, true, ok, msg, false, errMsg);
