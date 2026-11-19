@@ -26,7 +26,7 @@ function makeStep(type) {
   const base = { id: Date.now() + Math.random(), type, enabled: true };
   switch (type) {
     case 'open_app':       return { ...base, packageName: '', appLabel: '' };
-    case 'click_text':     return { ...base, text: '' };
+    case 'click_text':     return { ...base, text: '', ignoreTexts: [] };
     case 'paste_text':     return { ...base, text: '' };
     case 'close_app':      return { ...base, packageName: '', appLabel: '' };
     case 'delay':          return { ...base, ms: 1000 };
@@ -116,12 +116,35 @@ function StepEditor({ step, apps, onChange }) {
     case 'open_app':
       return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{appPickerField('App to Open', step, onChange)}</div>;
     case 'click_text':
+      const ignoreTexts = Array.isArray(step.ignoreTexts)
+        ? step.ignoreTexts
+        : String(step.ignoreTexts || '').split(/\r?\n/);
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             {field('Text to Find & Click on Screen',
               input({ placeholder: 'e.g. Login, Submit, OK…', value: step.text, onChange: e => onChange({ ...step, text: e.target.value }) })
             )}
+          </div>
+          {field('Ignore text (one phrase per line)',
+            <textarea
+              data-testid="input-click-text-ignore"
+              placeholder={'e.g.\nSafaricom+\nSafaricom 1'}
+              value={ignoreTexts.join('\n')}
+              onChange={e => onChange({
+                ...step,
+                ignoreTexts: e.target.value.split(/\r?\n/).map(text => text.trim()).filter(Boolean),
+              })}
+              rows={3}
+              style={{
+                background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6,
+                padding: '6px 10px', color: '#f0f0ff', fontSize: 13, width: '100%',
+                resize: 'vertical', fontFamily: 'inherit',
+              }}
+            />
+          )}
+          <div style={{ fontSize: 11, color: '#64748b' }}>
+            Ignore phrases are literal, case-insensitive matches in the text or its clickable row.
           </div>
           <div style={{ fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ color: '#f59e0b' }}>⏱</span>
