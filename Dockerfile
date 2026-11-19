@@ -8,7 +8,8 @@ FROM node:22-alpine AS builder
 WORKDIR /src
 
 COPY backend/package.json backend/package-lock.json ./backend/
-RUN cd backend && npm ci --no-audit --no-fund --ignore-scripts
+RUN sed -i -E 's#http://package-firewall\.replit\.(local|internal)/npm/#https://registry.npmjs.org/#g' backend/package-lock.json \
+    && cd backend && npm ci --no-audit --no-fund --ignore-scripts
 
 COPY backend/ ./backend/
 COPY react-dashboard/ ./react-dashboard/
@@ -34,7 +35,8 @@ RUN apk add --no-cache tini ca-certificates curl bash
 
 COPY package.json ./
 COPY --from=builder /src/backend/package.json /src/backend/package-lock.json* ./backend/
-RUN cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
+RUN sed -i -E 's#http://package-firewall\.replit\.(local|internal)/npm/#https://registry.npmjs.org/#g' backend/package-lock.json \
+    && cd backend && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 COPY --from=builder /src/backend/ ./backend/
 COPY --chmod=0555 frps/ ./frps/
